@@ -1,0 +1,269 @@
+---
+title: "FVCOM Monthly Inventory Check"
+description: | 
+  Documenting GMRI's FVCOM Inventory on Box
+date: "Updated on: `r Sys.Date()`"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    df-print: kable
+    self-contained: true
+editor: visual
+execute: 
+  echo: false
+  warning: false
+  message: false
+  fig.height: 6
+  fig.width: 8
+  fig.align: "center"
+  comment: ""
+---
+
+## GMRI-Box FVCOM Monthly Inventory
+
+As part of a previous project, the FVCOM GOM3 hindcast data was downloaded for local (cloud) storage. Data was re-saved as monthly means.
+
+This quarto doc will serve as documentation of what data was downloaded, the time/space extent, and which variables were stored.
+
+
+A previous team member (Matt Dzaugis) was responsible for accessing and storing the data, and we are grateful for his time/effort in doing so.
+
+
+
+
+```{r}
+library(sf) 
+library(fvcom) 
+library(ncdf4) 
+library(tidyverse)
+library(gmRi)
+```
+
+### Accessing Box Inventory
+
+FVCOM is stored with other research community assets in the `RES_Data/` directory.
+
+The GOM3 Monthly Means can be found in `RES_Data/FVCOM/FVCOM_gom3_mon_means` with files labeled by year and month, yyyymm.nc : \
+ex. `197801.nc`
+
+This directory contains to following date range: `1978-01 through 2020-12`
+
+### Spatial Coverage
+
+The monthly averages appear to cover the full domain of th FVCOM mesh.
+
+Note:
+There is a note in Matt's code about an issue with lon/lat details not saving for the earlier years:  https://github.com/dzaugis/Ecosystem_Indicators/blob/6d21e553614cb06eb7ea02e4546535cf038d7678/Code/FVCOM_shp_extract.Rmd#L42C42-L42C43 
+
+
+```{r}
+# We can Access Netcdf Files Directly
+box_fvcom <- cs_path("res", "FVCOM/FVCOM_gom3_mon_means")
+yr <- "2010"
+mon <- "01"
+
+# Build the full path
+nc_name <- str_c(box_fvcom, yr, mon, ".nc")
+
+# Open (lazy-load) the netcdf connection
+x <- nc_open(nc_name)
+```
+
+
+```{r}
+
+# Can also get the mesh itself as a simple feature collection
+mesh <- get_mesh_geometry(x, what = 'lonlat') 
+
+# And we can use the mesh to request variables with it
+plot(sf::st_geometry(mesh), 
+     border = scales::alpha("gray", 0.6), 
+     main = "GMRI Monthly FVCOM, Coverage")
+
+```
+
+
+### Monthly Averaged Variables
+
+It seems like all the variables were brought along.
+
+```{r}
+list_vars(x) %>% gt::gt()
+```
+
+
+### Time
+
+We should have one time-step, just confirming that
+
+```{r}
+fvcom_time(x) %>% as.Date()
+```
+
+### Depth: siglev/siglay
+
+```{r}
+# x$dim$siglev
+# x$dim$siglay
+
+
+# Here is how matt handled surface and bottom indexing:
+sigLevel <- x$dim$siglay$len
+sur_temp <- ncdf4::ncvar_get(x, varid = "temp")[,1]
+bot_temp <- ncdf4::ncvar_get(x, varid = "temp")[,sigLevel]
+
+# From here we have surface temperature and bottom temperature as vectors
+plot(sur_temp, bot_temp, xlab = "Surface Temp", ylab = "Bottom Temp")
+
+# We need the lat/lon node information as well
+lon <- ncdf4::ncvar_get(x, varid = "lon")
+lat <- ncdf4::ncvar_get(x, varid = "lat")
+
+
+# And we need the surface Currents as well
+u <- ncdf4::ncvar_get(x, varid = "u")[,1]
+v <- ncdf4::ncvar_get(x, varid = "v")[,1]
+
+# And the coordinates for the zonal centers
+lonc <- ncdf4::ncvar_get(x, varid = "lonc")
+latc <- ncdf4::ncvar_get(x, varid = "latc")
+
+```
+
+
+### Validating fvcom::mesh matches ncvar_get indices
+
+Here is the critical unknown. Are the node ID's that come from the mesh simple feature collections that Ben's package generate able to be passed directly as index numbers to these variable vectors?
+
+
+```{r}
+# VTS mesh is somehow smallest so lets use that one:
+proj_path <- cs_path("mills", "Projects/Lobster ECOL")
+fvcom_out <- fvcom_out <- str_c(proj_path, "FVCOM_support/")
+vts_mesh <- read_sf(str_c(fvcom_out, "VTSSurvey_FVCOM_nodes.geojson"))
+
+# What Does the mesh look like that we saved:
+# Check them
+ggplot() +
+  geom_sf(data = vts_mesh, aes(color = "vts survey inbounds mesh"))
+
+
+
+```
+
+The above map is what we hope will be selected if we index the unique node ids out. Does not work how I was hoping...
+
+
+```{r}
+
+
+# Mesh has index information for zonal elements and nodes
+node_ids <- st_drop_geometry(vts_mesh) %>% 
+  select(-elem) %>% 
+  pivot_longer(cols = everything(), names_to = "triangle_point", values_to = "node_id") %>% 
+  distinct(node_id) %>% 
+  pull()
+
+# zonal elements
+elem_ids <- distinct(vts_mesh, elem) %>% pull()
+
+
+# Subset lat & lon using those indices
+lat_vts <- lat[node_ids]
+lon_vts <- lon[node_ids]
+lonc_vts <- lonc[elem_ids]
+latc_vts <- latc[elem_ids]
+
+
+data.frame(x = lon_vts, y = lat_vts) %>% 
+  ggplot() +
+  geom_point(aes(x, y, color = "Nodes Indexed")) +
+  geom_sf(data = vts_mesh, aes(color = "Desired Nodes"))+
+  labs(title = "Fail, nodes don't match the index id's")
+
+```
+
+### What if its doing it by the zonal elements?
+
+```{r}
+# Subset lat & lon using those indices
+
+
+data.frame(x = lonc_vts, y = latc_vts) %>% 
+  ggplot() +
+  geom_point(aes(x, y, color = "Zonal Elements Indexed")) +
+  geom_sf(data = vts_mesh, aes(color = "Desired Nodes"))+
+  labs(title = "Fail, nodes don't match the index id's")
+```
+
+
+### Going to Have to Query them...
+
+
+```{r}
+
+# Use coordinates to get at the nodes via lat/lon matching
+vts_coords <- st_coordinates(vts_mesh) %>% as.data.frame() %>% 
+  distinct(X, Y)
+
+# What about these
+manual_index <- which(lon %in% vts_coords$X & lat %in% vts_coords$Y)
+manual_lon <- lon[manual_index]
+manual_lat <- lat[manual_index]
+manual_sst <- sur_temp[manual_index]
+
+# Try again
+data.frame(x = manual_lon, y = manual_lat) %>% 
+  ggplot() +
+  geom_point(aes(x, y, color = "Nodes Indexed")) +
+  geom_sf(data = vts_mesh, aes(color = "Desired Nodes"))+
+  labs(title = "Fail, only some of the coordinates find matches")
+
+# 
+# # need to make sure they are checking in pairs
+# map2_dfr(lon, lat, function(x,y){
+#   which_lon <- which(x %in% vts_coords$X)
+#   which_lat <- which(y %in% vts_coords$Y)
+#   index <- which_lon[which(which_lon == which_lat)]
+#   data.frame("index" = index)
+# })
+
+
+```
+
+
+### Can we just round the resolution down?
+
+```{r}
+# Might be partial matching because of resolution differences
+vts_coords %>% round(4)
+lon %>% round(4)
+
+# What about these
+manual_index <- which(round(lon, 4) %in% round(vts_coords$X, 4) & round(lat, 4) %in% round(vts_coords$Y, 4))
+manual_lon <- lon[manual_index]
+manual_lat <- lat[manual_index]
+manual_sst <- sur_temp[manual_index]
+
+# Try again
+data.frame(x = manual_lon, y = manual_lat) %>% 
+  ggplot() +
+  geom_point(aes(x, y, color = "Nodes Indexed")) +
+  geom_sf(data = vts_mesh, aes(color = "Desired Nodes"))+
+  labs(title = "Slightly Better, only some of the coordinates find matches")
+```
+
+
+
+### What ID's Does {fvcom} generate?
+
+
+
+```{r} 
+fvcom::get_mesh
+```
+
+
+
+ 

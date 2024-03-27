@@ -1,0 +1,304 @@
+---
+title: "Lobster Ecology Spatial Scales"
+format: html
+---
+
+# About
+
+This is the documentation for the spatial scales used in the Lobster-ECOL project. Analyses are performed on three tiers of ascending spatial scales. 
+
+1. The finest resolution operates at the nearshore scale, following the domain of Maine's Juvenile lobster ventless trap survey VTS.
+
+2. The next spatial scale for analyses is the scale of region ecological production units. These can be pulled directly from the {ecodata} R package. This is the scale that regional ecology is thought to function at, and it is also the scale at which the outputs from the state of the ecosystem report can be found.
+
+3. The final scale is that of the broader northeast shelf region. This will capture broad scale dynamics at the scale of the federal trawl survey, the gulf stream index, and other regional climate forcings.
+
+
+The second and 3rd scales are already handled by the science center. The rest of this report will document the creation of the VTS polygon and raster grid, and where everything gets saved for the project.
+
+
+```{r}
+library(tidyverse)
+library(gmRi)
+library(sf)
+library(rnaturalearth)
+library(terra)
+library(tidyterra)
+
+proj_path <- cs_path("mills", "Projects/Lobster ECOL")
+vts_domain_path <- str_c(proj_path, "lobster_data/lobster_spatial_data/")
+
+maine <- ne_states("united states of america", returnclass = "sf")  %>% 
+  filter(name == "Maine")
+new_england <- ne_states("united states of america", returnclass = "sf") %>% 
+  filter(name %in% c("Maine", "New Hampshire", "Vermont", "Massachusetts"))
+
+```
+
+
+
+
+## Preparing VTS Survey Domain
+
+This domain area operates near-shore and requires the higher resolution datasets like FVCOm
+
+
+#### Load Points, Find Spacing
+
+Spacing seems like its 1/10th degree. Might save some work to not transform it.
+
+```{r}
+# Load the domain
+vts_pts <- read_sf(str_c(vts_domain_path, "PotentialVTSPoints.shp"))
+
+
+# Put it into a projected crs
+nad1983_utm19 <- "+proj=utm +zone=19 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs"
+
+# Project
+vts_meters <- st_transform(vts_pts, nad1983_utm19)
+
+
+# Loads as points
+ggplot() +
+  geom_sf(data = vts_meters, shape = 3, color = "gray70", alpha = 0.25) +
+  geom_sf(data = filter(vts_pts, SITE_ID %in% c(13713, 13714)), shape = 3, color = "orange", size  = 3) + # Neighboring Points
+  geom_sf(data = filter(vts_meters, SITE_ID %in% c(13950:13956)), aes(color = SITE_ID), shape = 3, size = 3) +
+  geom_sf(data = filter(vts_meters, SITE_ID %in% c(13956,13952)), aes(color = SITE_ID), shape = 3, size  = 3) +
+  theme_classic() +
+  labs(title = "Identifying adjacent sites for measuring distances")
+
+
+# # Get the distance between points
+# # horizontal EW ~1200
+# st_distance(
+#   filter(vts_meters, SITE_ID == 13955),
+#   filter(vts_meters, SITE_ID == 13956)
+# )
+# 
+# # NS ~1800
+# st_distance(
+#   filter(vts_pts, SITE_ID == 13952),
+#   filter(vts_pts, SITE_ID == 13956)
+# )
+
+
+# Try to get the average distances... doesn't work well because they are not in neat rows
+# st_coordinates(vts_meters) %>% as.data.frame() %>% distinct(X) %>% pull() %>% sort() %>% diff() %>% mean()
+# st_coordinates(vts_meters) %>% as.data.frame() %>% distinct(Y) %>% pull() %>% sort() %>% diff() %>% mean()
+
+
+# #wtf is the actual distance on average...
+# st_coordinates(vts_pts) %>% as.data.frame() %>% distinct(X) %>% pull() %>% sort() %>% diff() %>% mean()
+# st_coordinates(vts_pts) %>% as.data.frame() %>% distinct(Y) %>% pull() %>% sort() %>% diff() %>% mean()
+
+
+```
+
+
+#### Convert Points to Polygon Grid
+
+If we have an approximate distance we can then create a grid from the point locations using `sf::st_make_grid` which will make rectangular polygons of a set size at these sampling locations. 
+
+```{r}
+#| label: grid from points
+
+# Need to convert to a grid, can use the coca_shiny grid approach
+
+
+# Now drop any of those jabronis that don't overlap with points, i.e. islands and edge boundaries
+# Take the same data, and make a fishnet grid
+# Will preserve the other columns if they exist
+sf_to_grid <- function(in_sf, grid_length, square = T){
+  
+  # Use that data to define a grid with dimensions of length_km*length_km
+  sf_grid <- st_make_grid(
+    x = in_sf,
+    cellsize = c(grid_length, grid_length), 
+    what = "polygons", 
+    square = square) %>% 
+    st_as_sf() 
+  
+  # Use the original data to trim it so its just cells that overlap the points
+  sf_out <- sf_grid %>% 
+    st_filter(in_sf, .predicate = st_contains) %>%
+    st_as_sf() 
+  
+  # Join the clipped grid to the dataset
+  sf_out <- st_join(sf_out, in_sf, join = st_intersects)
+  # Return the results  
+  return(sf_out)
+  
+}
+
+
+# #------ Meters Grid
+# vts_grid <- sf_to_grid(in_sf = vts_meters, grid_length = 2000)
+# 
+# 
+# # This seems fine
+# ggplot() + 
+#   geom_sf(data = vts_grid, fill = "gray80") +
+#   geom_sf(data= vts_meters, shape = 3, size = 0.5, color = "gray20")+
+#   theme_classic()
+
+
+#----- lat/lon grid
+vts_lon_grid <- sf_to_grid(in_sf = vts_pts, grid_length = 0.02)
+
+
+
+```
+
+
+
+#### Hole-Filling & Crumb Dropping
+
+Once we have the grid as polygons, we can dissolve the boundaries to get one or more unified extents. Then we can tidy up any odds and ends using the `smoothr` package.
+
+
+For this step we can take the vts_grid polygons and use st_union to get one filled in area. Then make a raster for that region. If we give those the "no sampling" value of -9999 or something and the gappy grid a value of one, then we should have what we need for a couple different uses.
+
+
+
+```{r}
+# Use smoothr package to fill holes
+lon_grid_filled <- smoothr::fill_holes(st_union(vts_lon_grid), threshold = 100000000)
+
+# And drop crumbs - optional smoothing
+lon_grid_filled <- smoothr::drop_crumbs(lon_grid_filled, threshold = 1000000) #%>% 
+  #smoothr::smooth(method = "chaikin")
+
+```
+
+
+
+
+####  Convert to a Raster for Masking
+
+This step takes the polygon grid and creates a raster counterpart that will be useful for routines in the future.
+
+```{r}
+# Convert to an actual raster
+
+# Make a template in the desired resolution
+# m_template   <- rast(vect(vts_grid), res = 2000)
+# meters_raster <- rasterize(vect(vts_grid), m_template)
+lon_template <- rast(vect(vts_lon_grid), res = 0.02)
+
+# Then rasterize to polygons
+
+lon_raster <- rasterize(vect(vts_lon_grid), lon_template)
+plot(lon_raster, col = "lightblue")
+
+
+# # How does it look?
+# ggplot() +
+#   geom_sf(data = maine) +
+#   geom_spatraster(data = lon_raster, show.legend = FALSE, alpha = 0.4) +
+#   scale_fill_continuous(na.value = "transparent") +
+#   theme_classic() +
+#   coord_sf(xlim = c(-70.5, -67), ylim = c(43, 44.75))
+```
+
+
+####  Distinguish Sampling Holes in Raster from NA's
+
+If we use the broader area's polygon and create a raster from that we can capture the holes within the VTS area that are not sampled.
+
+
+```{r}
+# Then rasterize to polygons
+lon_raster_all <- rasterize(vect(lon_grid_filled), lon_template)
+lon_raster_all[lon_raster_all==1] <- 0
+
+
+# Combine to one layer
+lon_raster_binary <- terra::mosaic(lon_raster, lon_raster_all, fun = "max")
+
+
+# How does it look?
+ggplot() +
+  geom_spatraster(data = lon_raster_binary, alpha = 0.4) +
+  geom_sf(data = maine) +
+  theme_classic() +
+  scale_fill_distiller(
+    breaks = c(0,0.5,1), 
+    na.value = "transparent", 
+    labels = c("Not Sampled", "-", "Sampled"),
+    palette = "RdYlGn", direction = 1) +
+  coord_sf(xlim = c(-70.5, -67), ylim = c(43, 44.75))
+```
+
+
+
+
+## Set and Save Boundaries
+
+The following maps display the boundaries used, and when relevant, their save locations.
+
+
+### a. VTS Survey Polygon
+
+This is what we created above, and where it is stored for the project:
+
+`Box/Mills Lab/Projects/Lobster ECOL/Ecological Data/Spatial_Boundaries/VTSsurvey_nearshore_area.geojson`
+
+```{r}
+
+
+ggplot() +
+  geom_sf(data = lon_grid_filled, fill = "orange", alpha = 0.4) +
+  geom_sf(data = maine) +
+  labs(title = "VTS Nearshore Region") +
+  theme_classic() 
+
+
+# Save it
+lon_grid_filled %>% 
+  st_as_sf() %>% 
+  mutate(id = "VTS Survey Grid filled") %>% 
+  rename(geometry = x) %>% 
+  st_write(
+    str_c(proj_path, "Ecological Data/Spatial_Boundaries/VTSsurvey_nearshore_area.geojson"), 
+    overwrite = T)
+```
+
+
+### b. Ecological Production Units
+
+```{r}
+# These are from ecodata, but are already saved locally
+# not necessary to duplicate
+res_shapes <- cs_path("res", "Shapefiles")
+epu_path <- str_c(res_shapes, "EPU/")
+gom_epu <- read_sf(str_c(epu_path, "individual_epus/GOM.geojson"))
+gb_epu <- read_sf(str_c(epu_path, "individual_epus/GB.geojson"))
+
+
+ggplot() +
+  geom_sf(data = gom_epu, aes(fill = "Gulf of Maine"), alpha = 0.4) +
+  geom_sf(data = gb_epu, aes(fill = "Georges Bank"), alpha = 0.4) +
+  geom_sf(data = new_england) +
+  scale_fill_gmri() +
+  labs(title = "Regional EPU's", fill ="") +
+  theme_classic() 
+
+```
+
+
+### Shelf Scale
+
+```{r}
+all_shelf <- read_sf(str_c(epu_path, "EPU_extended.shp"))
+st_crs(all_shelf) <- st_crs(gom_epu)
+
+ggplot() +
+  geom_sf(data = all_shelf, fill = gmri_cols("gmri green"), alpha = 0.4) +
+  geom_sf(data = new_england) +
+  scale_fill_gmri() +
+  labs(title = "Shelf-Wide Scale", fill ="") +
+  theme_classic() 
+
+```
+
