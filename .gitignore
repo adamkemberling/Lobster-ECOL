@@ -50,3 +50,5 @@ rsconnect/
 
 # Preview of readme
 README.html
+
+data/*
