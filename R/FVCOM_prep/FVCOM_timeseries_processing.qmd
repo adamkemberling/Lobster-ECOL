@@ -11,7 +11,7 @@ format:
     self-contained: true
 editor: visual
 execute: 
-  echo: false
+  echo: true
   warning: false
   message: false
   fig.height: 6
@@ -69,7 +69,7 @@ plot(sf::st_geometry(gom3_mesh),
      border = scales::alpha("gray", 0.6), 
      main = "GMRI Monthly FVCOM Coverage - gom3 hindcast")
 
-nc_close(x_early)
+# nc_close(x_early)
 ```
 
 At 2016 NECOFS came online, so after this point we need to be sure we're using the right mesh when indexing nodes of interest to get the data we want.
@@ -85,15 +85,15 @@ nc_name <- str_c(box_fvcom, yr, mon, ".nc")
 # Open (lazy-load) the netcdf connection
 x_late <- nc_open(nc_name)
 
-# Can also get the mesh itself as a simple feature collection
-necofs_mesh <- get_mesh_geometry(x_late, what = 'lonlat') 
+# # Can also get the mesh itself as a simple feature collection
+# necofs_mesh <- get_mesh_geometry(x_late, what = 'lonlat') 
+# 
+# # And we can use the mesh to request variables with it
+# plot(sf::st_geometry(necofs_mesh), 
+#      border = scales::alpha("gray", 0.6), 
+#      main = "GMRI Monthly FVCOM, NECOFS Mesh")
 
-# And we can use the mesh to request variables with it
-plot(sf::st_geometry(necofs_mesh), 
-     border = scales::alpha("gray", 0.6), 
-     main = "GMRI Monthly FVCOM, NECOFS Mesh")
-
-nc_close(nc_late)
+# nc_close(x_late)
 ```
 
 
@@ -141,10 +141,10 @@ mesh_trim <- function(mesh, domain){
 
 
 
-# Flag the locations that are within the domain
-vts_mesh <- mesh_trim(mesh = mesh, domain = vts_poly)
-gom_mesh   <- mesh_trim(mesh = gom3_mesh, domain = gom_poly)
-gb_mesh   <- mesh_trim(mesh = gom3_mesh, domain = gb_poly)
+# Flag the locations that are within the domain, use them for next step
+vts_mesh <- mesh_trim(mesh = gom3_mesh, domain = vts_poly)
+gom_mesh <- mesh_trim(mesh = gom3_mesh, domain = gom_poly)
+gb_mesh  <- mesh_trim(mesh = gom3_mesh, domain = gb_poly)
 
 ```
 
@@ -152,17 +152,19 @@ gb_mesh   <- mesh_trim(mesh = gom3_mesh, domain = gb_poly)
 ### Validate the Process for 1 Month
 
 ```{r}
-# variables
+#| eval: false
+
+# variables we want
 node_var_list <- c('temp', 'salinity')
 
-# Can we pass multiple time indices to get vars
-# ncvar_get(x, "time") # Isn't in time units
-time_dim <- fvcom_time(x)
+# Get the time dimensions
+time_dim <- fvcom_time(x_early)
 
 
-# Then Can we Grab what we want?
+# get_mesh will average over the time indices its given
+# Needs a dataset, a depth level, a mesh, and the time index value(s)
 surface_vars <- get_mesh(
-  x, # Dataset lazyloaded with ncdf4 from THREDDS 
+  x_early, # Dataset lazyloaded with ncdf4 from THREDDS 
   y = 1, # integer, or indices for siglay or siglev (depth indices)
   vars = c(node_var_list),  # Variables we want
   mesh = vts_mesh, # Mesh to get them for
@@ -285,6 +287,7 @@ local_fvcom_to_timeseries <- function(
     .id = "date")
 
 }
+
 ```
 
 
@@ -294,11 +297,11 @@ local_fvcom_to_timeseries <- function(
 
 ```{r}
 #| label: VTS-Timeseries
-#| eval:false
+#| eval: false
 
 # creating vts_fvcom
 
-# How long does this take
+# How long does this take - long time, not efficient
 Sys.time()
 vts_fvcom <-  local_fvcom_to_timeseries(
     start_yr  = 1978, 
@@ -311,11 +314,12 @@ vts_fvcom <-  local_fvcom_to_timeseries(
   dt = as.Date(str_c(yr, mn, "01", sep = "-")))
 Sys.time()
 
-
+# Plot Check
 vts_fvcom  %>% 
   ggplot(aes(dt, surf_temp)) +
   geom_line()
 
+# Save
 # write_csv(vts_fvcom, here::here("data/fvcom_vts_area.csv"))
 ```
 
@@ -324,24 +328,10 @@ vts_fvcom  %>%
 
 ```{r}
 #| label: Gulf-of-Maine-Timeseries
-#| eval:false
-
-# # So I got nothing on the full pull...
-# gom_small <- local_fvcom_to_timeseries(
-#     start_yr  = 1978, 
-#     end_yr    = 1979, 
-#     mesh      = gb_mesh, 
-#     folder    = cs_path("res", "FVCOM/FVCOM_gom3_mon_means"), 
-#     var_names = c("temp", "salinity"))  %>% 
-#   mutate(
-#   yr = str_sub(date, 1, 4),
-#   mn = str_sub(date, 5, 6),
-#   dt = as.Date(str_c(yr, mn, "01", sep = "-")))
+#| eval: false
 
 
-
-
-# time these too
+# Time the processing
 Sys.time()
 gom_fvcom <-  local_fvcom_to_timeseries(
     start_yr  = 1978, 
@@ -355,12 +345,12 @@ gom_fvcom <-  local_fvcom_to_timeseries(
   dt = as.Date(str_c(yr, mn, "01", sep = "-")))
 Sys.time()
 
-
-
+# Plot
 gom_fvcom  %>% 
   ggplot(aes(dt, surf_temp)) +
   geom_line()
 
+# Save
 # write_csv(gom_fvcom, here::here("data/fvcom_gom_area.csv"))
 ```
 
@@ -368,21 +358,9 @@ gom_fvcom  %>%
 
 ```{r}
 #| label: Georges-Bank-Timeseries
-#| eval:false
-# and georges bank
+#| eval: false
 
-
-# # So I got nothing on the full pull...
-# gb_small <- local_fvcom_to_timeseries(
-#     start_yr  = 1978, 
-#     end_yr    = 1979, 
-#     mesh      = gb_mesh, 
-#     folder    = cs_path("res", "FVCOM/FVCOM_gom3_mon_means"), 
-#     var_names = c("temp", "salinity"))  %>% 
-#   mutate(
-#   yr = str_sub(date, 1, 4),
-#   mn = str_sub(date, 5, 6),
-#   dt = as.Date(str_c(yr, mn, "01", sep = "-")))
+# Process georges bank
 
 
 # Run the full thing
@@ -402,20 +380,68 @@ Sys.time()
 
 # Plot Check
 gb_fvcom  %>% 
-# gb_small  %>% 
   ggplot(aes(dt, surf_temp)) +
   geom_line()
 
+# Save
 # write_csv(gb_fvcom, here::here("data/fvcom_gb_area.csv"))
 ```
 
 
 
 
-### Review What we Have Processed:
+# Review What we Have Processed:
 
 ```{r}
+# Read in the processed timeseries
 vts_fvcom <- read_csv(here::here("data/fvcom_vts_area.csv"))
 gom_fvcom <- read_csv(here::here("data/fvcom_gom_area.csv"))
 gb_fvcom <- read_csv(here::here("data/fvcom_gb_area.csv"))
+
+
+# combine them into one df for plotting convenience
+all_areas <- bind_rows(
+  mutate(vts_fvcom, area = "Nearshore - VTS"),
+  mutate(gom_fvcom, area = "Offshore - Gulf of Maine"),
+  mutate(gb_fvcom, area = "Offshore - Georges Bank")
+) %>% pivot_longer(
+  cols = c(2:5),
+  names_to = "var_name",
+  values_to = "val"
+)
 ```
+
+
+::: {.panel-tabset}
+
+### Monthly
+
+
+```{r}
+all_areas %>% 
+ggplot() +
+  geom_line(aes(dt, val, color = area), linewidth = 1, alpha = 0.6) +
+  facet_grid(var_name~., scales = "free") +
+  scale_color_gmri() +
+  theme_gmri()
+```
+
+
+
+### Yearly
+
+
+```{r}
+all_areas %>% 
+  group_by(area, var_name, yr = lubridate::year(dt)) %>% 
+  summarise(val = mean(val, na.rm = T)) %>% 
+ggplot() +
+  geom_line(aes(yr, val, color = area), linewidth = 1, alpha = 0.6) +
+  facet_grid(var_name~., scales = "free") +
+  scale_color_gmri() +
+  theme_gmri()
+```
+
+
+:::
+

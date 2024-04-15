@@ -11,7 +11,7 @@ format:
     self-contained: true
 editor: visual
 execute: 
-  echo: false
+  echo: true
   warning: false
   message: false
   fig.height: 6
@@ -288,22 +288,27 @@ p1 / p2
 This is the last step to go from the monthly averages in the mesh to a timeseries product
 
 ```{r}
-# Yea probably:
+# Yea probably
+# Here is the regrid and the conversion to a df
+# needs to be done for the surface and bottom stacks
 
+# Regrid
 var_stack <- raster::stack(
   sapply(
-    #c(node_var_list, elem_var_list), 
-    node_var_list, 
-    function(f) { fvcom::rasterize(bottom_vars, field = f) }, 
-    simplify = FALSE))
+   node_var_list, 
+   function(f) { fvcom::rasterize(bottom_vars, field = f) }, 
+  simplify = FALSE))
 
-# Get the average
+# Get the average of the stack,
+# append "surf_" to the names for combining with bottom later
 var_df <- var_stack %>% 
   cellStats(mean, na.rm = T) %>% 
   t() %>% 
   as.data.frame() %>% 
   setNames(str_c("surf_", names(.)))
 
+# This will need "var_stack" to be the bottom variable stack ultimately
+# just pretending here for convenience
 bot_df <- var_stack %>% 
   cellStats(mean, na.rm = T) %>% 
   t() %>% 
@@ -316,224 +321,4 @@ bind_cols(var_df, bot_df)
 
 ```
 
----
 
-# Building Regional Monthly Timseries:
-
-The code below will process the in-house inventory of FVCOM monthly mean data into timeseries for regions of interest relevant to the LOBSTER-ECOL project.
-
-
-
-
-```{r}
-# Make a function to do all the steps:
-
-library(furrr)
-
-#' @title Summarize Monthly FVCOM for Mesh Subset
-#' 
-#' 
-#' @description Grabs surface and bottom measurements from fvcom data stored on box,
-#' averages them across the full time dimension of each file, and returns the whole thing
-#' as one timeseries with date, and surface/bottom measures for each variable
-#'
-#' @param start_yr starting year for range of dates
-#' @param end_yr ending year for range of dates
-#' @param mesh fvcom mesh sf object created with {fvcom} to determine nodes
-#' @param folder path to folder where fvcom files are stored
-#' @param var_names c() of variable names to grab at surface and bottom
-#'
-#' @return
-#' @export
-#'
-#' @examples
-local_fvcom_to_timeseries <- function(
-    start_yr  = 1978, 
-    end_yr    = 2018, 
-    mesh      = vts_mesh, 
-    folder    = cs_path("res", "FVCOM/FVCOM_gom3_mon_means"), 
-    var_names = c("temp", "salinity")){
-  
-  # Path structures
-  box_fvcom <- folder
-  yrs <- start_yr:end_yr
-  mons <- str_pad(1:12, side = "left", width = 2, pad = "0")
-  file_list <- map(yrs, ~str_c(.x, mons)) %>% unlist()
-  file_list <- setNames(file_list, file_list)
-
-  #return(file_list)
-  # Map through the file paths and get the monthly averages as a dataframe
-  monthly_vars <- future_map_dfr(
-    file_list,
-    possibly(
-      .f = function(date_info, file_time){
-      
-      # Build the full path to the netcdf file
-      fpath <- str_c(box_fvcom, date_info, ".nc")
-      # Open (lazy-load) the netcdf connection
-      x <- nc_open(fpath)
-      
-      # Time dimension info
-      time_dim <- fvcom_time(x)
-      
-      # Grab surface variables
-      surface_vars <- get_mesh(
-          x, # Dataset lazyloaded with ncdf4 from THREDDS 
-          y = 1, # integer, or indices for siglay or siglev (depth indices)
-          vars = var_names,  # Variables we want
-          mesh = mesh, # Mesh to get them for
-          time = c(1:length(time_dim))) # All time intervals
-      
-      # Grab Bottom Variables
-      bottom_vars <- get_mesh(
-          x, 
-          y = dim(ncvar_get(x, "siglay"))[2], # Bottom depth layer
-          vars = c(node_var_list), 
-          mesh = mesh, 
-          time = c(1:length(time_dim))) # All time intervals
-        
-      # regrid and get means
-      surface_vars <- raster::stack(
-        sapply(
-          var_names, 
-          function(f) { fvcom::rasterize(surface_vars, field = f) }, 
-          simplify = FALSE)) %>% 
-        cellStats(mean, na.rm = T) %>% 
-        t() %>% 
-        as.data.frame() %>% 
-        setNames(str_c("surf_", names(.)))
-      
-      # and regrid the bottom
-      bottom_vars <- raster::stack(
-        sapply(
-          var_names, 
-          function(f) { fvcom::rasterize(bottom_vars, field = f) }, 
-          simplify = FALSE)) %>% 
-        cellStats(mean, na.rm = T) %>% 
-        t() %>% 
-        as.data.frame() %>% 
-        setNames(str_c("bot_", names(.)))
-      
-      # Combine
-      month_summs <- bind_cols(surface_vars, bottom_vars)
-      
-      # Close connection:
-      nc_close(x)
-      
-      # Return the table
-      return(month_summs)
-      }, 
-      # Spit out NA's if there's trouble
-      otherwise = data.frame(
-        "surf_temp" = NA, 
-        "surf_salinity" = NA, 
-        "bot_temp" = NA,
-        "bot_salinity" = NA)), 
-    .id = "date")
-
-}
-```
-
-
-## Get Monthly Summaries
-
-```{r}
-# clean up the environment
-rm(x, surface_vars, bottom_vars)
-```
-
-### VTS Survey Area
-
-
-```{r}
-# creating vts_fvcom
-
-# How long does this take
-Sys.time()
-vts_fvcom <-  local_fvcom_to_timeseries(
-    start_yr  = 1978, 
-    end_yr    = 2020, 
-    mesh      = vts_mesh, 
-    folder    = cs_path("res", "FVCOM/FVCOM_gom3_mon_means"), 
-    var_names = c("temp", "salinity")) %>% mutate(
-  yr = str_sub(date, 1, 4),
-  mn = str_sub(date, 5, 6),
-  dt = as.Date(str_c(yr, mn, "01", sep = "-")))
-Sys.time()
-
-
-vts_fvcom  %>% 
-  ggplot(aes(dt, surf_temp)) +
-  geom_line()
-
-write_csv(vts_fvcom, here::here("data/fvcom_vts_area.csv"))
-```
-
-
-### Gulf of Maine
-
-```{r}
-# trim the mesh
-gom_mesh   <- mesh_trim(mesh = mesh, domain = gom_poly)
-
-
-# time these too
-Sys.time()
-gom_fvcom <-  local_fvcom_to_timeseries(
-    start_yr  = 1978, 
-    end_yr    = 2020, 
-    mesh      = gom_mesh, 
-    folder    = cs_path("res", "FVCOM/FVCOM_gom3_mon_means"), 
-    var_names = c("temp", "salinity")) %>% 
-  mutate(
-  yr = str_sub(date, 1, 4),
-  mn = str_sub(date, 5, 6),
-  dt = as.Date(str_c(yr, mn, "01", sep = "-")))
-Sys.time()
-
-
-# Plot
-gom_fvcom  %>% 
-  ggplot(aes(dt, surf_temp)) +
-  geom_line(aes(color = "Gulf of Maine")) +
-  geom_line(data = vts_fvcom, aes(color = "VTS Area"))
-
-# save
-write_csv(gom_fvcom, here::here("data/fvcom_gom_area.csv"))
-```
-
-
-### Georges Bank
-
-
-```{r}
-# and georges bank
-gb_mesh   <- mesh_trim(mesh = mesh, domain = gb_poly)
-Sys.time()
-gb_fvcom <-  local_fvcom_to_timeseries(
-    start_yr  = 1978, 
-    end_yr    = 2020, 
-    mesh      = gb_mesh, 
-    folder    = cs_path("res", "FVCOM/FVCOM_gom3_mon_means"), 
-    var_names = c("temp", "salinity")) %>% 
-  mutate(
-  yr = str_sub(date, 1, 4),
-  mn = str_sub(date, 5, 6),
-  dt = as.Date(str_c(yr, mn, "01", sep = "-")))
-Sys.time()
-
-gom_fvcom  %>% 
-  ggplot(aes(dt, surf_temp)) +
-  geom_line()
-
-write_csv(gom_fvcom, here::here("data/fvcom_gb_area.csv"))
-```
-
-
-### Review What we Have Processed:
-
-```{r}
-
-```
-
- 

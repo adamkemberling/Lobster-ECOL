@@ -24,7 +24,7 @@ execute:
 
 This approach will lean on the work of Ben Tupper at Bigelow Labs, and their package fvcom. Many thanks to Ben and their team for their work on this.
 
-Read more about their package here: https://github.com/BigelowLab/fvcom 
+Read more about their package here: https://github.com/BigelowLab/fvcom
 
 ```{r}
 #| eval: false
@@ -32,9 +32,6 @@ Read more about their package here: https://github.com/BigelowLab/fvcom
 # To install fvcom
 #devtools::install_github("BigelowLab/fvcom")
 ```
-
-
-
 
 ```{r}
 library(sf) 
@@ -66,7 +63,7 @@ x <- nc_open(uri)
 
 ### Working with the Nodes & Elements
 
-We will use this Jan, 2019 data to get information about the Nodes we wish to gather data from. 
+We will use this Jan, 2019 data to get information about the Nodes we wish to gather data from.
 
 ```{r}
 # Nodes and Elements
@@ -79,8 +76,6 @@ head(fvcom_time(x, internal = TRUE), n = 6)
 # Can extract variables using node or element
 sst <- get_node_var(x, var = "temp")
 ```
-
-
 
 ### Working with the Mesh using Simple Features
 
@@ -98,22 +93,19 @@ plot(sf::st_geometry(gom4_mesh), border = scales::alpha("gray", 0.6))
 
 ```
 
-
 ### Finding the Nodes We Care About:
 
-We can do ourselves a favor by identifying which nodes we're  interested in before pulling variables. There are a couple different approaches to try:
+We can do ourselves a favor by identifying which nodes we're interested in before pulling variables. There are a couple different approaches to try:
 
- 1. Use the nodes as points, use st_intersect to identify which are within the areas we are studying. \
- **2. Use the mesh itself, to preserve the triangular geometries. Then use the {fvcom} functions to pull data**
- 
- 
+1.  Use the nodes as points, use st_intersect to identify which are within the areas we are studying.\
+    **2. Use the mesh itself, to preserve the triangular geometries. Then use the {fvcom} functions to pull data**
+
 # Areas We are Interested in
 
- 1. VTS Survey, Nearshore Lobster Habitat
- 2. GOM & GB Ecological Production Units
- 3. Northeast Shelf
- 
- 
+1.  VTS Survey, Nearshore Lobster Habitat
+2.  GOM & GB Ecological Production Units
+3.  Northeast Shelf
+
 ```{r}
 # Read things in
 vts_poly <- read_sf(str_c(proj_path, "Ecological Data/Spatial_Boundaries/VTSsurvey_nearshore_area.geojson"))
@@ -127,7 +119,6 @@ shelf_poly <- read_sf(str_c(epu_path, "EPU_extended.shp"))
 st_crs(shelf_poly) <- st_crs(gom_poly)
 
 ```
-
 
 ## Mesh Containment Within an Area
 
@@ -182,7 +173,6 @@ p1 <- ggplot(gom_vars) +
 p1
 ```
 
-
 ### Getting Averages Over Multiple Times
 
 ```{r}
@@ -211,7 +201,6 @@ p2 <- ggplot(gom_vars_t) +
 p2 
 ```
 
-
 ### Bottom Temp:
 
 I had originally done this with January and the bottom temperatures were higher than surface temperatures. Revisiting it with July Data
@@ -237,7 +226,6 @@ p3 <- ggplot(gom_vars_bot) +
 p3
 ```
 
-
 ### Surface/Bottom Comparison
 
 Compare the difference in surface and bottom measurements:
@@ -248,8 +236,6 @@ Compare the difference in surface and bottom measurements:
 
 
 ```
-
-
 
 ## Extracting Vector Elements
 
@@ -300,7 +286,6 @@ ggplot(gom_vars) +
 
 ```
 
-
 ### Interpolate Currents to Regular Grid
 
 ```{r}
@@ -321,15 +306,14 @@ rasterVis::vectorplot(
   main = 'Surface Currents - Regular Grid')
 ```
 
----
+------------------------------------------------------------------------
 
 # Next Steps - GOM3 Node/Data Matching
 
 To go back further than 2016 we need to use the gom3 hindcast records. These have a different file location on the THREDDS directory, and we'll need to confirm the grid structure and variables are consistent across these different model runs.
 
+#### Verify that the IDS for nodes and elements are the same between NECOFS and FVCOMGom3. 
 
-#### Verify that the IDS for nodes and elements are the same between NECOFS and FVCOMGom3. \
- 
 If we want to go back further in time then NECOFS won't yet be online and we'll need to use data from the FVCOM GOM3 hindcast. Best-case scenario these mesh id's match so we can append the time-periods together
 
 ```{r}
@@ -389,15 +373,11 @@ fvcom_time(gom3_x) %>%
 
 ```
 
-
-
-
 #### Save Node/Element ID's for regions of interest
 
 Now that we know that the node and element ID's are consistent across GOM3 & NECOFS, we can use the approach above to save the mesh information for areas within the regions we are looking at:
- 
-These can be used if-needed to limit the data being transferred over the OPeNDAP connection and save us data transfer/processing time. Would also be useful to have just as a means to match points to a standalone mesh geometry.
 
+These can be used if-needed to limit the data being transferred over the OPeNDAP connection and save us data transfer/processing time. Would also be useful to have just as a means to match points to a standalone mesh geometry.
 
 ```{r}
 # Prep CRS
@@ -440,7 +420,6 @@ ggplot() +
 # st_write(gb_mesh, str_c(fvcom_out, "GB_EPU_FVCOM_nodes.geojson"), overwrite = T)
 ```
 
-
 ```{r}
 # How do they look when loaded
 vts_check <- read_sf(str_c(fvcom_out, "VTSSurvey_FVCOM_nodes.geojson"))
@@ -452,26 +431,20 @@ ggplot() +
 
 ```
 
-
----
-
+------------------------------------------------------------------------
 
 # Testing Multiple Dates of Data with Target Mesh
 
-So where are we at:
- * Need to write some code that can open a connection for an area we care about \
-grab 1-4 variables at the surface, and the ones at the bottom \
- * average for the month \
- * and spit them out in a table \
- 
-
+So where are we at: \* Need to write some code that can open a connection for an area we care about\
+grab 1-4 variables at the surface, and the ones at the bottom\
+\* average for the month\
+\* and spit them out in a table\
 
 #### Accessing mesh data for an extended period of time.
- 
+
 We don't need hourly, or even daily records. But we will need to make sure we're aggregating in time correctly and not just grabbing snapshots.
 
 So where we sit now. We know the exact ID's for the nodes and centroids that make complete mesh elements that fall within our area of interest. We aslo know the variables we are interested in, and possibly the time period we want to cover and the temporal resolution we're interested in (months).
-
 
 ```{r}
 # VTS mesh is somehow smallest so lets use that one:
@@ -482,7 +455,6 @@ vts_mesh <- read_sf(str_c(fvcom_out, "VTSSurvey_FVCOM_nodes.geojson"))
 gom3_url = "http://www.smast.umassd.edu:8080/thredds/dodsC/fvcom/hindcasts/30yr_gom3"
 gom3_x <- nc_open(gom3_url)
 ```
-
 
 #### Dealing With Depth
 
@@ -507,9 +479,7 @@ depths[,1]
 depths[,46]
 ```
 
-
 #### Dealing with Date/Sigmas Manually
-
 
 ```{r}
 # So matt gets variables this way:
@@ -528,5 +498,3 @@ ncvar_get(gom3_x, varid = "temp", start =  c(1, 45, 1, 1))
 
 
 ```
-
-
