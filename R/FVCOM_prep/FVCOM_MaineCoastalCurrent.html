@@ -3523,7 +3523,7 @@ vertical-align: -.125em;
 </section>
 <section id="vertical-current-velocity" class="level2">
 <h2 class="anchored" data-anchor-id="vertical-current-velocity">Vertical Current Velocity?</h2>
-<p>It seems like Matt used the vertical movement velocity info in the PCA as well, here is how he grabbed it from the netcdfs, one value each time step () https://github.com/dzaugis/Ecosystem_Indicators/blob/6d21e553614cb06eb7ea02e4546535cf038d7678/Code/FVCOM_shp_extract.Rmd#L254C1-L279C2</p>
+<p>(It seems like Matt used the vertical movement velocity info in the PCA as well, here is how he grabbed it from the netcdfs, one value each time step)[https://github.com/dzaugis/Ecosystem_Indicators/blob/6d21e553614cb06eb7ea02e4546535cf038d7678/Code/FVCOM_shp_extract.Rmd#L254C1-L279C2]</p>
 <div class="cell">
 <details>
 <summary>Code</summary>
@@ -4324,25 +4324,24 @@ window.document.addEventListener("DOMContentLoaded", function (event) {
 <span id="cb11-506"><a href="#cb11-506" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb11-507"><a href="#cb11-507" aria-hidden="true" tabindex="-1"></a><span class="fu">## Vertical Current Velocity?</span></span>
 <span id="cb11-508"><a href="#cb11-508" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb11-509"><a href="#cb11-509" aria-hidden="true" tabindex="-1"></a>It seems like Matt used the vertical movement velocity info in the PCA as well, here is how he grabbed it from the netcdfs, one value each time step ()</span>
-<span id="cb11-510"><a href="#cb11-510" aria-hidden="true" tabindex="-1"></a>https://github.com/dzaugis/Ecosystem_Indicators/blob/6d21e553614cb06eb7ea02e4546535cf038d7678/Code/FVCOM_shp_extract.Rmd#L254C1-L279C2</span>
-<span id="cb11-511"><a href="#cb11-511" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb11-514"><a href="#cb11-514" aria-hidden="true" tabindex="-1"></a><span class="in">```{r}</span></span>
-<span id="cb11-515"><a href="#cb11-515" aria-hidden="true" tabindex="-1"></a><span class="co"># # Need u vert &quot;ua&quot; for this</span></span>
-<span id="cb11-516"><a href="#cb11-516" aria-hidden="true" tabindex="-1"></a><span class="co"># monthly_currents %&gt;% </span></span>
-<span id="cb11-517"><a href="#cb11-517" aria-hidden="true" tabindex="-1"></a><span class="co">#  filter(date %in% c(as.Date(&quot;2010-03-01&quot;), as.Date(&quot;1986-03-01&quot;), as.Date(&quot;2011-03-01&quot;))) %&gt;% </span></span>
-<span id="cb11-518"><a href="#cb11-518" aria-hidden="true" tabindex="-1"></a><span class="co">#   mutate(</span></span>
-<span id="cb11-519"><a href="#cb11-519" aria-hidden="true" tabindex="-1"></a><span class="co">#     vel = sqrt(u_vert^2 + v_vert^2), </span></span>
-<span id="cb11-520"><a href="#cb11-520" aria-hidden="true" tabindex="-1"></a><span class="co">#     PC = if_else(yr == 2010, &quot;positive PC1&quot;, if_else(yr ==1986, &quot;negative PC1&quot;, &quot;neutral PC1&quot;))) %&gt;% </span></span>
-<span id="cb11-521"><a href="#cb11-521" aria-hidden="true" tabindex="-1"></a><span class="co">#   ggplot() + geom_sf(data= ne_us, fill = &quot;grey&quot;) + </span></span>
-<span id="cb11-522"><a href="#cb11-522" aria-hidden="true" tabindex="-1"></a><span class="co">#   geom_segment(aes(x = lon, y = lat, xend=lon+u, yend=lat+v, color = vel), </span></span>
-<span id="cb11-523"><a href="#cb11-523" aria-hidden="true" tabindex="-1"></a><span class="co">#                arrow = arrow(angle = 30, length = unit(0.05, &quot;inches&quot;), type = &quot;closed&quot;)) + </span></span>
-<span id="cb11-524"><a href="#cb11-524" aria-hidden="true" tabindex="-1"></a><span class="co">#   scale_color_viridis_c() + theme_bw() + </span></span>
-<span id="cb11-525"><a href="#cb11-525" aria-hidden="true" tabindex="-1"></a><span class="co">#   coord_sf(datum = &quot;+proj=longlat +datum=NAD83 +no_defs +ellps=GRS80 +towgs84=0,0,0&quot;) + facet_wrap(~PC)+ </span></span>
-<span id="cb11-526"><a href="#cb11-526" aria-hidden="true" tabindex="-1"></a><span class="co">#   theme(panel.background = element_blank(), panel.grid = element_blank(), </span></span>
-<span id="cb11-527"><a href="#cb11-527" aria-hidden="true" tabindex="-1"></a><span class="co">#         axis.title = element_blank(), axis.text = element_blank(),</span></span>
-<span id="cb11-528"><a href="#cb11-528" aria-hidden="true" tabindex="-1"></a><span class="co">#         axis.ticks = element_blank())</span></span>
-<span id="cb11-529"><a href="#cb11-529" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
+<span id="cb11-509"><a href="#cb11-509" aria-hidden="true" tabindex="-1"></a>(It seems like Matt used the vertical movement velocity info in the PCA as well, here is how he grabbed it from the netcdfs, one value each time step)<span class="co">[</span><span class="ot">https://github.com/dzaugis/Ecosystem_Indicators/blob/6d21e553614cb06eb7ea02e4546535cf038d7678/Code/FVCOM_shp_extract.Rmd#L254C1-L279C2</span><span class="co">]</span></span>
+<span id="cb11-510"><a href="#cb11-510" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-513"><a href="#cb11-513" aria-hidden="true" tabindex="-1"></a><span class="in">```{r}</span></span>
+<span id="cb11-514"><a href="#cb11-514" aria-hidden="true" tabindex="-1"></a><span class="co"># # Need u vert &quot;ua&quot; for this</span></span>
+<span id="cb11-515"><a href="#cb11-515" aria-hidden="true" tabindex="-1"></a><span class="co"># monthly_currents %&gt;% </span></span>
+<span id="cb11-516"><a href="#cb11-516" aria-hidden="true" tabindex="-1"></a><span class="co">#  filter(date %in% c(as.Date(&quot;2010-03-01&quot;), as.Date(&quot;1986-03-01&quot;), as.Date(&quot;2011-03-01&quot;))) %&gt;% </span></span>
+<span id="cb11-517"><a href="#cb11-517" aria-hidden="true" tabindex="-1"></a><span class="co">#   mutate(</span></span>
+<span id="cb11-518"><a href="#cb11-518" aria-hidden="true" tabindex="-1"></a><span class="co">#     vel = sqrt(u_vert^2 + v_vert^2), </span></span>
+<span id="cb11-519"><a href="#cb11-519" aria-hidden="true" tabindex="-1"></a><span class="co">#     PC = if_else(yr == 2010, &quot;positive PC1&quot;, if_else(yr ==1986, &quot;negative PC1&quot;, &quot;neutral PC1&quot;))) %&gt;% </span></span>
+<span id="cb11-520"><a href="#cb11-520" aria-hidden="true" tabindex="-1"></a><span class="co">#   ggplot() + geom_sf(data= ne_us, fill = &quot;grey&quot;) + </span></span>
+<span id="cb11-521"><a href="#cb11-521" aria-hidden="true" tabindex="-1"></a><span class="co">#   geom_segment(aes(x = lon, y = lat, xend=lon+u, yend=lat+v, color = vel), </span></span>
+<span id="cb11-522"><a href="#cb11-522" aria-hidden="true" tabindex="-1"></a><span class="co">#                arrow = arrow(angle = 30, length = unit(0.05, &quot;inches&quot;), type = &quot;closed&quot;)) + </span></span>
+<span id="cb11-523"><a href="#cb11-523" aria-hidden="true" tabindex="-1"></a><span class="co">#   scale_color_viridis_c() + theme_bw() + </span></span>
+<span id="cb11-524"><a href="#cb11-524" aria-hidden="true" tabindex="-1"></a><span class="co">#   coord_sf(datum = &quot;+proj=longlat +datum=NAD83 +no_defs +ellps=GRS80 +towgs84=0,0,0&quot;) + facet_wrap(~PC)+ </span></span>
+<span id="cb11-525"><a href="#cb11-525" aria-hidden="true" tabindex="-1"></a><span class="co">#   theme(panel.background = element_blank(), panel.grid = element_blank(), </span></span>
+<span id="cb11-526"><a href="#cb11-526" aria-hidden="true" tabindex="-1"></a><span class="co">#         axis.title = element_blank(), axis.text = element_blank(),</span></span>
+<span id="cb11-527"><a href="#cb11-527" aria-hidden="true" tabindex="-1"></a><span class="co">#         axis.ticks = element_blank())</span></span>
+<span id="cb11-528"><a href="#cb11-528" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
 </code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div></div></div></div></div>
 </div> <!-- /content -->

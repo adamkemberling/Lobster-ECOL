@@ -492,8 +492,7 @@ mcc_corrs %>%
 
 ## Vertical Current Velocity?
 
-It seems like Matt used the vertical movement velocity info in the PCA as well, here is how he grabbed it from the netcdfs, one value each time step ()
-https://github.com/dzaugis/Ecosystem_Indicators/blob/6d21e553614cb06eb7ea02e4546535cf038d7678/Code/FVCOM_shp_extract.Rmd#L254C1-L279C2
+(It seems like Matt used the vertical movement velocity info in the PCA as well, here is how he grabbed it from the netcdfs, one value each time step)[https://github.com/dzaugis/Ecosystem_Indicators/blob/6d21e553614cb06eb7ea02e4546535cf038d7678/Code/FVCOM_shp_extract.Rmd#L254C1-L279C2]
 
 ```{r}
 
