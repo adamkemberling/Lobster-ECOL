@@ -9,7 +9,6 @@ format:
     code-tools: true
     df-print: kable
     self-contained: true
-editor: visual
 execute: 
   echo: true
   warning: false
@@ -26,11 +25,7 @@ As part of a previous project, the FVCOM GOM3 hindcast data was downloaded for l
 
 This quarto doc will serve as documentation of what data was downloaded, the time/space extent, and which variables were stored.
 
-
 A previous team member (Matt Dzaugis) was responsible for accessing and storing the data, and we are grateful for his time/effort in doing so.
-
-
-
 
 ```{r}
 library(raster)
@@ -45,40 +40,41 @@ conflicted::conflict_prefer("select", "dplyr")
 
 proj_path <- cs_path("mills", "Projects/Lobster ECOL")
 fvcom_out <- str_c(proj_path, "FVCOM_support/")
+
+
+
+source(here::here("R/FVCOM_Support.R"))
 ```
 
 ### Accessing Box Inventory
 
-FVCOM is stored with other research community assets in the `RES_Data/` directory.
+FVCOM is stored with other research community assets in the `RES_Data/FVCOM` directory.
 
-The GOM3 Monthly Means can be found in `RES_Data/FVCOM/FVCOM_gom3_mon_means` with files labeled by year and month, yyyymm.nc : \
+The FVCOM Monthly Means can be found in `RES_Data/FVCOM/FVCOM_mon_means` with files labeled by year and month, yyyymm.nc :\
 ex. `197801.nc`
 
 This directory contains to following date range: `1978-01 through 2020-12`
+
+These files were downloaded from the UMASS Dartmouth Threads Catalog, under the `Seaplan_33_Hindcast_v1` directory. The hindcast uses different FVCOM versions "GOM3, GOM4, GOM5" depending on what month the dates are for. GOM3 does not persist past 2016, so more recent data comes from GOM5 and uses a different mesh.
 
 ### Check Spatial Coverage of Monthly Files
 
 The monthly averages appear to cover the full domain of th FVCOM mesh.
 
-Note:
-There is a note in Matt's code about an issue with lon/lat details not saving for the earlier years:  https://github.com/dzaugis/Ecosystem_Indicators/blob/6d21e553614cb06eb7ea02e4546535cf038d7678/Code/FVCOM_shp_extract.Rmd#L42C42-L42C43 
-
+Note: There is a note in Matt's code about an issue with lon/lat details not saving for the earlier years: https://github.com/dzaugis/Ecosystem_Indicators/blob/6d21e553614cb06eb7ea02e4546535cf038d7678/Code/FVCOM_shp_extract.Rmd#L42C42-L42C43
 
 ```{r}
 # We can Access Netcdf Files Directly
-box_fvcom <- cs_path("res", "FVCOM/FVCOM_gom3_mon_means")
+box_fvcom <- cs_path("res", "FVCOM/monthly_means/gom3_mon_means")
 yr <- "2010"
 mon <- "01"
 
 # Build the full path
-nc_name <- str_c(box_fvcom, yr, mon, ".nc")
+nc_name <- str_c(box_fvcom, "gom3_mothly_mean_", yr, mon, ".nc")
 
 # Open (lazy-load) the netcdf connection
 x <- nc_open(nc_name)
-```
 
-
-```{r}
 
 # Can also get the mesh itself as a simple feature collection
 mesh <- get_mesh_geometry(x, what = 'lonlat') 
@@ -90,7 +86,6 @@ plot(sf::st_geometry(mesh),
 
 ```
 
-
 ### Monthly Averaged Variables
 
 It seems like all the variables were brought along.
@@ -98,7 +93,6 @@ It seems like all the variables were brought along.
 ```{r}
 list_vars(x) %>% gt::gt()
 ```
-
 
 ### Time
 
@@ -110,9 +104,11 @@ fvcom_time(x) %>% as.Date()
 
 ### Depth: siglev/siglay
 
+Depth information is contained in two coordinates, "siglay" and "siglev" which are shorthand for sigma layer and sigma level. These are values between zero and -1 and refer to the fraction of the total depth of that location. 0 = surface, -1 = bottom. There are 45 sigma levels in GOM3.
+
 ```{r}
-# x$dim$siglev
-# x$dim$siglay
+# range(x$dim$siglev$vals)
+# range(x$dim$siglay$vals)
 
 
 # Here is how matt handled surface and bottom indexing:
@@ -138,24 +134,21 @@ latc <- ncdf4::ncvar_get(x, varid = "latc")
 
 ```
 
+------------------------------------------------------------------------
 
+## Using fvcom::mesh to get mesh nodeindices
 
----
+The node ID's that come from the mesh simple feature collections that Ben's package generate may be passed directly as index numbers to these variable vectors. Alternatively the FVCOM r package can be used to get process means over a number of time steps.
 
-## Validating fvcom::mesh matches ncvar_get indices
+### Using {fvcom} to Generate a Mesh and Trim it to Areas
 
-Here is the critical unknown. Are the node ID's that come from the mesh simple feature collections that Ben's package generate able to be passed directly as index numbers to these variable vectors?
-
-
-
-### What Does {fvcom} generate as p1/p2/p3?
-
+By loading the FVCOM mesh as a simple features dataframe we can use geoprocessing functions from {sf} to clip the mesh using shapefiles for areas of interest.
 
 ```{r}
 # Do the cropping routine directly on the mesh for these monthly files
  
 # Read things in
-vts_poly            <- read_sf(str_c(proj_path, "Ecological Data/Spatial_Boundaries/VTSsurvey_nearshore_area.geojson"))
+vts_poly           <- read_sf(str_c(proj_path, "Ecological Data/Spatial_Boundaries/VTSsurvey_nearshore_area.geojson"))
 res_shapes         <- cs_path("res", "Shapefiles")
 epu_path           <- str_c(res_shapes, "EPU/")
 gom_poly           <- read_sf(str_c(epu_path, "individual_epus/GOM.geojson"))
@@ -172,17 +165,7 @@ vts_poly   <- st_transform(vts_poly, st_crs(mesh))
 
 
 
-# Flag the locations that are within the domains
-mesh_trim <- function(mesh, domain){
-  
-  # Will remove these columns after st_join
-  names_drop <- names(domain)[which(names(domain)!="geometry")] 
-  new_mesh <- mesh %>%
-    st_join(domain, join = st_within) %>% 
-    drop_na() %>% 
-    dplyr::select(-all_of(names_drop)) 
-  return(new_mesh)
-}
+
 
 # Flag the locations that are within the domain
 vts_mesh <- mesh_trim(mesh = mesh, domain = vts_poly)
@@ -196,7 +179,7 @@ ggplot() +
 
 ```
 
-The node ID's match up, but we need to be careful and be sure that we're using the right mesh for the right dataset. The FVCOM mesh has evolved with different model iterations so being sure that we have the right mesh will be important.
+The node ID's match up, but we need to be careful and be sure that we're using the right mesh for the right dataset. The FVCOM mesh has evolved with different model iterations so being sure that we have the right mesh will be important. After 2016 we will need to repeat the step used to identify nodes.
 
 ```{r}
 # Do the node ids work this time? YES, so we need to be careful so that we match the mesh to the dataset
@@ -227,14 +210,13 @@ data.frame(x = lon_vts, y = lat_vts) %>%
   labs(title = "Success, nodes do match the index id's when mesh is derived from correct dataset")
 ```
 
-
----
+------------------------------------------------------------------------
 
 # Building VTS Mesh Monthly Inventory
 
 Just get surface and bottom salinity, for the nodes that fall within the VTS survey mesh space.
 
-```{r} 
+```{r}
 # Clip worked fine, now can we get the ID's to match:
 # Or do we need to?
 # We can just use fvcom to get variables for each month over the area
@@ -283,42 +265,6 @@ p1 / p2
 
 ```
 
-## Do we need to regrid to average?
+### Post-2016 Inventory
 
-This is the last step to go from the monthly averages in the mesh to a timeseries product
-
-```{r}
-# Yea probably
-# Here is the regrid and the conversion to a df
-# needs to be done for the surface and bottom stacks
-
-# Regrid
-var_stack <- raster::stack(
-  sapply(
-   node_var_list, 
-   function(f) { fvcom::rasterize(bottom_vars, field = f) }, 
-  simplify = FALSE))
-
-# Get the average of the stack,
-# append "surf_" to the names for combining with bottom later
-var_df <- var_stack %>% 
-  cellStats(mean, na.rm = T) %>% 
-  t() %>% 
-  as.data.frame() %>% 
-  setNames(str_c("surf_", names(.)))
-
-# This will need "var_stack" to be the bottom variable stack ultimately
-# just pretending here for convenience
-bot_df <- var_stack %>% 
-  cellStats(mean, na.rm = T) %>% 
-  t() %>% 
-  as.data.frame() %>% 
-  setNames(str_c("bot_", names(.)))
-
-bind_cols(var_df, bot_df)
-
-
-
-```
-
-
+After 2016 the hindcast/fvcom data available as monthly files transitions. These have been downloaded from the Seaplan hindcast archive, but need to be checked for what variables they contain and how the mesh varies between them.

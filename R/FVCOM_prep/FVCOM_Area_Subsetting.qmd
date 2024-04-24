@@ -46,6 +46,9 @@ library(metR)
 # Location to FVCOM project assets:
 proj_path <- cs_path("mills", "Projects/Lobster ECOL")
 fvcom_out <- str_c(proj_path, "FVCOM_support/")
+
+
+source(here::here("R/FVCOM_Support.R"))
 ```
 
 ### Accessing NECOFS GOM4
@@ -312,7 +315,7 @@ rasterVis::vectorplot(
 
 To go back further than 2016 we need to use the gom3 hindcast records. These have a different file location on the THREDDS directory, and we'll need to confirm the grid structure and variables are consistent across these different model runs.
 
-#### Verify that the IDS for nodes and elements are the same between NECOFS and FVCOMGom3. 
+#### Verify that the IDS for nodes and elements are the same between NECOFS and FVCOMGom3.
 
 If we want to go back further in time then NECOFS won't yet be online and we'll need to use data from the FVCOM GOM3 hindcast. Best-case scenario these mesh id's match so we can append the time-periods together
 
@@ -387,19 +390,6 @@ gom_poly   <- st_transform(gom_poly, st_crs(mesh))
 gb_poly    <- st_transform(gb_poly, st_crs(mesh))
 
 
-
-# Flag the locations that are within the domains
-mesh_trim <- function(mesh, domain){
-  # Will remove these columns after st_join
-  names_drop <- names(domain)[which(names(domain)!="geometry")] 
-  
-  new_mesh <- mesh %>%
-    st_join(domain, join = st_within) %>% 
-    drop_na() %>% 
-    dplyr::select(-all_of(names_drop)) 
-  return(new_mesh)
-}
-
 # Run all Four
 vts_mesh   <- mesh_trim(mesh = mesh, domain = vts_poly)
 gom_mesh   <- mesh_trim(mesh = mesh, domain = gom_poly)
@@ -435,10 +425,7 @@ ggplot() +
 
 # Testing Multiple Dates of Data with Target Mesh
 
-So where are we at: \* Need to write some code that can open a connection for an area we care about\
-grab 1-4 variables at the surface, and the ones at the bottom\
-\* average for the month\
-\* and spit them out in a table\
+So where are we at: \* Need to write some code that can open a connection for an area we care about\* grab 1-4 variables at the surface, and the ones at the bottom\* \* average for the month\* \* and spit them out in a table\*
 
 #### Accessing mesh data for an extended period of time.
 

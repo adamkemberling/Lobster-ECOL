@@ -9,7 +9,6 @@ format:
     code-tools: true
     df-print: kable
     self-contained: true
-editor: visual
 execute: 
   echo: true
   warning: false
@@ -20,14 +19,13 @@ execute:
   comment: ""
 ---
 
-## GMRI-Box FVCOM Monthly Inventory
+## GMRI-Box GOM3-FVCOM Monthly Inventory
 
 As part of a previous project, the FVCOM GOM3 hindcast data was downloaded for local (cloud) storage. Data was re-saved as monthly means.
 
 This quarto doc will serve as documentation of how that data was processed into timeseries for regions of interest.
 
 A previous team member (Matt Dzaugis) was responsible for accessing and storing the data, and we are grateful for his time/effort in doing so.
-
 
 ```{r}
 library(raster)
@@ -37,26 +35,32 @@ library(ncdf4)
 library(tidyverse)
 library(gmRi)
 
+# namespace conflicts
 conflicted::conflict_prefer("select", "dplyr")
+conflicted::conflict_prefer("filter", "dplyr")
 
+# Paths
 proj_path <- cs_path("mills", "Projects/Lobster ECOL")
 fvcom_out <- str_c(proj_path, "FVCOM_support/")
-```
 
+# Support functions for FVCOM
+source(here::here("R/FVCOM_Support.R"))
+```
 
 ## Changes in Mesh Over Time
 
-FVCOM/NECOFS mesh structure has been iterated upon over time, with different mesh resolution and the number of variables estimated by the model increasing with newer model iterations moving from gom3 -> NECOFS.
+FVCOM/NECOFS mesh structure has been iterated upon over time, with different mesh resolution and the number of variables estimated by the model increasing with newer model iterations moving from gom3 -\> NECOFS.
 
-For the earlier years (1978-2018) we can use the same mesh:
+For the earlier years (1978-2016) we can use the same mesh:
+
 ```{r}
 # We can Access Netcdf Files Directly
-box_fvcom <- cs_path("res", "FVCOM/FVCOM_gom3_mon_means")
+box_fvcom <- cs_path("res", "FVCOM/monthly_means/gom3_mon_means")
 yr <- "2010"
 mon <- "01"
 
 # Build the full path
-nc_name <- str_c(box_fvcom, yr, mon, ".nc")
+nc_name <- str_c(box_fvcom, "gom3_monthly_mean_", yr, mon, ".nc")
 
 # Open (lazy-load) the netcdf connection
 x_early <- nc_open(nc_name)
@@ -72,74 +76,30 @@ plot(sf::st_geometry(gom3_mesh),
 # nc_close(x_early)
 ```
 
-At 2016 NECOFS came online, so after this point we need to be sure we're using the right mesh when indexing nodes of interest to get the data we want.
-
-```{r}
-# If we change to later dates what do we get?
-yr <- "2017"
-mon <- "01"
-
-# Build the full path
-nc_name <- str_c(box_fvcom, yr, mon, ".nc")
-
-# Open (lazy-load) the netcdf connection
-x_late <- nc_open(nc_name)
-
-# # Can also get the mesh itself as a simple feature collection
-# necofs_mesh <- get_mesh_geometry(x_late, what = 'lonlat') 
-# 
-# # And we can use the mesh to request variables with it
-# plot(sf::st_geometry(necofs_mesh), 
-#      border = scales::alpha("gray", 0.6), 
-#      main = "GMRI Monthly FVCOM, NECOFS Mesh")
-
-# nc_close(x_late)
-```
-
-
-
 # Building Regional Monthly Timseries:
 
 The code below will process the in-house inventory of FVCOM monthly mean data into timeseries for regions of interest relevant to the LOBSTER-ECOL project.
-
 
 ### Trim Mesh to Areas
 
 ```{r}
 # Read things in
-vts_poly            <- read_sf(str_c(proj_path, "Ecological Data/Spatial_Boundaries/VTSsurvey_nearshore_area.geojson"))
-res_shapes         <- cs_path("res", "Shapefiles")
-epu_path           <- str_c(res_shapes, "EPU/")
-gom_poly           <- read_sf(str_c(epu_path, "individual_epus/GOM.geojson"))
-gb_poly            <- read_sf(str_c(epu_path, "individual_epus/GB.geojson"))
+vts_poly    <- read_sf(str_c(proj_path, "Ecological Data/Spatial_Boundaries/VTSsurvey_nearshore_area.geojson"))
+res_shapes  <- cs_path("res", "Shapefiles")
+epu_path    <- str_c(res_shapes, "EPU/")
+gom_poly    <- read_sf(str_c(epu_path, "individual_epus/GOM.geojson"))
+gb_poly     <- read_sf(str_c(epu_path, "individual_epus/GB.geojson"))
 
 
 
 # Prep CRS for polygons
 gom_poly <- st_transform(gom_poly, st_crs(gom3_mesh))
-gb_poly    <- st_transform(gb_poly, st_crs(gom3_mesh))
-vts_poly   <- st_transform(vts_poly, st_crs(gom3_mesh))
-
-
-
-
-# Flag the locations that are within the domains
-mesh_trim <- function(mesh, domain){
-  
-  # Will remove these columns after st_join
-  names_drop <- names(domain)[which(names(domain)!="geometry")] 
-  new_mesh <- mesh %>%
-    st_join(domain, join = st_within) %>% 
-    drop_na() %>% 
-    dplyr::select(-all_of(names_drop)) 
-  return(new_mesh)
-}
+gb_poly  <- st_transform(gb_poly, st_crs(gom3_mesh))
+vts_poly <- st_transform(vts_poly, st_crs(gom3_mesh))
 
 
 
 # trim them:---------
-
-
 
 # Flag the locations that are within the domain, use them for next step
 vts_mesh <- mesh_trim(mesh = gom3_mesh, domain = vts_poly)
@@ -147,7 +107,6 @@ gom_mesh <- mesh_trim(mesh = gom3_mesh, domain = gom_poly)
 gb_mesh  <- mesh_trim(mesh = gom3_mesh, domain = gb_poly)
 
 ```
-
 
 ### Validate the Process for 1 Month
 
@@ -172,128 +131,18 @@ surface_vars <- get_mesh(
   )
 ```
 
-
-
 # Get Monthly Summaries for Regions of Interest
-
-
-
 
 ```{r}
 # Make a function to do all the steps:
 
 library(furrr)
 
-#' @title Summarize Monthly FVCOM for Mesh Subset
-#' 
-#' 
-#' @description Grabs surface and bottom measurements from fvcom data stored on box,
-#' averages them across the full time dimension of each file, and returns the whole thing
-#' as one timeseries with date, and surface/bottom measures for each variable
-#'
-#' @param start_yr starting year for range of dates
-#' @param end_yr ending year for range of dates
-#' @param mesh fvcom mesh sf object created with {fvcom} to determine nodes
-#' @param folder path to folder where fvcom files are stored
-#' @param var_names c() of variable names to grab at surface and bottom
-#'
-#' @return
-#' @export
-#'
-#' @examples
-local_fvcom_to_timeseries <- function(
-    start_yr  = 1978, 
-    end_yr    = 2018, 
-    mesh      = vts_mesh, 
-    folder    = cs_path("res", "FVCOM/FVCOM_gom3_mon_means"), 
-    var_names = c("temp", "salinity")){
-  
-  # Path structures
-  box_fvcom <- folder
-  yrs <- start_yr:end_yr
-  mons <- str_pad(1:12, side = "left", width = 2, pad = "0")
-  file_list <- map(yrs, ~str_c(.x, mons)) %>% unlist()
-  file_list <- setNames(file_list, file_list)
 
-  #return(file_list)
-  # Map through the file paths and get the monthly averages as a dataframe
-  monthly_vars <- map_dfr(
-    file_list,
-    possibly(
-      .f = function(date_info, file_time){
-      
-      # Build the full path to the netcdf file
-      fpath <- str_c(box_fvcom, date_info, ".nc")
-      
-      # Open (lazy-load) the netcdf connection
-      x <- nc_open(fpath)
-      
-      # Time dimension info
-      time_dim <- fvcom_time(x)
-      
-      # Grab surface variables
-      surface_vars <- get_mesh(
-          x, # Dataset lazyloaded with ncdf4 from THREDDS 
-          y = 1, # integer, or indices for siglay or siglev (depth indices)
-          vars = var_names,  # Variables we want
-          mesh = mesh, # Mesh to get them for
-          time = c(1:length(time_dim))) # All time intervals
-      
-      # Grab Bottom Variables
-      bottom_vars <- get_mesh(
-          x, 
-          y = dim(ncvar_get(x, "siglay"))[2], # Bottom depth layer
-          vars = var_names, 
-          mesh = mesh, 
-          time = c(1:length(time_dim))) # All time intervals
-        
-      # regrid and get means
-      surface_vars <- raster::stack(
-        sapply(
-          var_names, 
-          function(f) { fvcom::rasterize(surface_vars, field = f) }, 
-          simplify = FALSE)) %>% 
-        cellStats(mean, na.rm = T) %>% 
-        t() %>% 
-        as.data.frame() %>% 
-        setNames(str_c("surf_", names(.)))
-      
-      # and regrid the bottom
-      bottom_vars <- raster::stack(
-        sapply(
-          var_names, 
-          function(f) { fvcom::rasterize(bottom_vars, field = f) }, 
-          simplify = FALSE)) %>% 
-        cellStats(mean, na.rm = T) %>% 
-        t() %>% 
-        as.data.frame() %>% 
-        setNames(str_c("bot_", names(.)))
-      
-      # Combine
-      month_summs <- bind_cols(surface_vars, bottom_vars)
-      
-      # Close connection:
-      nc_close(x)
-      
-      # Return the table
-      return(month_summs)
-      }, 
-      # Spit out NA's if there's trouble
-      otherwise = data.frame(
-        "surf_temp" = NA, 
-        "surf_salinity" = NA, 
-        "bot_temp" = NA,
-        "bot_salinity" = NA)), 
-    .id = "date")
-
-}
 
 ```
 
-
 ### VTS Survey Area
-
-
 
 ```{r}
 #| label: VTS-Timeseries
@@ -322,7 +171,6 @@ vts_fvcom  %>%
 # Save
 # write_csv(vts_fvcom, here::here("data/fvcom_vts_area.csv"))
 ```
-
 
 ### Gulf of Maine EPU
 
@@ -387,9 +235,6 @@ gb_fvcom  %>%
 # write_csv(gb_fvcom, here::here("data/fvcom_gb_area.csv"))
 ```
 
-
-
-
 # Review What we Have Processed:
 
 ```{r}
@@ -411,11 +256,8 @@ all_areas <- bind_rows(
 )
 ```
 
-
-::: {.panel-tabset}
-
+::: panel-tabset
 ### Monthly
-
 
 ```{r}
 all_areas %>% 
@@ -426,10 +268,7 @@ ggplot() +
   theme_gmri()
 ```
 
-
-
 ### Yearly
-
 
 ```{r}
 all_areas %>% 
@@ -441,7 +280,14 @@ ggplot() +
   scale_color_gmri() +
   theme_gmri()
 ```
-
-
 :::
 
+## Comparison Checks with Alternative Data Sources
+
+For our area it is common to use the following resources for these core environmental variables:
+
+*SST*<br> 1. OISSTv2<br> 2. GLORYs<br> 3. ROMS<br>
+
+*BT*<br> 1. GLORYs<br> 2. ROMS<br> 3. SODA<br>
+
+These data sources have varying degrees of spatial/temporal resolutions and temporal coverage so it very often is an exercise in picking the best resource for the project needs.

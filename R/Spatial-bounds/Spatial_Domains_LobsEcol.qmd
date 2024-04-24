@@ -1,6 +1,11 @@
 ---
 title: "Lobster Ecology Spatial Scales"
-format: html
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    df-print: kable
+    self-contained: true
 ---
 
 # About
@@ -40,7 +45,7 @@ new_england <- ne_states("united states of america", returnclass = "sf") %>%
 
 ## Preparing VTS Survey Domain
 
-This domain area operates near-shore and requires the higher resolution datasets like FVCOm
+This domain area operates near-shore and requires the higher resolution datasets like FVCOM
 
 
 #### Load Points, Find Spacing
@@ -254,14 +259,14 @@ ggplot() +
   theme_classic() 
 
 
-# Save it
-lon_grid_filled %>% 
-  st_as_sf() %>% 
-  mutate(id = "VTS Survey Grid filled") %>% 
-  rename(geometry = x) %>% 
-  st_write(
-    str_c(proj_path, "Ecological Data/Spatial_Boundaries/VTSsurvey_nearshore_area.geojson"), 
-    overwrite = T)
+# # Save it
+# lon_grid_filled %>% 
+#   st_as_sf() %>% 
+#   mutate(id = "VTS Survey Grid filled") %>% 
+#   rename(geometry = x) %>% 
+#   st_write(
+#     str_c(proj_path, "Ecological Data/Spatial_Boundaries/VTSsurvey_nearshore_area.geojson"), 
+#     overwrite = T)
 ```
 
 

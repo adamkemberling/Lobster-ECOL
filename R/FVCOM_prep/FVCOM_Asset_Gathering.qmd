@@ -20,7 +20,6 @@ execute:
   comment: ""
 ---
 
-
 ```{r}
 library(sf) 
 library(fvcom) 
@@ -198,9 +197,3 @@ fvcom_extract<- function(
 
 
 ```
-
-
-
-
-
-
