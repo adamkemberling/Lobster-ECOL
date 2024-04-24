@@ -53,13 +53,14 @@ source(here::here("R/FVCOM_Support.R"))
 The Gulf of Maine Coastal Current (GMCC) can be divided into to principal branches (Eastern Maine Coastal Current EMCC & Western Maine Coastal Current WMCC), separated by a junction near Penobscot bay. This junction is important as it is a site where a variable portion of current flow shifts from continuing Southwest, and veers offshore. This shift in current flow has important implications for nutrient and plankton distribution, and larval transport. This is why this section of the current flow is used as an indicator of general circulation patterns within the Gulf of Maine.
 
 
-#### Standing on the Shoulders of giants:
+#### Building on Past Work
 
 A previous team member (Matt Dzaugis) was responsible for accessing and storing the data, and we are grateful for his time/effort in doing so.
 
 
 [Matt's Previous Work on Ecosystem Indicators](https://github.com/dzaugis/Ecosystem_Indicators/blob/6d21e553614cb06eb7ea02e4546535cf038d7678/Code/MCC_index_report.Rmd#L28)
 [Code behind the report](https://github.com/dzaugis/Ecosystem_Indicators/blob/main/Code/MCC_index_report.Rmd)
+
 > Using a principal components analysis of surface current speed for the eastward (u) direction of an area just offshore of Penobscot Bay, the Maine Coastal Current can be decomposed into the Maine Coastal Current Index that captures the connectivity between the EMCC and WMCC. In this analysis, the first principal component, which capture 52.5% of the variability in the dataset, provides an index of connectivity. The second principal component, which captures 15.3% of the variability, is related to vorticity. 
 
 
@@ -164,6 +165,9 @@ ggplot() +
 # # 2 vars for water velocity
 # gom3_early$var$u$longname  # Eastward Water Velocity in meters s-1
 # gom3_early$var$v$longname  # Northward Water Velocity in meters s-1
+# gom3_early$var$ua # Vertically Averaged x-velocity in meters s-1
+# gom3_early$var$va # Vertically Averaged y-velocity in meters s-1
+# 
 # 
 # 
 # 
@@ -183,7 +187,8 @@ ggplot() +
 #         surface_elems <- get_elem_var(
 #           x, # Dataset lazyloaded with ncdf4 from THREDDS 
 #           y = 1, # integer, or indices for siglay or siglev (depth indices)
-#           var = c("u", "v"),  # Variables we want
+#           # var = c("u", "v"),  # Variables we want
+#           var = c("u", "v", "ua", "va"),  # Variables we want
 #           elem = unique(mcc_nodes$elem), 
 #           time = c(1:time_dim)) %>%  # All time intervals - averaged
 #           as.data.frame()
@@ -393,6 +398,8 @@ monthly_currents <- right_join(cell_labels, monthly_currents)
 
 Each lat/lon pair can be given a unique ID. We can then pivot wider so that ID-variable matches each get one row per month. Then we can perform the PCA on these variables.
 
+We can do this on all the current variables, or just one:
+https://github.com/dzaugis/Ecosystem_Indicators/blob/6d21e553614cb06eb7ea02e4546535cf038d7678/Code/MCC_index_report.Rmd#L69-L76 
 
 ```{r}
 
@@ -480,5 +487,29 @@ mcc_corrs %>%
   map_theme() +
   coord_sf(xlim = c(-70.8, -66.7), ylim = c(43, 44.8), expand = F,
            datum = "+proj=longlat +datum=NAD83 +no_defs +ellps=GRS80 +towgs84=0,0,0")
+```
+
+
+## Vertical Current Velocity?
+
+It seems like Matt used the vertical movement velocity info in the PCA as well, here is how he grabbed it from the netcdfs, one value each time step ()
+https://github.com/dzaugis/Ecosystem_Indicators/blob/6d21e553614cb06eb7ea02e4546535cf038d7678/Code/FVCOM_shp_extract.Rmd#L254C1-L279C2
+
+```{r}
+
+# # Need u vert "ua" for this
+# monthly_currents %>% 
+#  filter(date %in% c(as.Date("2010-03-01"), as.Date("1986-03-01"), as.Date("2011-03-01"))) %>% 
+#   mutate(
+#     vel = sqrt(u_vert^2 + v_vert^2), 
+#     PC = if_else(yr == 2010, "positive PC1", if_else(yr ==1986, "negative PC1", "neutral PC1"))) %>% 
+#   ggplot() + geom_sf(data= ne_us, fill = "grey") + 
+#   geom_segment(aes(x = lon, y = lat, xend=lon+u, yend=lat+v, color = vel), 
+#                arrow = arrow(angle = 30, length = unit(0.05, "inches"), type = "closed")) + 
+#   scale_color_viridis_c() + theme_bw() + 
+#   coord_sf(datum = "+proj=longlat +datum=NAD83 +no_defs +ellps=GRS80 +towgs84=0,0,0") + facet_wrap(~PC)+ 
+#   theme(panel.background = element_blank(), panel.grid = element_blank(), 
+#         axis.title = element_blank(), axis.text = element_blank(),
+#         axis.ticks = element_blank())
 ```
 
