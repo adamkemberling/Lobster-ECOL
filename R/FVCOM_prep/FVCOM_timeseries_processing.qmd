@@ -133,14 +133,6 @@ surface_vars <- get_mesh(
 
 # Get Monthly Summaries for Regions of Interest
 
-```{r}
-# Make a function to do all the steps:
-
-library(furrr)
-
-
-
-```
 
 ### VTS Survey Area
 
@@ -163,14 +155,12 @@ vts_fvcom <-  local_fvcom_to_timeseries(
   dt = as.Date(str_c(yr, mn, "01", sep = "-")))
 Sys.time()
 
-# Plot Check
-vts_fvcom  %>% 
-  ggplot(aes(dt, surf_temp)) +
-  geom_line()
-
 # Save
 # write_csv(vts_fvcom, here::here("data/fvcom_vts_area.csv"))
+
 ```
+
+
 
 ### Gulf of Maine EPU
 
@@ -193,14 +183,13 @@ gom_fvcom <-  local_fvcom_to_timeseries(
   dt = as.Date(str_c(yr, mn, "01", sep = "-")))
 Sys.time()
 
-# Plot
-gom_fvcom  %>% 
-  ggplot(aes(dt, surf_temp)) +
-  geom_line()
-
 # Save
 # write_csv(gom_fvcom, here::here("data/fvcom_gom_area.csv"))
+
+
 ```
+
+
 
 ### Georges bank EPU
 
@@ -224,12 +213,6 @@ gb_fvcom <-  local_fvcom_to_timeseries(
   mn = str_sub(date, 5, 6),
   dt = as.Date(str_c(yr, mn, "01", sep = "-")))
 Sys.time()
-
-
-# Plot Check
-gb_fvcom  %>% 
-  ggplot(aes(dt, surf_temp)) +
-  geom_line()
 
 # Save
 # write_csv(gb_fvcom, here::here("data/fvcom_gb_area.csv"))

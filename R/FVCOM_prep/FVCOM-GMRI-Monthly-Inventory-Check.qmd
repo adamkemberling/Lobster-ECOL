@@ -13,8 +13,6 @@ execute:
   echo: true
   warning: false
   message: false
-  fig.height: 6
-  fig.width: 8
   fig.align: "center"
   comment: ""
 ---
@@ -70,36 +68,55 @@ yr <- "2010"
 mon <- "01"
 
 # Build the full path
-nc_name <- str_c(box_fvcom, "gom3_mothly_mean_", yr, mon, ".nc")
+nc_name <- str_c(box_fvcom, "gom3_monthly_mean_", yr, mon, ".nc")
 
 # Open (lazy-load) the netcdf connection
-x <- nc_open(nc_name)
+x_gom3 <- nc_open(nc_name)
 
 
 # Can also get the mesh itself as a simple feature collection
-mesh <- get_mesh_geometry(x, what = 'lonlat') 
+mesh <- get_mesh_geometry(x_gom3, what = 'lonlat')
+
+# # And we can use the mesh to request variables with it
+# plot(sf::st_geometry(mesh),
+#      border = scales::alpha("gray", 0.6),
+#      main = "GMRI Monthly FVCOM, Coverage")
+
+# Or We can grab surface and bottom temps this way since we have to for the other files
+max_depth <- dim(ncvar_get(x_gom3, "siglay"))[2]
+gom3_dat <- data.frame(
+  "lon" = ncvar_get(x_gom3, "lon"),
+  "lat" = ncvar_get(x_gom3, "lat"),
+  "surf_temp" = ncvar_get(x_gom3, "temp")[,1],
+  "bot_temp" = ncvar_get(x_gom3, "temp")[,max_depth]
+)
+
 
 # And we can use the mesh to request variables with it
-plot(sf::st_geometry(mesh), 
-     border = scales::alpha("gray", 0.6), 
-     main = "GMRI Monthly FVCOM, Coverage")
+(g3_cover <- ggplot(gom3_dat) +
+  geom_point(aes(lon, lat, color = surf_temp), size = 0.3) +
+  # geom_line(aes(lon, lat, color = surf_temp), size = 0.3) + #lol
+  scale_color_distiller(palette = "RdBu") +
+  theme_dark() +
+  labs(title = "GOM3 Coverage"))
+
 
 ```
 
-### Monthly Averaged Variables
+### What Variables are Stored?
 
 It seems like all the variables were brought along.
 
 ```{r}
-list_vars(x) %>% gt::gt()
+list_vars(x_gom3) %>% gt::gt()
 ```
 
 ### Time
 
-We should have one time-step, just confirming that
+We should have one time-step,per file, just confirming that. Confirmed
 
 ```{r}
-fvcom_time(x) %>% as.Date()
+fvcom_time(x_gom3) %>% as.Date()
 ```
 
 ### Depth: siglev/siglay
@@ -107,36 +124,36 @@ fvcom_time(x) %>% as.Date()
 Depth information is contained in two coordinates, "siglay" and "siglev" which are shorthand for sigma layer and sigma level. These are values between zero and -1 and refer to the fraction of the total depth of that location. 0 = surface, -1 = bottom. There are 45 sigma levels in GOM3.
 
 ```{r}
-# range(x$dim$siglev$vals)
-# range(x$dim$siglay$vals)
+# range(x_gom3$dim$siglev$vals)
+# range(x_gom3$dim$siglay$vals)
 
 
 # Here is how matt handled surface and bottom indexing:
-sigLevel <- x$dim$siglay$len
-sur_temp <- ncdf4::ncvar_get(x, varid = "temp")[,1]
-bot_temp <- ncdf4::ncvar_get(x, varid = "temp")[,sigLevel]
+sigLevel <- x_gom3$dim$siglay$len
+sur_temp <- ncdf4::ncvar_get(x_gom3, varid = "temp")[,1]
+bot_temp <- ncdf4::ncvar_get(x_gom3, varid = "temp")[,sigLevel]
 
-# From here we have surface temperature and bottom temperature as vectors
-plot(sur_temp, bot_temp, xlab = "Surface Temp", ylab = "Bottom Temp")
+# # From here we have surface temperature and bottom temperature as vectors
+# plot(sur_temp, bot_temp, xlab = "Surface Temp", ylab = "Bottom Temp")
 
 # We need the lat/lon node information as well
-lon <- ncdf4::ncvar_get(x, varid = "lon")
-lat <- ncdf4::ncvar_get(x, varid = "lat")
+lon <- ncdf4::ncvar_get(x_gom3, varid = "lon")
+lat <- ncdf4::ncvar_get(x_gom3, varid = "lat")
 
 
 # And we need the surface Currents as well
-u <- ncdf4::ncvar_get(x, varid = "u")[,1]
-v <- ncdf4::ncvar_get(x, varid = "v")[,1]
+u <- ncdf4::ncvar_get(x_gom3, varid = "u")[,1]
+v <- ncdf4::ncvar_get(x_gom3, varid = "v")[,1]
 
 # And the coordinates for the zonal centers
-lonc <- ncdf4::ncvar_get(x, varid = "lonc")
-latc <- ncdf4::ncvar_get(x, varid = "latc")
+lonc <- ncdf4::ncvar_get(x_gom3, varid = "lonc")
+latc <- ncdf4::ncvar_get(x_gom3, varid = "latc")
 
 ```
 
 ------------------------------------------------------------------------
 
-## Using fvcom::mesh to get mesh nodeindices
+## Using fvcom::mesh to get mesh node indices
 
 The node ID's that come from the mesh simple feature collections that Ben's package generate may be passed directly as index numbers to these variable vectors. Alternatively the FVCOM r package can be used to get process means over a number of time steps.
 
@@ -185,8 +202,8 @@ The node ID's match up, but we need to be careful and be sure that we're using t
 # Do the node ids work this time? YES, so we need to be careful so that we match the mesh to the dataset
 
 # We need the lat/lon node information as well
-lon <- ncdf4::ncvar_get(x, varid = "lon")
-lat <- ncdf4::ncvar_get(x, varid = "lat")
+lon <- ncdf4::ncvar_get(x_gom3, varid = "lon")
+lat <- ncdf4::ncvar_get(x_gom3, varid = "lat")
 
 # Mesh has index information for zonal elements and nodes
 node_ids <- st_drop_geometry(vts_mesh) %>% 
@@ -225,12 +242,12 @@ node_var_list <- c('temp', 'salinity')
 
 # Can we pass multiple time indices to get vars
 # ncvar_get(x, "time") # Isn't in time units
-time_dim <- fvcom_time(x)
+time_dim <- fvcom_time(x_gom3)
 
 
 # Then Can we Grab what we want?
 surface_vars <- get_mesh(
-  x, # Dataset lazyloaded with ncdf4 from THREDDS 
+  x_gom3, # Dataset lazyloaded with ncdf4 from THREDDS 
   y = 1, # integer, or indices for siglay or siglev (depth indices)
   vars = c(node_var_list),  # Variables we want
   mesh = vts_mesh, # Mesh to get them for
@@ -238,8 +255,8 @@ surface_vars <- get_mesh(
   )
 
 bottom_vars <- get_mesh(
-  x, # Dataset lazyloaded with ncdf4 from THREDDS 
- y = dim(ncvar_get(x, "siglay"))[2], 
+  x_gom3, # Dataset lazyloaded with ncdf4 from THREDDS 
+ y = dim(ncvar_get(x_gom3, "siglay"))[2], 
   vars = c(node_var_list),  # Variables we want
   mesh = vts_mesh, # Mesh to get them for
   time = c(1:length(time_dim)), # All time intervals
@@ -265,6 +282,155 @@ p1 / p2
 
 ```
 
-### Post-2016 Inventory
+---
+
+# Post-2016 Inventory
 
 After 2016 the hindcast/fvcom data available as monthly files transitions. These have been downloaded from the Seaplan hindcast archive, but need to be checked for what variables they contain and how the mesh varies between them.
+
+
+
+
+## 2017 FVCOM-GOM5
+
+For some reason the monthly hindcast files for 2017 come from GOM5. This is what they look like. They contain the lat/lon/time dimensions of the GOM% mesh, but they only have temperature.
+
+They also lack the variables that list the surrounding nodes and elements which the FVCOM package uses to identify the polygons.
+
+```{r}
+# Get some file names
+gom5_files <- monthly_fvcom_inventory(
+  start_yr = 2017,
+  end_y = 2017,
+  fvcom_folder = cs_path("res", "FVCOM/monthly_means"),
+  fvcom_vers = "GOM5"
+) 
+
+# Open 1:
+x_gom5 <- nc_open(gom5_files[[1]])
+
+
+# Only has Temperature
+list_vars(x_gom5) %>% gt::gt()
+```
+
+
+```{r}
+# the FVCOm package doesn't like how the CRS is stored in the file attributes and breaks
+# We can use some functions but not the mesh ones
+gom5_nodes <- fvcom_nodes(x_gom5)
+
+# # These fail
+# gom5_mesh <- get_mesh_geometry(x_gom5, what = 'lonlat') 
+# fvcom_crs(x_gom5)
+
+
+# We can still manually index lat/lon/temp for surface and bottom temps
+max_depth <- dim(ncvar_get(x_gom5, "siglay"))[2]
+gom5_dat <- data.frame(
+  "lon" = ncvar_get(x_gom5, "lon"),
+  "lat" = ncvar_get(x_gom5, "lat"),
+  "surf_temp" = ncvar_get(x_gom5, "temp")[,1],
+  "bot_temp" = ncvar_get(x_gom5, "temp")[,max_depth]
+)
+
+
+# And we can use the mesh to request variables with it
+(g5_cover <- ggplot(gom5_dat) +
+  geom_point(aes(lon, lat, color = surf_temp), size = 0.3) +
+  # geom_line(aes(lon, lat, color = surf_temp), size = 0.3) + #lol
+  scale_color_distiller(palette = "RdBu") +
+  theme_dark() +
+  labs(title = "GOM5 Coverage"))
+
+
+
+
+```
+
+
+
+
+## 2018-2020 FVCOM-GOM4
+
+For the next 2 years of data the filenames indicate that FVCOM-GOM4 is the version in use. Again, only temperature in these monthly files:
+
+
+```{r}
+# Get some file names
+gom4_files <- monthly_fvcom_inventory(
+  start_yr = 2018,
+  end_y = 2018,
+  fvcom_folder = cs_path("res", "FVCOM/monthly_means"),
+  fvcom_vers = "GOM4"
+) 
+
+# Open 1:
+x_gom4 <- nc_open(gom4_files[[1]])
+
+
+# Only has Temperature
+list_vars(x_gom4) %>% gt::gt()
+```
+
+
+```{r}
+# the FVCOm package doesn't like how the CRS is stored in the file attributes and breaks
+# We can use some functions but not the mesh ones
+gom4_nodes <- fvcom_nodes(x_gom4)
+
+# # These fail
+# gom4_mesh <- get_mesh_geometry(x_gom4, what = 'lonlat') 
+# fvcom_crs(x_gom4)
+
+
+# We can still manually index lat/lon/temp for surface and bottom temps
+max_depth <- dim(ncvar_get(x_gom4, "siglay"))[2]
+gom4_dat <- data.frame(
+  "lon" = ncvar_get(x_gom4, "lon"),
+  "lat" = ncvar_get(x_gom4, "lat"),
+  "surf_temp" = ncvar_get(x_gom4, "temp")[,1],
+  "bot_temp" = ncvar_get(x_gom4, "temp")[,max_depth]
+)
+
+
+# And we can use the mesh to request variables with it
+(g4_cover <- ggplot(gom4_dat) +
+  geom_point(aes(lon, lat, color = surf_temp), size = 0.3) +
+  # geom_line(aes(lon, lat, color = surf_temp), size = 0.3) + #lol
+  scale_color_distiller(palette = "RdBu") +
+  theme_dark() +
+  labs(title = "GOM4 Coverage"))
+
+
+
+
+```
+
+
+
+```{r}
+#| label: comparing-coverage
+#| eval: false
+# nrow(gom3_dat)
+# nrow(gom4_dat)
+# nrow(gom5_dat)
+bind_rows(
+  list(
+    "FVCOM-GOM3: 1978-2016" = gom3_dat,
+    "FVCOM-GOM4: 2018-2020" = gom4_dat,
+    "FVCOM-GOM5: 2017" = gom5_dat), 
+  .id = "FVCOM Version") %>% 
+  ggplot()  +
+  geom_point(aes(lon, lat, color = bot_temp), size = 0.3) +
+  # geom_line(aes(lon, lat, color = surf_temp), size = 0.3) + #lol
+  scale_color_distiller(palette = "RdBu") +
+  theme_dark() +
+  theme(strip.text = element_text(face = "bold"),
+        plot.title = element_text(size = 14, face = "bold"),
+        plot.subtitle = element_text(size = 12)) +
+  facet_wrap(~`FVCOM Version`) +
+  labs(title = "FVCOM Mesh Coverage Differences",
+       subtitle = "GOM3 n-nodes = 48,451\nGOM4: n-nodes = 53,087\nGOM5: n-nodes = 136,432")
+```
+
