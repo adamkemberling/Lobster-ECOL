@@ -39,14 +39,7 @@ theme_set(theme_bw() +
               plot.text = element_text(family = "Avenir")))
 ```
 
-```{r}
-#| label: style-sheet
-#| results: asis
 
-# Use GMRI style
-use_gmri_style_rmd()
-
-```
 
 
 ```{r}
