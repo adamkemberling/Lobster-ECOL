@@ -1,0 +1,108 @@
+---
+title: "FVCOM Time/Location Matching"
+description: | 
+  Approaches for handling FVCOM's Densest Files
+date: "Updated on: `r Sys.Date()`"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    df-print: kable
+    self-contained: true
+execute: 
+  echo: true
+  warning: false
+  message: false
+  fig.align: "center"
+  comment: ""
+---
+
+
+```{r}
+# Packages
+library(raster)
+library(sf) 
+library(fvcom) 
+library(ncdf4) 
+library(tidyverse)
+library(gmRi)
+library(patchwork)
+library(rnaturalearth)
+
+# Paths + conflicts
+conflicted::conflict_prefer("select", "dplyr")
+conflicted::conflict_prefer("filter", "dplyr")
+proj_path <- cs_path("mills", "Projects/Lobster ECOL")
+fvcom_out <- str_c(proj_path, "FVCOM_support/")
+
+source(here::here("R/FVCOM_Support.R"))
+```
+
+# Matching FVCOM data to points + times
+
+There are a number of projects where biological samples are taken, but environmental conditions might not also be taken simultaneously. 
+
+This quarto is for testing code necessary to find the correct FVCOM link and then extracting data for the nearest index.
+
+
+### Take some points in space/time
+
+The following points have been simulated, and occur during the time period that NECOFS GOM4 covers.
+
+```{r}
+set.seed(123)
+pts_df <- data.frame(
+  pt_id = str_c("station_", seq(1,50)),
+  lon = rnorm(50, mean = -68.5, sd = 0.5),
+  lat = rnorm(50, mean = 43.2, sd = 0.5),
+  dtime = seq.Date(as.Date("2016-01-09"), as.Date("2020-06-12"), length.out = 50)) %>% 
+  st_as_sf(coords = c("lon", "lat"), crs = 4326, remove = FALSE)
+maine <- ne_states("united states of america", returnclass = "sf") %>% filter(name == "Maine")
+ggplot() +
+  geom_sf(data = maine) +
+  geom_sf(data = pts_df) +
+  labs(title = "Simulated sample locations",
+       subtitle = "on-land locations also to be tested")
+  
+
+```
+
+ 
+### NECOFS Hourly Product Matching
+
+For the years 2017-2023 we can use NECOFS, which is FVCOM-GOM4.
+
+
+```{r}
+#| label: NECOFS-data-access
+
+# We can Access links from the THREDDS directory as if they are NETCDF files
+necofs_base <- "http://www.smast.umassd.edu:8080/thredds/dodsC/models/fvcom/NECOFS/Archive/NECOFS_GOM/"
+
+# Files are monthly 
+# Need to match to month + year to access the right file
+necofs_yr <- 2017
+necofs_url <- str_c(necofs_base, necofs_yr,  "/gom4_", necofs_yr, "07.nc")
+
+# Open Connection
+necofs_x <- nc_open(necofs_url)
+```
+ 
+ 
+## Get a look up table of all nodes
+
+## Get a luuk up table of the date matches
+
+## Write a function to identify nearest nodes
+
+## Write an equivalent function to identify the proper time index
+
+
+## use both lists to open connection and then subset necessary things
+ 
+ 
+```{r}
+
+```
+ 
+ 

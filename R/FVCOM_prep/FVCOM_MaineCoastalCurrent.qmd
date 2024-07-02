@@ -400,6 +400,7 @@ pca_mat <- monthly_currents %>%
 
 # A. For using the current variable Matt used
 pca_mat <- monthly_currents %>% 
+  # drop everything we don't want
   select(-x, -y, -year, -month, -u, -v, -va) %>% 
   pivot_wider(
     names_from = cell_id, 

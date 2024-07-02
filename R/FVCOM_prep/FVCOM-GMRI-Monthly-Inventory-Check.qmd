@@ -95,10 +95,34 @@ gom3_dat <- data.frame(
 # And we can use the mesh to request variables with it
 (g3_cover <- ggplot(gom3_dat) +
   geom_point(aes(lon, lat, color = surf_temp), size = 0.3) +
-  # geom_line(aes(lon, lat, color = surf_temp), size = 0.3) + #lol
   scale_color_distiller(palette = "RdBu") +
   theme_dark() +
   labs(title = "GOM3 Coverage"))
+```
+
+
+```{r}
+#| label: mesh-from-points
+
+# Can we manufacture the mesh from node+elem coordinates
+
+
+# This package looks promising
+# devtools::install_github("fdaPDE/fdaPDE-R", ref="stable")
+# https://search.r-project.org/CRAN/refmans/fdaPDE/html/create.mesh.2D.html
+
+# Node coordinates
+gom3_node_coords <- data.frame(
+  "lon" = ncvar_get(x_gom3, "lon"),
+  "lat" = ncvar_get(x_gom3, "lat")
+)
+
+# centroid coordinates
+gom3_elem_coords <- data.frame(
+  "lonc" = ncvar_get(x_gom3, "lonc"),
+  "latc" = ncvar_get(x_gom3, "latc")
+)
+
 
 
 ```
@@ -111,17 +135,12 @@ It seems like all the variables were brought along.
 list_vars(x_gom3) %>% gt::gt()
 ```
 
-### Time
-
-We should have one time-step,per file, just confirming that. Confirmed
-
-```{r}
-fvcom_time(x_gom3) %>% as.Date()
-```
 
 ### Depth: siglev/siglay
 
-Depth information is contained in two coordinates, "siglay" and "siglev" which are shorthand for sigma layer and sigma level. These are values between zero and -1 and refer to the fraction of the total depth of that location. 0 = surface, -1 = bottom. There are 45 sigma levels in GOM3.
+Depth information is contained in two coordinates, "siglay" and "siglev" which are shorthand for sigma layer and sigma level. 
+
+These are values between zero and -1 and refer to the fraction of the total depth of that location. 0 = surface, -1 = bottom. There are 45 sigma levels in GOM3.
 
 ```{r}
 # range(x_gom3$dim$siglev$vals)
@@ -288,6 +307,8 @@ p1 / p2
 
 After 2016 the hindcast/fvcom data available as monthly files transitions. These have been downloaded from the Seaplan hindcast archive, but need to be checked for what variables they contain and how the mesh varies between them.
 
+The content of these monthly files shows that they only contain temperature, and because they use different FVCOM models (GOM4 & GOM5) they also use different meshes.
+
 
 
 
@@ -415,22 +436,39 @@ gom4_dat <- data.frame(
 # nrow(gom3_dat)
 # nrow(gom4_dat)
 # nrow(gom5_dat)
+
+library(rnaturalearth)
+library(sf)
+canada <- ne_states("Canada", returnclass = "sf")
+ne_us <- ne_states("United States of America", returnclass = "sf")
+
 bind_rows(
   list(
-    "FVCOM-GOM3: 1978-2016" = gom3_dat,
-    "FVCOM-GOM4: 2018-2020" = gom4_dat,
-    "FVCOM-GOM5: 2017" = gom5_dat), 
+    "GOM3: 1978-2016" = gom3_dat,
+    "GOM4: 2018-2020" = gom4_dat,
+    "GOM5: 2017" = gom5_dat), 
   .id = "FVCOM Version") %>% 
+  mutate(`FVCOM Version` = 
+           factor(`FVCOM Version`, levels = c(
+             "GOM3: 1978-2016",
+             "GOM5: 2017",
+             "GOM4: 2018-2020"))) %>% 
   ggplot()  +
   geom_point(aes(lon, lat, color = bot_temp), size = 0.3) +
-  # geom_line(aes(lon, lat, color = surf_temp), size = 0.3) + #lol
+  geom_sf(data = ne_us) +
   scale_color_distiller(palette = "RdBu") +
   theme_dark() +
   theme(strip.text = element_text(face = "bold"),
         plot.title = element_text(size = 14, face = "bold"),
         plot.subtitle = element_text(size = 12)) +
+  geom_sf(data = ne_us) +
+  geom_sf(data = canada) +
+  coord_sf(xlim = c(-80, -57.5), ylim = c(33.15, 46)) +
   facet_wrap(~`FVCOM Version`) +
+  theme_bw() +
+  map_theme() + 
+  theme(text = element_text(size = 14)) +
   labs(title = "FVCOM Mesh Coverage Differences",
-       subtitle = "GOM3 n-nodes = 48,451\nGOM4: n-nodes = 53,087\nGOM5: n-nodes = 136,432")
+       subtitle = "GOM3: n-nodes = 48,451\nGOM4: n-nodes = 53,087\nGOM5: n-nodes = 136,432")
 ```
 

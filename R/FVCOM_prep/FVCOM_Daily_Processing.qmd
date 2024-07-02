@@ -1,0 +1,302 @@
+---
+title: "Handling Daily/Hourly FVCOM Data"
+format: html
+description: | 
+  Approaches for handling FVCOM's Densest Files
+date: "Updated on: `r Sys.Date()`"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    df-print: kable
+    self-contained: true
+execute: 
+  echo: true
+  warning: false
+  message: false
+  fig.align: "center"
+  comment: ""
+---
+
+# Handling Daily FVCOM Data (NECOFS 2016-2023)
+
+FVCOM data is large, and the formats with daily/hourly formats are stored remotely with limited access bandwidth.
+
+We need to access daily FVCOM information for two purposes:\*
+ 1. To perform date/time/location matching to point locations of research survey
+ 2. Calculate metrics related to heat stress and time within thermal preference ranges for species
+
+```{r}
+library(raster)
+library(sf) 
+library(fvcom) 
+library(ncdf4) 
+library(tidyverse)
+library(gmRi)
+library(patchwork)
+
+conflicted::conflict_prefer("select", "dplyr")
+proj_path <- cs_path("mills", "Projects/Lobster ECOL")
+fvcom_out <- str_c(proj_path, "FVCOM_support/")
+
+source(here::here("R/FVCOM_Support.R"))
+```
+
+### Accessing Monthly Data via THREDDS/OPENDAP Access
+
+For the years 1978-2016 we can access hindcast data for FVCOM-GOM3, which contains all variables. After 2016 we need to transition to a newer grid version. **Monthly averaged data is available through 2020, but only for temperature.**
+
+```{r}
+#| label: Hindcast-data-access
+
+# We can Access links from the THREDDS directory as if they are NETCDF files
+hcast_base <- "http://www.smast.umassd.edu:8080/thredds/dodsC/models/fvcom/NECOFS/Archive/Seaplan_33_Hindcast_v1/"
+
+# Files are monthly, so pick a month that year
+hcast_yr <- "2016"
+hcast_mon <- "07"
+hcast_url <- str_c(hcast_base, "gom3_", hcast_yr, hcast_mon, ".nc")
+
+# Open Connection
+hcast_x <- nc_open(hcast_url)
+
+# # Hourly timestep
+# fvcom_time(hcast_x)
+
+```
+
+
+
+## Computing Monthly Products
+
+To get to a monthly average downloading as little data as possible we can do a cumulative average process where we loop through each timestep and add on to the previous sum. At the end of the month, we divide by the number of days in the month to get an average.
+
+Done this way the size of the data in memory is only as big as the end amount, which whould be ~100MB. the bottleneck will be how long it takes to download specific variables for specific depths for all the hours in a month.
+
+The code below shows what that looks like, using the hindcast data to speed up the processing time (less time steps).
+
+```{r}
+#| label: accessing-hours-at-a-time
+#| eval: false
+
+# Number of hours:
+num_hours <- fvcom_time(hcast_x)
+
+# How many sigma layers (depth)
+max_depth <- dim(ncvar_get(hcast_x, "siglay"))[2]
+
+# static elements (grab once) - quick
+lon_vals <- ncvar_get(hcast_x, "lon")
+lat_vals <- ncvar_get(hcast_x, "lat")
+
+
+# Need to loop through this structure, and it will spit out values for all the depths
+t_index <- 1
+
+# Can't open multiple timesteps at once to slice away into the depth dimension
+# Request too big=6497.0 Mbytes, max=1000.0
+
+# Will need to open each hour alone, then index out the surface and bottom
+# This is surface temp and bottom temp at that one time step
+stemp_1 <- ncvar_get(hcast_x, "temp", start = c(1, 1, t_index), count = c(-1,-1,1))[,1]
+btemp_1 <- ncvar_get(hcast_x, "temp", start = c(1, 1, t_index), count = c(-1,-1,1))[,max_depth]
+
+# This is the next time step, just increment on the time index
+stemp_2 <- ncvar_get(hcast_x, "temp", start = c(1, 1, t_index+1), count = c(-1,-1,1))[,1]
+```
+
+
+```{r}
+#| label: processing-one-month-temps
+#| eval: false
+#| echo:true
+
+# How many sigma layers (depth)
+max_depth <- dim(ncvar_get(hcast_x, "siglay"))[2]
+
+
+# static elements (grab once) - quick
+lon_vals <- ncvar_get(hcast_x, "lon")
+lat_vals <- ncvar_get(hcast_x, "lat")
+
+# # placeholder vectors to hold the data as it gets looped through
+stemp <- rep(0, length(lon_vals))
+btemp <- rep(0, length(lon_vals))
+
+
+# Test the time it takes to grab one hour using a rolling average approach
+Sys.time()
+for (x_time in seq(1, length(num_hours))) {
+  # Get the new hours data
+  new_stemp <- ncvar_get(hcast_x, "temp", start = c(1, 1, x_time), count = c(-1,-1,1))[,1]
+  new_btemp <- ncvar_get(hcast_x, "temp", start = c(1, 1, x_time), count = c(-1,-1,1))[,max_depth]
+  
+  # Add it to the running total
+  stemp <- stemp + new_stemp
+  btemp <- btemp + new_btemp
+  
+  rm(new_stemp, new_btemp)
+  gc(verbose = F)
+}
+Sys.time()
+
+# divide by the number of timesteps:
+avg_stemp <- stemp/length(num_hours)
+avg_btemp <- btemp/length(num_hours)
+
+# Save it
+gom3_month_summ <- data.frame(
+  lon = lon_vals,
+  lat = lat_vals,
+  stemp = avg_stemp,
+  btemp = avg_btemp,
+  date = "201707",
+  mod = "FVCOM-GOM3")
+
+# Save it
+write_csv(necofs_month_summ, here::here("data/gom3_monthly_test.csv"))
+```
+
+
+
+
+### NECOFS Hourly Product Processing
+
+For the years 2017-2023 we can use NECOFS, which is FVCOM-GOM4.
+
+
+```{r}
+#| label: NECOFS-data-access
+
+# We can Access links from the THREDDS directory as if they are NETCDF files
+necofs_base <- "http://www.smast.umassd.edu:8080/thredds/dodsC/models/fvcom/NECOFS/Archive/NECOFS_GOM/"
+
+# Files are monthly, so pick a month that year
+necofs_yr <- 2017
+necofs_url <- str_c(necofs_base, necofs_yr,  "/gom4_", necofs_yr, "07.nc")
+
+# Open Connection
+necofs_x <- nc_open(necofs_url)
+```
+
+
+
+## Monthly Data from Hourly NECOFS Data
+
+NECOFS does not come pre-packaged as monthly files, so to get a monthly record it requires building it up from the hourly data.
+
+If we follow the code from before we can process monthly timeseries for the NECOFS FVCOM coverage through 2023.
+
+```{r}
+#| label: processing-one-month-necofs
+#| eval: false
+#| echo: true
+
+# Number of hours:
+num_hours <- fvcom_time(necofs_x)
+
+
+# How many sigma layers (depth)
+max_depth <- dim(ncvar_get(necofs_x, "siglay"))[2]
+
+
+# static elements (grab once) - quick
+lon_vals <- ncvar_get(necofs_x, "lon")
+lat_vals <- ncvar_get(necofs_x, "lat")
+
+# # placeholder vectors to hold the data as it gets looped through
+stemp <- rep(0, length(lon_vals))
+btemp <- rep(0, length(lon_vals))
+
+
+# Test the time it takes to grab one hour using a rolling average approach
+
+
+# garbage collect after each day's worth of hours
+# https://bookdown.org/content/d1e53ac9-28ce-472f-bc2c-f499f18264a3/releasememory.html
+gc_after_a_number <- 24
+
+Sys.time()
+for (x_time in seq(1, length(num_hours))) {
+  # Get the new hours data
+  new_stemp <- ncvar_get(necofs_x, "temp", start = c(1, 1, x_time), count = c(-1,-1,1))[,1]
+  new_btemp <- ncvar_get(necofs_x, "temp", start = c(1, 1, x_time), count = c(-1,-1,1))[,max_depth]
+  
+  # Add it to the running total
+  stemp <- stemp + new_stemp
+  btemp <- btemp + new_btemp
+  
+  # clean up memory
+  rm(new_stemp, new_btemp)
+  if(x_time %% gc_after_a_number == 0){
+    gc()
+  }
+  
+}
+Sys.time()
+
+# divide by the number of timesteps:
+avg_stemp <- stemp/length(num_hours)
+avg_btemp <- btemp/length(num_hours)
+
+# Save it
+necofs_month_summ <- data.frame(
+  lon = lon_vals,
+  lat = lat_vals,
+  stemp = avg_stemp,
+  btemp = avg_btemp,
+  date = "201707",
+  mod = "NECOFS-GOM4")
+
+# Save it
+write_csv(necofs_month_summ, here::here("data/necofs_monthly_test.csv"))
+```
+
+
+
+```{r}
+necofs_month_summ <- read_csv(here::here("data/necofs_monthly_test.csv"))
+
+# Plot them
+necofs_month_summ %>% 
+  ggplot(aes(lon, lat, color = stemp)) +
+  geom_point(size = 0.4) +
+  theme_dark() +
+  scale_color_distiller(palette = "RdBu") +
+  labs(title = "Average Surface Temps for 2017-07, NECOFS FVCOM-GOM4",
+       subtitle = "Takes ~30min to create surface+bottom monthly average")
+```
+
+
+
+### Building a Mesh from Node Values
+
+If we plan to overlay points onto the mesh and get an interpolated value we can achieve this by either re-gridding to a standard grid, or by building a mesh with polygon center values similar to the FVCOM r package.
+
+```{r}
+
+```
+
+
+
+
+
+
+
+
+## Matching Date/Time Locations to Daily Records
+
+This is relatively straightforward for dates from 1978-2016. It becomes more cumbersome after 2016 because we'll need to get a daily average using monthly records.
+
+What we can do to lesson the amount of data being requested is use lat/lon matching to determine the nearest nodes that we need. Then we can load data for just that lat/lon node using its index number.
+
+Otherwise we need to load a region near it, which is really inefficient since the grid isn't ordered. That will force us to pull the whole region in for every hour that day, subsetting to a smaller area each time once its already loaded...
+
+
+```{r}
+# Load some lat/lon/time coordinate info
+
+
+# Make
+```
+
