@@ -390,25 +390,25 @@ We can do this on all the current variables, or just one: https://github.com/dza
 # Use them + variables to reshape into a matrix
 
 
-# A. For using all the current variables
+# A. For using non-vertically integrated current variables
 pca_mat <- monthly_currents %>% 
-  select(-x, -y, -year, -month) %>% 
+  select(-x, -y, -year, -month, -ua, -va) %>% 
   pivot_wider(
     names_from = cell_id, 
     values_from = c(u, v)) %>% 
   column_to_rownames("date")
 
-# A. For using the current variable Matt used
-pca_mat <- monthly_currents %>% 
-  # drop everything we don't want
-  select(-x, -y, -year, -month, -u, -v, -va) %>% 
-  pivot_wider(
-    names_from = cell_id, 
-    values_from = c(ua)) %>% 
-  column_to_rownames("date")
+# # B. For using the current variable Matt used
+# ua and va are vertically averaged x and y velocities
+# pca_mat <- monthly_currents %>% 
+#   # drop everything we don't want
+#   select(-x, -y, -year, -month, -u, -v, -va) %>% 
+#   pivot_wider(
+#     names_from = cell_id, 
+#     values_from = c(ua)) %>% 
+#   column_to_rownames("date")
 
-# # One row per month - check
-# dim(pca_mat)[1] ==length(unique(monthly_currents$label))
+
 
 
 # Do PCA
@@ -435,44 +435,64 @@ mcc_loadings.pc2 <- data.frame(mcc_pca$rotation[,2]) %>%
   rename("PC2" = mcc_pca.rotation...2.) 
 
 # # Reshape loadings
-# # If A. from above: 
-# mcc_loadings <- left_join(mcc_loadings.pc1, mcc_loadings.pc2, by= "loc") %>% 
-#   separate(loc, sep = "_", into = c("var", "cell_id")) %>% 
-#   filter(var != "label") %>% 
+# # If B? from above: 
+# mcc_loadings <- left_join(mcc_loadings.pc1, mcc_loadings.pc2, by= "loc") %>%
+#   separate(loc, sep = "_", into = c("var", "cell_id")) %>%
+#   filter(var != "label") %>%
 #   pivot_longer(cols=c(PC1, PC2), names_to = "PC", values_to = "values") %>%
 #   mutate(plots = paste(PC, var, sep = "_"))
 
 # Reshape loadings
-# If A. from above: 
+# If A? from above: 
 mcc_loadings <- left_join(mcc_loadings.pc1, mcc_loadings.pc2, by= "loc") %>% 
   dplyr::filter(loc != "label") %>% 
   pivot_longer(cols=c(PC1, PC2), names_to = "PC", values_to = "values") 
 
+
+# # One row per month - check
+# dim(pca_mat)[1] ==length(unique(monthly_currents$label))
 
 ```
 
 ### Plotting Correlations in Space
 
 ```{r}
-# little bonus code for direction and velocity
+# little bonus code for direction and velocity correlations
 mcc_corrs <- monthly_currents %>% 
   left_join(mcc_pca_both, by = "date") %>% 
   filter(year > 1980) %>% 
-  mutate(dir = ifelse(
-    REdaS::rad2deg(atan2(v,u)) < 0, 
-    REdaS::rad2deg(atan2(v,u)) + 360, 
-    REdaS::rad2deg(atan2(v,u))), 
-    vel = sqrt(u^2+v^2)) %>% 
+  mutate(
+    # Surface layers:
+    # Direction
+    dir = ifelse(
+      REdaS::rad2deg(atan2(v, u)) < 0, 
+      REdaS::rad2deg(atan2(v, u)) + 360, 
+      REdaS::rad2deg(atan2(v, u))), 
+    # Velocity
+    vel = sqrt(u^2 + v^2),
+    # Vertically integrated:
+    dir_a = ifelse(
+      REdaS::rad2deg(atan2(va, ua)) < 0, 
+      REdaS::rad2deg(atan2(va, ua)) + 360, 
+      REdaS::rad2deg(atan2(va, ua))), 
+    vel_a = sqrt(ua^2 + va^2)) %>% 
   group_by(x, y) %>% 
+  # Get the all-year/date correlations
   summarise(
-    PC1_vel = cor(vel, PC1),
-    PC2_vel = cor(vel, PC2),
-    PC1_dir = cor(dir, PC1),
-    PC2_dir = cor(dir, PC2),
+    # First PC
     PC1_u   = cor(u, PC1),
-    PC2_u   = cor(u, PC2),
     PC1_v   = cor(v, PC1),
-    PC2_v   = cor(v, PC2)) %>% 
+    PC1_ua   = cor(ua, PC1),
+    PC1_va   = cor(va, PC1),
+    PC1_vel = cor(vel, PC1),
+    PC1_dir = cor(dir, PC1),
+    # Second PC
+    PC2_u   = cor(u, PC2),
+    PC2_ua  = cor(ua, PC2),
+    PC2_v   = cor(v, PC2),
+    PC2_v   = cor(va, PC2),
+    PC2_vel = cor(vel, PC2),
+    PC2_dir = cor(dir, PC2)) %>% 
   pivot_longer(
     cols = c(-y, -x), 
     names_to = "Cor", 
@@ -485,12 +505,23 @@ mcc_corrs %>%
   ggplot() + 
   geom_sf(data = maine) +
   geom_raster(aes(x, y, fill = Correlation)) + 
-  scale_fill_distiller(palette = "RdBu") + 
+  scale_fill_distiller(
+    palette = "RdBu", 
+    limits = c(-1, 1),
+    direction = 1) + 
   facet_wrap(~Cor) + 
   theme_classic() +
   map_theme() +
-  coord_sf(xlim = c(-70.8, -66.7), ylim = c(43, 44.8), expand = F,
-           datum = "+proj=longlat +datum=NAD83 +no_defs +ellps=GRS80 +towgs84=0,0,0")
+  scale_x_continuous(breaks = seq(-75, -60, 1)) +
+  coord_sf(
+    xlim = c(-70.8, -66.7), 
+    ylim = c(43, 44.8), 
+    expand = F#,
+    #datum = "+proj=longlat +datum=NAD83 +no_defs +ellps=GRS80 +towgs84=0,0,0"
+    ) +
+  labs(
+    title = "Reviewing MCC principal component analysis correlations",
+    subtitle = "u = Eastward Water Velocity\nv = Northward Water Velocity")
 ```
 
 ## Vertical Current Velocity?

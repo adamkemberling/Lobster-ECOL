@@ -36,6 +36,7 @@ library(gmRi)
 library(patchwork)
 
 conflicted::conflict_prefer("select", "dplyr")
+conflicted::conflict_prefer("filter", "dplyr")
 proj_path <- cs_path("mills", "Projects/Lobster ECOL")
 fvcom_out <- str_c(proj_path, "FVCOM_support/")
 
@@ -67,7 +68,7 @@ hcast_x <- nc_open(hcast_url)
 
 
 
-## Computing Monthly Products
+## Computing Monthly Mean Product - ignoring hours
 
 To get to a monthly average downloading as little data as possible we can do a cumulative average process where we loop through each timestep and add on to the previous sum. At the end of the month, we divide by the number of days in the month to get an average.
 
@@ -79,43 +80,46 @@ The code below shows what that looks like, using the hindcast data to speed up t
 #| label: accessing-hours-at-a-time
 #| eval: false
 
+# # Number of hours:
+# num_hours <- fvcom_time(hcast_x)
+# 
+# # How many sigma layers (depth)
+# max_depth <- dim(ncvar_get(hcast_x, "siglay"))[2]
+# 
+# # static elements (grab once) - quick
+# lon_vals <- ncvar_get(hcast_x, "lon")
+# lat_vals <- ncvar_get(hcast_x, "lat")
+# 
+# 
+# # Need to loop through this structure, and it will spit out values for all the depths
+# t_index <- 1
+# 
+# # Can't open multiple timesteps at once to slice away into the depth dimension
+# # Request too big=6497.0 Mbytes, max=1000.0
+# 
+# # Will need to open each hour alone, then index out the surface and bottom
+# # This is surface temp and bottom temp at that one time step
+# stemp_1 <- ncvar_get(hcast_x, "temp", start = c(1, 1, t_index), count = c(-1,-1,1))[,1]
+# btemp_1 <- ncvar_get(hcast_x, "temp", start = c(1, 1, t_index), count = c(-1,-1,1))[,max_depth]
+# 
+# # This is the next time step, just increment on the time index
+# stemp_2 <- ncvar_get(hcast_x, "temp", start = c(1, 1, t_index+1), count = c(-1,-1,1))[,1]
+```
+
+
+```{r}
+#| label: processing-one-month-temps-gom3
+#| eval: false
+#| echo:true
+
 # Number of hours:
 num_hours <- fvcom_time(hcast_x)
 
 # How many sigma layers (depth)
 max_depth <- dim(ncvar_get(hcast_x, "siglay"))[2]
 
-# static elements (grab once) - quick
-lon_vals <- ncvar_get(hcast_x, "lon")
-lat_vals <- ncvar_get(hcast_x, "lat")
-
-
-# Need to loop through this structure, and it will spit out values for all the depths
-t_index <- 1
-
-# Can't open multiple timesteps at once to slice away into the depth dimension
-# Request too big=6497.0 Mbytes, max=1000.0
-
-# Will need to open each hour alone, then index out the surface and bottom
-# This is surface temp and bottom temp at that one time step
-stemp_1 <- ncvar_get(hcast_x, "temp", start = c(1, 1, t_index), count = c(-1,-1,1))[,1]
-btemp_1 <- ncvar_get(hcast_x, "temp", start = c(1, 1, t_index), count = c(-1,-1,1))[,max_depth]
-
-# This is the next time step, just increment on the time index
-stemp_2 <- ncvar_get(hcast_x, "temp", start = c(1, 1, t_index+1), count = c(-1,-1,1))[,1]
-```
-
-
-```{r}
-#| label: processing-one-month-temps
-#| eval: false
-#| echo:true
-
-# How many sigma layers (depth)
-max_depth <- dim(ncvar_get(hcast_x, "siglay"))[2]
-
-
-# static elements (grab once) - quick
+# Get static elements
+#  (grab once) - quick
 lon_vals <- ncvar_get(hcast_x, "lon")
 lat_vals <- ncvar_get(hcast_x, "lat")
 
@@ -124,9 +128,10 @@ stemp <- rep(0, length(lon_vals))
 btemp <- rep(0, length(lon_vals))
 
 
-# Test the time it takes to grab one hour using a rolling average approach
+# Test the time it takes to grab one month using a rolling average approach on hourly
 Sys.time()
 for (x_time in seq(1, length(num_hours))) {
+  
   # Get the new hours data
   new_stemp <- ncvar_get(hcast_x, "temp", start = c(1, 1, x_time), count = c(-1,-1,1))[,1]
   new_btemp <- ncvar_get(hcast_x, "temp", start = c(1, 1, x_time), count = c(-1,-1,1))[,max_depth]
@@ -153,14 +158,44 @@ gom3_month_summ <- data.frame(
   date = "201707",
   mod = "FVCOM-GOM3")
 
-# Save it
-write_csv(necofs_month_summ, here::here("data/gom3_monthly_test.csv"))
+# # Save it - using month info
+# write_csv(
+#   gom3_month_summ, 
+#   here::here("data", str_c("/gom3_monthly_", hcast_yr, "-", hcast_mon,"_test.csv")))
+```
+
+
+```{r}
+#| label: verify-gom3-data
+#| eval: true
+
+# read one of the monthly summaries
+gom3_month_summ <- read_csv(here::here("data", str_c("/gom3_monthly_", hcast_yr, "-", hcast_mon,"_test.csv")))
+
+library(rnaturalearth)
+new_england <- ne_states("united states of america", returnclass = "sf")
+canada <- ne_states("canada", returnclass = "sf")
+
+
+
+# Plot them to verify
+gom3_month_summ %>% 
+  pivot_longer(cols = ends_with("temp"), names_to = "var", values_to = "temperature") %>% 
+  ggplot() +
+  geom_point(aes(lon, lat, color = temperature), size = 0.25) +
+  geom_sf(data = new_england) +
+  geom_sf(data = canada) +
+  theme_bw() + map_theme() +
+  scale_color_distiller(palette = "RdBu") +
+  facet_wrap(~var, ncol = 1) +
+  coord_sf(xlim = c(-76, -57),ylim = c(35, 46)) +
+  labs(title = str_c(hcast_yr, "-", hcast_mon, " FVCOM-GOM3"))
 ```
 
 
 
 
-### NECOFS Hourly Product Processing
+### NECOFS Hourly Product Processing - daily from hourly
 
 For the years 2017-2023 we can use NECOFS, which is FVCOM-GOM4.
 
@@ -177,6 +212,27 @@ necofs_url <- str_c(necofs_base, necofs_yr,  "/gom4_", necofs_yr, "07.nc")
 
 # Open Connection
 necofs_x <- nc_open(necofs_url)
+
+
+#-------- Get days?
+
+# Date/Time values:
+necofs_times <- fvcom_time(necofs_x)
+necofs_days <- 
+
+
+# How many sigma layers (depth)
+max_depth <- dim(ncvar_get(hcast_x, "siglay"))[2]
+
+# Get static elements
+#  (grab once) - quick
+lon_vals <- ncvar_get(hcast_x, "lon")
+lat_vals <- ncvar_get(hcast_x, "lat")
+
+# # placeholder vectors to hold the data as it gets looped through
+stemp <- rep(0, length(lon_vals))
+btemp <- rep(0, length(lon_vals))
+
 ```
 
 
