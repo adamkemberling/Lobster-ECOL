@@ -1,6 +1,5 @@
 ---
 title: "Handling Daily/Hourly FVCOM Data"
-format: html
 description: | 
   Approaches for handling FVCOM's Densest Files
 date: "Updated on: `r Sys.Date()`"
@@ -40,7 +39,7 @@ conflicted::conflict_prefer("filter", "dplyr")
 proj_path <- cs_path("mills", "Projects/Lobster ECOL")
 fvcom_out <- str_c(proj_path, "FVCOM_support/")
 
-source(here::here("R/FVCOM_Support.R"))
+# source(here::here("R/FVCOM_Support.R"))
 ```
 
 # GOM3 - Prototyping
@@ -48,6 +47,7 @@ source(here::here("R/FVCOM_Support.R"))
 ### Accessing Monthly Data via THREDDS/OPENDAP Access
 
 For the years 1978-2016 we can access hindcast data for FVCOM-GOM3, which contains all variables. After 2016 we need to transition to a newer grid version. **Monthly averaged data is available through 2020, but only for temperature.**
+
 
 ```{r}
 #| label: Hindcast-data-access
@@ -60,11 +60,11 @@ hcast_yr <- "2016"
 hcast_mon <- "07"
 hcast_url <- str_c(hcast_base, "gom3_", hcast_yr, hcast_mon, ".nc")
 
-# Open Connection
-hcast_x <- nc_open(hcast_url)
-
-hcast_x$dim
-hcast_x$var[3]
+# # Open Connection
+# hcast_x <- nc_open(hcast_url)
+# 
+# hcast_x$dim
+# hcast_x$var[3]
 
 # # Hourly timestep
 # fvcom_time(hcast_x)
@@ -73,7 +73,7 @@ hcast_x$var[3]
 
 
 
-## Computing Monthly Mean Product - ignoring hours
+## Product 1: Monthly Mean Product from Hourly Data
 
 To get to a monthly average downloading as little data as possible we can do a cumulative average process where we loop through each timestep and add on to the previous sum. At the end of the month, we divide by the number of days in the month to get an average.
 
@@ -194,7 +194,7 @@ The code below shows what that looks like, using the hindcast data to speed up t
 
 
 ```{r}
-#| label: verify-gom3-data
+#| label: verify-gom3-monthly-data
 #| eval: true
 
 # read one of the monthly summaries
@@ -232,6 +232,8 @@ For the years 2017-2023 we can use NECOFS, which uses the GOM4 mesh and boundary
 
 ```{r}
 #| label: NECOFS-data-access
+#| eval: false
+#| echo: true
 
 # We can Access links from the THREDDS directory as if they are NETCDF files
 
@@ -248,18 +250,15 @@ necofs_mnth <- "01"
 necofs_url  <- str_c(necofs_base, necofs_yr,  "/gom4_", necofs_yr, necofs_mnth, ".nc")
 
 
-# Open Connection
+# # Open Connection
 necofs_x <- nc_open(necofs_url)
-```
 
-
-```{r}
-#| label: necofs-static-elements
 
 #------- Get static elements
 #  (grab once) - quick
 # Location indices and coordinate dimensions don't change over time
 # We can grab those one time and store them
+
 
 # Get the max sigma layer (depth)
 max_depth <- dim(ncvar_get(necofs_x, "siglay"))[2]
@@ -267,11 +266,7 @@ max_depth <- dim(ncvar_get(necofs_x, "siglay"))[2]
 # Lat & Lon
 lon_vals <- ncvar_get(necofs_x, "lon")
 lat_vals <- ncvar_get(necofs_x, "lat")
-```
 
-
-```{r}
-#| label: necofs-time-dimension-details
 
 
 #-------- Get Time Vector information
@@ -289,6 +284,7 @@ necofs_days   <- unique(necofs_dayset)
 ```{r}
 #| label: necofs-single-day-test
 #| eval: false
+#| echo: true
 
 # full_day will be loop index
 full_day <- necofs_days[1]
@@ -345,7 +341,8 @@ ggplot(gom4_tday_summ) +
        subtitle = str_c(necofs_yr, necofs_mnth, "0", necofs_days[1], sep = "-"))
 ```
 
-# Daily Averages for Full Month
+
+# Processing Daily Surface+Bottom Averages
 
 Monthly files containing hourly (or multi-hour) timesteps can be converted to daily averages this way:
 
@@ -468,6 +465,7 @@ process_daily_surf_and_bot <- function(
 
 ```{r}
 #| label: month-function-test
+#| eval: false
 
 # Perform Daily Processing for one month
 # Can put these in a big list if we want to do multiple
@@ -517,7 +515,7 @@ jan17_daily %>%
 ```
 
 
-# Process a Year
+# Process a Year of Daily NECOFS
 
 ```{r}
 
@@ -531,7 +529,7 @@ jan17_daily %>%
 
 # Saving a year:
 process_dates <- list(
-  "years" = rep("2017", 12),
+  "years" = c(rep("2020", 12)),
   "months" = str_pad(c(1:12), width = 2, side = "left", pad = "0")
 )
 
@@ -542,6 +540,8 @@ save_location <- cs_path("mills", "Projects/Lobster ECOL/FVCOM_processed/NECOFS_
 
 # Base URL path
 necofs_base <- "http://www.smast.umassd.edu:8080/thredds/dodsC/models/fvcom/NECOFS/Archive/NECOFS_GOM/"
+
+
 
 
 ####  The big ole processin loop
@@ -581,9 +581,9 @@ map2(
 
 
 
-## Monthly Data from Hourly NECOFS Data
+# Processing Monthly Averages from Hourly NECOFS Data
 
-NECOFS does not come pre-packaged as monthly files, so to get a monthly record it requires building it up from the hourly data.
+NECOFS does not come pre-packaged as average monthly files, so to get a monthly record it requires building it up from the hourly time-stepped data.
 
 If we follow the code from before we can process monthly timeseries for the NECOFS FVCOM coverage through 2023.
 
@@ -646,13 +646,17 @@ necofs_month_summ <- data.frame(
   date = "201707",
   mod = "NECOFS-GOM4")
 
-# Save it
-write_csv(necofs_month_summ, here::here("data/necofs_monthly_test.csv"))
+# # Save it
+# write_csv(necofs_month_summ, here::here("data/necofs_monthly_test.csv"))
+
 ```
 
 
 
 ```{r}
+#| label: verify-monthly-average
+
+# Load the monethly average data
 necofs_month_summ <- read_csv(here::here("data/necofs_monthly_test.csv"))
 
 # Plot them
@@ -667,34 +671,4 @@ necofs_month_summ %>%
 
 
 
-### Building a Mesh from Node Values
-
-If we plan to overlay points onto the mesh and get an interpolated value we can achieve this by either re-gridding to a standard grid, or by building a mesh with polygon center values similar to the FVCOM r package.
-
-```{r}
-
-```
-
-
-
-
-
-
-
-
-## Matching Date/Time Locations to Daily Records
-
-This is relatively straightforward for dates from 1978-2016. It becomes more cumbersome after 2016 because we'll need to get a daily average using monthly records.
-
-What we can do to lesson the amount of data being requested is use lat/lon matching to determine the nearest nodes that we need. Then we can load data for just that lat/lon node using its index number.
-
-Otherwise we need to load a region near it, which is really inefficient since the grid isn't ordered. That will force us to pull the whole region in for every hour that day, subsetting to a smaller area each time once its already loaded...
-
-
-```{r}
-# Load some lat/lon/time coordinate info
-
-
-# Make
-```
 

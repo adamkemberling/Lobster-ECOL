@@ -116,6 +116,8 @@ We can do ourselves a favor by identifying which nodes we're interested in befor
 
 ```{r}
 # Read things in
+# source: R/Spatial-bounds/Spatial_Domains_LobsEcol.qmd
+
 vts_poly <- read_sf(str_c(proj_path, "Ecological Data/Spatial_Boundaries/VTSsurvey_nearshore_area.geojson"))
 
 res_shapes <- cs_path("res", "Shapefiles")
