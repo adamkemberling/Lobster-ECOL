@@ -33,7 +33,7 @@ conflicted::conflict_prefer("filter", "dplyr")
 
 # Paths
 proj_path <- cs_path("mills", "Projects/Lobster ECOL")
-fvcom_out <- str_c(proj_path, "FVCOM_support/")
+# fvcom_out <- str_c(proj_path, "FVCOM_support/")
 
 
 maine <- ne_states(country = "United States of America", returnclass = "sf") %>% filter(name == "Maine")
@@ -51,7 +51,7 @@ The Gulf of Maine Coastal Current (GMCC) can be divided into to principal branch
 
 A previous team member (Matt Dzaugis) was responsible for accessing and storing the data, and we are grateful for his time/effort in doing so.
 
-[Matt's Previous Work on Ecosystem Indicators](https://github.com/dzaugis/Ecosystem_Indicators/blob/6d21e553614cb06eb7ea02e4546535cf038d7678/Code/MCC_index_report.Rmd#L28) [Code behind the report](https://github.com/dzaugis/Ecosystem_Indicators/blob/main/Code/MCC_index_report.Rmd)
+[Matt's Previous Work on Ecosystem Indicators](https://github.com/dzaugis/Ecosystem_Indicators/blob/main/Code/MCC_index_report.Rmd)
 
 > Using a principal components analysis of surface current speed for the eastward (u) direction of an area just offshore of Penobscot Bay, the Maine Coastal Current can be decomposed into the Maine Coastal Current Index that captures the connectivity between the EMCC and WMCC. In this analysis, the first principal component, which capture 52.5% of the variability in the dataset, provides an index of connectivity. The second principal component, which captures 15.3% of the variability, is related to vorticity.
 
@@ -60,8 +60,8 @@ A previous team member (Matt Dzaugis) was responsible for accessing and storing 
 
 # Get some file names
 gom3_files <- monthly_fvcom_inventory(
-  start_yr = 2010,
-  end_y = 2010,
+  start_yr = 1978,
+  end_y = 2016,
   fvcom_folder = cs_path("res", "FVCOM/monthly_means"),
   fvcom_vers = "GOM3"
 ) 

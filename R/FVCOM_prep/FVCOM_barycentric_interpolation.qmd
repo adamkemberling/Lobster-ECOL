@@ -1,0 +1,635 @@
+---
+title: "Trianglular Interpolation & Time/Location Matching"
+description: | 
+  Approaches for handling FVCOM's Densest Files
+date: "Updated on: `r Sys.Date()`"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    df-print: kable
+    self-contained: true
+execute: 
+  echo: true
+  warning: false
+  message: false
+  fig.align: "center"
+  comment: ""
+---
+
+
+```{r}
+
+# Packages
+library(raster)
+library(sf) 
+library(fvcom) 
+library(ncdf4) 
+library(tidyverse)
+library(gmRi)
+library(patchwork)
+library(rnaturalearth)
+library(geometry)
+library(Matrix)
+library(sysfonts)
+
+
+
+# Paths + conflicts
+conflicted::conflict_prefer("select", "dplyr")
+conflicted::conflict_prefer("filter", "dplyr")
+proj_path <- cs_path("mills", "Projects/Lobster ECOL")
+# fvcom_out <- str_c(proj_path, "FVCOM_support/")
+
+source(here::here("R/FVCOM_Support.R"))
+
+
+
+# Load a maine polygon
+maine <- ne_states("united states of america", returnclass = "sf") %>% 
+  filter(postal %in% c("ME", "NH", "MA", "CT", "RI", "VT"))
+
+
+# Gom EPU to clip
+res_shapes <- cs_path("res", "Shapefiles")
+epu_path <- str_c(res_shapes, "EPU/")
+gom_poly <- read_sf(str_c(epu_path, "individual_epus/GOM.geojson"))
+
+```
+
+
+```{r}
+#| label: style-sheet
+#| results: asis
+
+# Use GMRI style
+use_gmri_style_rmd()
+
+```
+
+
+
+```{r}
+#| label: fonts-config
+#| echo: false
+
+# Path to the directory containing the font file (replace with your actual path)
+font_dir <- paste0(system.file("stylesheets", package = "gmRi"), "/GMRI_fonts/Avenir/")
+
+# Register the font
+font_add(
+  family = "Avenir",
+  file.path(font_dir, "LTe50342.ttf"),
+  bold = file.path(font_dir, "LTe50340.ttf"),
+  italic = file.path(font_dir, "LTe50343.ttf"),
+  bolditalic = file.path(font_dir, "LTe50347.ttf"))
+
+# Load the font
+showtext::showtext_auto()
+
+```
+
+
+# Triangular Distance Weighting
+
+Calculating values for points within the FVCOM mesh involves some sort of distance weighting. This process needs to identify the triangle that the point falls within, and then values for the three nodes of that triangle.
+
+
+
+This quarto is for testing code necessary to find the correct FVCOM link and then extracting data for the nearest index.
+
+
+The following points have been simulated, and occur during the time period that NECOFS GOM3 covers.
+
+
+```{r}
+# Make a dataframe of random points
+set.seed(123)
+point_number <- 100
+pts_df <- data.frame(
+  pt_id = str_c("station_", seq(1, point_number)),
+  lon = rnorm(point_number, mean = -68.5, sd = 0.3),
+  lat = rnorm(point_number, mean = 43.2, sd = 0.3),
+  dtime = seq.Date(as.Date("2014-01-09"), as.Date("2016-06-12"), length.out = point_number)) %>% 
+  st_as_sf(coords = c("lon", "lat"), crs = 4326, remove = FALSE)
+```
+
+
+```{r}
+#| label: load-fvcom-resources
+
+# Load some daily FVCOM that we downloaded and averaged
+daily_fpath <- cs_path("mills", "Projects/Lobster ECOL/FVCOM_processed/GOM3_daily")
+gom3_2014 <- read_csv(str_c(daily_fpath, "GOM3_daily_surfbottemp_2014_01.csv"))
+gom3_oneday <- gom3_2014 %>% filter(date == "2014-01-01")
+
+
+# Get some file names to load monthly files
+gom3_files <- monthly_fvcom_inventory(
+  start_yr = 2014,
+  end_yr = 2014,
+  fvcom_folder = cs_path("res", "FVCOM/monthly_means"),
+  fvcom_vers = "GOM3") 
+
+# Open one
+gom3_early <- nc_open(gom3_files[[1]])
+
+
+# Get the mesh itself as a simple feature collection
+gom3_mesh <- get_mesh_geometry(gom3_early, what = 'lonlat')
+```
+
+
+```{r}
+#| label: plot test points on map
+
+# Prep CRS to clip
+gom_poly <- st_transform(gom_poly, st_crs(gom3_mesh))
+
+# Flag the locations that are within the domain
+gom_mesh <- gom3_mesh %>%
+    st_join(gom_poly, join = st_within) %>%
+    drop_na(EPU) %>% 
+    dplyr::select(-c(EPU, Shape_Leng, Shape_Area, source)) 
+
+
+# Plot them all
+ggplot() +
+  geom_sf(data = gom_mesh, alpha = 0.1, linewidth = 0.1) +
+  geom_sf(data = maine) +
+  geom_sf(data = pts_df) +
+  coord_sf(xlim = c(-71, -67.1), ylim = c(41.4, 44.4)) +
+  labs(title = "Simulated sample locations")
+  
+
+```
+
+ 
+## Step 1: Triangle Matching
+
+Since the mesh is static, we can use any time index to pull their locations and identify which triangles are associate with which points, as well as its barycentric coordinates within that triangle which can be used to weight values at each node.
+
+
+### Write a function to identify nearest nodes
+
+```{r}
+#| label: overlay mesh on to points
+
+# We can use the mesh from Ben's function as the lookup table, 
+# and elem numbers as triangle ID's
+# A bonus of going this route is that NODE and element ID numbers match ncvar_get index order
+
+# The mesh
+gom3_mesh <- get_mesh_geometry(gom3_early, what = 'lonlat') 
+
+
+# We can also pull lon + lat from the netcdf as well and index that way
+gom3_coords <- data.frame(
+    "lon" = ncvar_get(gom3_early, "lon"),
+    "lat" = ncvar_get(gom3_early, "lat")) %>% 
+  mutate(node_id = row_number(), .before = "lon")
+
+
+# 1. Get the triangle and its nodes that overlap
+# Use st_join to assign elem to the points and their we're looking up
+# The geometry is still the point here, but now we know the element and point indices
+pts_assigned <- st_join(
+  st_transform(pts_df, st_crs(gom3_mesh)),
+  gom3_mesh, 
+  join = st_within)
+
+
+
+
+```
+
+We can verify that random points fall within the triangle they are matched to, and that the nodes of that triangle match the index order of `ncvar_get()` for lat/lon based variables.
+
+
+```{r}
+#| label: check overlaid triangles match 
+
+#### Sandbox Testing: 
+
+# # Are the coordinates even different if projected to NAD83 or not? don't think so...
+# Ignore for now
+# pts_assigned %>% st_coordinates()  %>% bind_cols(pts_df) %>% transmute(x_diff = lon - X, y_diff = lat - Y) 
+  
+# 2. Option 1: Use triangle index to pull node coordinates
+# We can use the triangles to pull coordinates from the sf geometries
+# What we really want are the point coordinates for barycentric distances
+# remember, lon & lat come in pairs so the index number grabs both... i think
+triangle_matches <- gom3_mesh[pts_assigned$elem,]
+
+# Nodes for one triangle
+# st_coordinates(triangle_matches[1,])[1:3,]
+
+# Do they also match the daily data row indices?
+# Hell yea, they do in space
+# need to triple check the order is fine
+# Seems Good!
+row_idx <- sample(c(1:nrow(pts_assigned)), size = 1, replace = F )
+pt1_id = triangle_matches[row_idx, "p1"] %>% st_drop_geometry() %>% as.numeric()
+pt2_id = triangle_matches[row_idx,"p2"] %>% st_drop_geometry() %>% as.numeric()
+pt3_id = triangle_matches[row_idx,"p3"] %>% st_drop_geometry() %>% as.numeric()
+ggplot() +
+  geom_point(data = gom3_oneday[pt1_id,], aes(lon, lat, color = str_c("Node: ", pt1_id)), size = 3) +
+  geom_point(data = gom3_oneday[pt2_id,], aes(lon, lat, color = str_c("Node: ", pt2_id)), size = 3) +
+  geom_point(data = gom3_oneday[pt3_id,], aes(lon, lat, color = str_c("Node: ", pt3_id)), size = 3) +
+  geom_point(data = pts_assigned[row_idx,], aes(lon, lat, color = "Test Point Location"), size = 4) +
+  scale_color_gmri() +
+  geom_sf(data = triangle_matches[row_idx, ], color = "black", fill = NA, size = 1) +
+  labs(color = "Point", 
+       title = "Verify triangle overlap and node indexing of random point")
+
+
+
+# # But we need to  make sure when we get distance the distance goes with the right point
+# # are they in order with st_coordinates?
+# # This is how we could match to lon;at coords:
+# pt_matches_x <- triangle_matches[row_idx, c("p1", "p2", "p3")] %>% 
+#   st_drop_geometry() %>% 
+#   t() %>% 
+#   c()
+
+# # And they do seem to match, sick
+# gom3_coords[pt_matches_x,]$lon == st_coordinates(triangle_matches[row_idx,])[1:3,"X"]
+# gom3_coords[pt_matches_x,]$lat == st_coordinates(triangle_matches[row_idx,])[1:3,"Y"]
+```
+
+### Add node details to points table
+
+```{r}
+#| label: assign-nearest-node-coords-from-table
+
+# Objective:
+# Get the appropriate x1, x2, x3, y1, y2, y3, values into the "pnts_assigned"
+# can use either the mesh or use the lon/lat table, 
+
+
+####  Option 2: Lon/Lat Table
+
+# The table is probably faster
+# Though I am worried if i hop between the two I might mix index order... idk
+gom3_coords <- data.frame(
+    "lon" = ncvar_get(gom3_early, "lon"),
+    "lat" = ncvar_get(gom3_early, "lat")) %>% 
+  mutate(node_id = row_number(), 
+         .before = "lon")
+
+# This will add relevant coords to the table
+pts_with_nearnodes <- pts_assigned %>% 
+  st_drop_geometry() %>% 
+  #rowwise() %>% 
+  mutate(
+    x1 = gom3_coords[p1, "lon"],
+    x2 = gom3_coords[p2, "lon"],
+    x3 = gom3_coords[p3, "lon"],
+    y1 = gom3_coords[p1, "lat"],
+    y2 = gom3_coords[p2, "lat"],
+    y3 = gom3_coords[p3, "lat"]
+  )
+```
+
+
+So, quick recap.
+
+given only a netcdf of gom3 or gom4 & a dataframe containing point coordinates, we can:
+
+  1. recreate the mesh with labeled triangles and pts    
+  2. assign which mesh triangle, and associated nodes surround the points    
+  3. use the point id's to assign their coordinates     
+  4. Use point and node coordinates to get bathycentric coordinates    
+
+
+## Step 2: Getting Barycentric Weights
+
+To interpolate within the triangle we need barycentric coordinate weights. These work better than inverse distance weighting or nearest neighbors.
+
+Now that we know where points fall, we need to match the three points with their weights, and 
+link them back out to FVCOM data for that time.
+
+This is how we can get the weights using the first point-triangle match:
+
+```{r}
+#| label: working-back-from-cart2baty
+
+# So All I Really Wanted was this....
+triangle_coord_test <- triangle_matches[1,] %>% st_coordinates()
+triangle_coord_test <- triangle_coord_test[c(1:3), c(1:2)]
+
+# So take the simplex from the first one, and also the point coords
+simplex_test <- as.matrix(triangle_coord_test)
+point_test <- pts_assigned[1, c("lon", "lat")] %>% st_drop_geometry() %>% as.matrix()
+
+# If we have the rownames in the simplex they will confirm which weights go with these values
+as.data.frame(cart2bary(
+  X = simplex_test,
+  P = point_test)) %>% 
+  setNames(triangle_matches[1,c("p1", "p2", "p3")] %>% 
+             st_drop_geometry())
+```
+
+### Assign Barycentric Weights
+
+All the points can be done in row-wise operation this way. There definitely is a faster way to do this, but remember that we only need to do this once since the mesh doesn't really change.
+
+```{r}
+#| label: barycentric-weights-function
+
+
+# adapted from this, doesn't use trisearch
+# https://www.r-bloggers.com/2013/03/barycentric-interpolation-fast-interpolation-on-arbitrary-grids/
+
+
+
+
+# Function to do it for each unique row, fails if not unique
+barycentric_weights_from_row <- function(coordinates_df){
+
+    
+    # Make the simplex
+    nodes_simplex <- matrix(
+      as.numeric(c(coordinates_df[c("x1", "x2", "x3", "y1", "y2", "y3")])), 
+      nrow = 3)
+    node_indices <- coordinates_df[c("p1", "p2", "p3")]
+    colnames(nodes_simplex) <- c("X", "Y")
+    rownames(nodes_simplex) <- node_indices
+    
+    # Make matrix from the points:
+    point_mat <- as.matrix(coordinates_df[1, c("lon", "lat")])
+    
+    # Get the coords
+    bcoords_x <- as.data.frame(cart2bary(nodes_simplex, point_mat)) %>% 
+      setNames(c("p1_bary", "p2_bary", "p3_bary"))
+      
+    # Return with dataframe
+    bind_cols(coordinates_df, bcoords_x)
+    
+}
+
+# # Test why it doesn't work:
+# coordinates_df <- pts_with_nearnodes %>% 
+#   split(.$pt_id) %>% 
+#   pluck(1)
+# barycentric_weights_from_row(coordinates_df = coordinates_df)
+# rm(coordinates_df)
+
+# Actually get all the weights
+overlaid_barycentric_weights <- pts_with_nearnodes %>% 
+  split(.$pt_id) %>% 
+  map_dfr(barycentric_weights_from_row)
+
+# # Print these
+# overlaid_barycentric_weights %>% 
+#   head() %>% 
+#   knitr::kable()
+
+```
+
+
+
+### Interpolate with Matrix Algebra
+
+
+
+```{r}
+#### Interpolation Code Below  ####
+
+
+# Apparently: Then we can sparse matrix it if we want fast interpolation...
+# # https://www.r-bloggers.com/2013/03/barycentric-interpolation-fast-interpolation-on-arbitrary-grids/
+
+
+# Define the interpolation as a sparse matrix operation. 
+# Faster than using apply, probably slower than a C implementation
+
+# Xi was the df for new points
+# Active was the indices for the nodes
+# tri$p are the barycentric coords
+# f is matrix/array containing the values 
+
+# # The original code for this:
+# M <- sparseMatrix(
+#   i    = rep(1:nrow(Xi), each=3),
+#   j    = as.numeric(t(active)),
+#   x    = as.numeric(t(tri$p)),
+#   dims = c(nrow(Xi), length(f)))
+
+# My attempt to apply it to my stuff
+# Temperature Values
+stemp_vals <- ncvar_get(gom3_early, "temp")[,1]
+btemp_vals <- ncvar_get(gom3_early, "temp")[,45]
+
+M <- sparseMatrix(
+  i    = rep(1:nrow(overlaid_barycentric_weights), each=3),
+  j    = as.numeric(t(overlaid_barycentric_weights[,c("p1", "p2", "p3")])),
+  x    = as.numeric(t(overlaid_barycentric_weights[,c("p1_bary", "p2_bary", "p3_bary")])),
+  dims = c(nrow(overlaid_barycentric_weights), length(stemp_vals)))
+
+
+# Matrix Multiply to Interpolate
+interp_sst <- as.numeric(M %*% stemp_vals)
+interp_bt <- as.numeric(M %*% stemp_vals)
+```
+
+### Validate Interpolation Results
+
+
+```{r}
+# Combine with the points
+interpolated_vals <- bind_cols(
+  overlaid_barycentric_weights,
+  data.frame("sst" = interp_sst),
+  data.frame("bt" = interp_bt)
+)
+
+
+# Values at relevant nodes only
+all_nodes <- unique(unlist(overlaid_barycentric_weights[,c("p1", "p2", "p3")]))
+node_sst <- data.frame(
+  "lon" = gom3_coords[all_nodes, "lon"],
+  "lat" = gom3_coords[all_nodes, "lat"],
+  "sst" = stemp_vals[all_nodes],
+  "bt" = btemp_vals[all_nodes]
+)
+
+# Values everywhere:
+gom3_early_temps <- bind_cols(
+  gom3_coords,
+  data.frame("sst" = stemp_vals),
+  data.frame("bt" = stemp_vals),
+  )
+
+
+
+# Plot something, chicken
+ggplot() +
+  geom_sf(data = triangle_matches, fill = NA, color = "white") +
+  geom_point(data = node_sst, aes(lon, lat, color = sst, shape = "Original Mesh"), size = 2, shape = 17) +
+  geom_point(data = interpolated_vals, aes(lon, lat, fill = sst, shape = "Interpolated Values"), size = 2, shape = 21, color = "black", show.legend = F) +
+  scale_color_distiller(palette = "RdBu") +
+  scale_fill_distiller(palette = "RdBu") +
+  scale_shape_manual(values = c(17, 21)) +
+  theme_dark() +
+  labs(title = "Barycentric Interpolation",
+       subtitle = "Sea Surface Temperature")
+```
+
+
+```{r}
+# And bottom temperature:
+ggplot() +
+  geom_sf(data = triangle_matches, fill = NA, color = "white") +
+  geom_point(data = node_sst, aes(lon, lat, color = bt, shape = "Original Mesh"), size = 2, shape = 17) +
+  geom_point(data = interpolated_vals, aes(lon, lat, fill = bt, shape = "Interpolated Values"), size = 2, shape = 21, color = "black", show.legend = F) +
+  scale_color_distiller(palette = "RdBu") +
+  scale_fill_distiller(palette = "RdBu") +
+  scale_shape_manual(values = c(17, 21)) +
+  theme_dark() +
+  labs(subtitle = "Sea Bottom Temperature")
+
+
+
+```
+
+# Full Test: Regular Grid Interpolation
+
+One useful application of this approach is to convert from the irregular grid to a more regularly spaced grid. This may be useful for un-biased polygon overlays or for direct comparison with a regularly spaced product.
+
+The following is what a regularly spaced resolution similar to oisst (0.25 * 0.25) looks like.
+
+
+```{r}
+# Make a Regular Grid
+reg_grid <- expand.grid(
+  lon = seq(-75.75, -56.75, 0.083),
+  lat = seq(35.25, 46.25, 0.083)) %>% 
+  as.data.frame() %>% 
+  mutate(coord_pair = row_number(), .before = "lon") %>% 
+  st_as_sf(coords = c("lon", "lat"), crs = 4326, remove = FALSE)
+
+
+
+
+# Use st_join to assign elem to the points and their we're looking up
+pts_assigned <- st_join(
+  st_transform(reg_grid, st_crs(gom3_mesh)),
+  gom3_mesh, 
+  join = st_within) %>% 
+  drop_na(elem, p1, p2, p3)
+
+
+# This will add relevant coords to the table
+pts_with_nearnodes <- pts_assigned %>% 
+  st_drop_geometry() %>% 
+  mutate(
+    x1 = gom3_coords[p1, "lon"],
+    x2 = gom3_coords[p2, "lon"],
+    x3 = gom3_coords[p3, "lon"],
+    y1 = gom3_coords[p1, "lat"],
+    y2 = gom3_coords[p2, "lat"],
+    y3 = gom3_coords[p3, "lat"]
+  )
+
+# Get the barycentric weights
+overlaid_barycentric_weights <- pts_with_nearnodes %>% 
+  split(.$coord_pair) %>% 
+  map_dfr(barycentric_weights_from_row)
+
+
+# Do interpolation:
+# Temperature Values
+stemp_vals <- ncvar_get(gom3_early, "temp")[,1]
+btemp_vals <- ncvar_get(gom3_early, "temp")[,45]
+M <- sparseMatrix(
+  i    = rep(1:nrow(overlaid_barycentric_weights), each=3),
+  j    = as.numeric(t(overlaid_barycentric_weights[,c("p1", "p2", "p3")])),
+  x    = as.numeric(t(overlaid_barycentric_weights[,c("p1_bary", "p2_bary", "p3_bary")])),
+  dims = c(nrow(overlaid_barycentric_weights), length(stemp_vals)))
+
+
+# Matrix Multiply to Interpolate
+interp_sst <- as.numeric(M %*% stemp_vals)
+interp_bt <- as.numeric(M %*% stemp_vals)
+
+
+
+# Combine with the points
+interpolated_vals <- bind_cols(
+  overlaid_barycentric_weights,
+  data.frame("sst" = interp_sst),
+  data.frame("bt" = interp_bt)
+)
+
+
+# Values at relevant nodes only
+all_nodes <- unique(unlist(overlaid_barycentric_weights[,c("p1", "p2", "p3")]))
+node_sst <- data.frame(
+  "lon" = gom3_coords[all_nodes, "lon"],
+  "lat" = gom3_coords[all_nodes, "lat"],
+  "sst" = stemp_vals[all_nodes],
+  "bt" = btemp_vals[all_nodes]
+)
+```
+
+
+```{r}
+# Plot something
+ggplot() +
+  # geom_sf(data = gom3_mesh, fill = NA, color = "white", linewidth = 0.1) +
+  geom_point(data = node_sst, aes(lon, lat, color = sst), size = 0.35) + 
+  scale_color_distiller(palette = "RdBu") +
+  scale_fill_distiller(palette = "RdBu") +
+  scale_shape_manual(values = c(17, 21)) +
+  theme_dark() +
+  labs(title = "Original Grid",
+       subtitle = "Sea Surface Temperature")
+```
+
+
+```{r}
+# And the regular grid
+ggplot() +
+  geom_point(data = interpolated_vals, aes(lon, lat, color = sst), size = 0.35) +
+  scale_color_distiller(palette = "RdBu") +
+  scale_shape_manual(values = c(17, 21)) +
+  theme_dark() +
+  labs(title = "Barycentric Interpolation to Regular Grid",
+       subtitle = "Sea Surface Temperature")
+
+
+```
+
+
+
+ 
+## FVCOM Daily Product Matching
+
+There are a number of projects where biological samples are taken, but environmental conditions might not also be taken simultaneously. This adds the additional step of needing to index to the correct point in time and pull the correct node values associated with it.
+
+For the years 2017-2023 we can use NECOFS forecast data, which uses the GOM4 mesh.
+
+
+```{r}
+#| label: NECOFS-data-access
+
+```
+ 
+
+
+## Get a look up table of the date matches
+
+
+
+## Write an equivalent function to identify the proper time index
+
+
+## use both lists to open connection and then subset necessary things
+ 
+ 
+```{r}
+
+```
+ 
+ 
