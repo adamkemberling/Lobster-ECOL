@@ -1,0 +1,270 @@
+---
+title: "FVCOM Hindcast Daily Downloading"
+description: | 
+  Approaches for handling FVCOM's Densest Files
+date: "Updated on: `r Sys.Date()`"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    df-print: kable
+    self-contained: true
+execute: 
+  echo: true
+  warning: false
+  message: false
+  fig.align: "center"
+  comment: ""
+---
+
+# Batch Downloading Daily FVCOM Hindcast Data 
+
+Daily averaged hindcast data is available for the following dates for these FVCOM mesh versions:
+
+1978-2016 GOM3
+2017-2018 GOM5
+
+This doc covers how daily surface and bottom data is extracted and re-saved to parquet files for fast out-of-memory access down the line.
+
+```{r}
+
+library(sf) 
+library(fvcom) 
+library(ncdf4) 
+library(tidyverse)
+library(gmRi)
+library(patchwork)
+
+# Conflicts and resource paths
+conflicted::conflict_prefer("select", "dplyr")
+conflicted::conflict_prefer("filter", "dplyr")
+proj_path <- cs_path("mills", "Projects/Lobster ECOL")
+fvcom_out <- str_c(proj_path, "FVCOM_support/")
+```
+
+
+
+# FVCOM GOM3
+
+
+For the years 1978-2016 there are daily timestep files for one-month at atime. Data for this period in time are from the FVCOM hindcast (Seaplan_33_Hindcast_v1), which uses the GOM3 mesh and boundary conditions.
+
+
+```{r}
+#| label: GOM3-data-access
+#| eval: false
+#| echo: true
+
+# We can Access links from the THREDDS directory as if they are NETCDF files
+
+
+# Files contain data for one month, 
+# so pick a month, year to construct a THREDDS connection url
+
+# Base URL path
+daily_hindcast_base <- "http://www.smast.umassd.edu:8080/thredds/dodsC/models/fvcom/NECOFS/Archive/Seaplan_33_Hindcast_v1/daily_mean/"
+
+
+# year/month details
+gom3_yr   <- 1978
+gom3_mnth <- "01"
+gom3_url  <- str_c(daily_hindcast_base, "gom3_daily_mean_", gom3_yr, gom3_mnth, ".nc")
+
+
+# Open Connection
+gom3_x <- nc_open(gom3_url)
+```
+
+
+### Grabbing Static GOM3 Elements
+
+The index numbers & positions of mesh nodes and the number of depth layers in the hindcast files do not change within FVCOM versions. We can grab this static information a single time from any of the files and store them for later.
+
+```{r}
+#| label: gom3-static-elements
+
+#------- Get static elements
+#  (grab once) - quick
+# Location indices and coordinate dimensions don't change over time
+# We can grab those one time and store them
+
+# Get the max sigma layer (depth)
+max_depth <- dim(ncvar_get(gom3_x, "siglay"))[2]
+
+# Lat & Lon
+lon_vals <- ncvar_get(gom3_x, "lon")
+lat_vals <- ncvar_get(gom3_x, "lat")
+
+# Triangle details available?
+# What are all the longnames
+# map(gom3_x$var, ~pluck(.x, "longname"))
+```
+
+The time dimension within an FVCOM netcdf file can be pulled directly and stored as well:
+
+
+```{r}
+#| label: gom3-time-dimension-details
+
+
+#-------- Get Time Vector information
+
+# Date/time values
+gom3_dates <- ncvar_get(gom3_x, "time") %>% as.Date(origin = "1858-11-17 00:00:00")
+
+# # Date/Time values: these are acting buggy
+# gom3_times  <- fvcom_time(gom3_x)
+# gom3_dates  <- lubridate::date(gom3_times)
+# gom3_dayset <- lubridate::day(gom3_times)
+# gom3_days   <- unique(gom3_dayset)
+
+
+```
+
+
+# Function to Download a Month in Long Format
+
+
+
+```{r}
+#' @title Process Daily NECOFS Surface & Bottom
+#'
+#' @param yyyymm String for year and month for ncdf file to locate and open
+#' @param var_id nc variable name ("temp") in this case
+#' @param bot_siglev Bottom layer sigma level (siglev)
+#'
+#' @return
+#' @export
+#'
+#' @examples
+download_daily_surf_and_bot <- function(
+    yyyymm,               
+    var_id = "temp"){
+  
+  
+  # 1. Open Netcdf
+  # Base URL path
+daily_hindcast_base <- "http://www.smast.umassd.edu:8080/thredds/dodsC/models/fvcom/NECOFS/Archive/Seaplan_33_Hindcast_v1/daily_mean/"
+  # Path to specific month
+  yyyymm_path <- str_c(daily_hindcast_base, "gom3_daily_mean_", yyyymm, ".nc")
+  fvcom_nc <- nc_open(yyyymm_path)
+  
+  
+  # 2. Extract Static Elements:
+  
+  # Lat/Lon/Time
+  gom3_dates   <- ncvar_get(fvcom_nc, "time")  %>% 
+    as.Date(origin = "1858-11-17 00:00:00") 
+  date_vector  <- setNames(seq(1, length(gom3_dates)), gom3_dates)
+  
+  # Lat & Lon
+  lon_vals <- ncvar_get(fvcom_nc, "lon")
+  lat_vals <- ncvar_get(fvcom_nc, "lat")
+  
+  # Bottom level index and total nodes
+  bot_siglev  <- dim(ncvar_get(fvcom_nc, "siglay"))[2]
+
+  # 2.
+  # Use map to walk through dates
+  daily_avgs_df <- map_dfr(
+    # Operating on day of month, and the full date for it
+    date_vector, 
+    function(full_day_x){
+    
+      # Surface siglev
+      daily_surface <- ncvar_get(
+          nc = fvcom_nc, 
+          varid = var_id, 
+          start = c(1, 1, full_day_x), 
+          count = c(-1,-1, 1))[,1]
+        
+        # Bottom siglev
+        daily_bottom <- ncvar_get(
+              nc = fvcom_nc, 
+              varid = var_id, 
+              start = c(1, 1, full_day_x), 
+              count = c(-1,-1, 1))[, bot_siglev]
+        
+    
+        # Return it as one dataframe
+        names_out <- c("lon", "lat", str_c("surf_", var_id), str_c("bot_", var_id))
+        daily_out <- data.frame(
+         lon       = lon_vals,
+          lat      = lat_vals,
+          surf_var = daily_surface, 
+          bot_var  = daily_bottom)  %>% 
+          setNames(names_out) %>% 
+          mutate(node_idx = row_number(), .before = "lon")
+        return(daily_out)
+        
+        }, .id = "date")
+    
+      # Close connection
+      nc_close(fvcom_nc)
+      return(daily_avgs_df)
+  
+  
+}
+```
+
+# Test one Month
+
+```{r}
+# Why are latitude and longitude not coming through correctly?
+test_1978 <- download_daily_surf_and_bot(yyyymm = "197801", var_id = "temp")
+head(test_1978)
+```
+
+# Processing a set of years:
+
+```{r}
+
+# Running through a year
+
+
+
+#### Global constants
+
+# Save folder
+save_location <- cs_path("mills", "Projects/Lobster ECOL/FVCOM_processed/GOM3_daily")
+#save_location <- cs_path("mills", "Projects/Lobster ECOL/FVCOM_parquet/GOM3_daily")
+
+# Base URL path
+daily_hindcast_base <- "http://www.smast.umassd.edu:8080/thredds/dodsC/models/fvcom/NECOFS/Archive/Seaplan_33_Hindcast_v1/"
+
+
+
+#### Temporal Ranges to Process
+
+
+# Saving a group of months sequentially:
+process_years <- c(1978)
+
+
+####  The big ole processin loop
+map(.x = process_dates, function(yyyy){
+  
+    # Download the Months for the year:
+    month_labs <- str_pad(c(1:12), width = 2, side = "left", pad = "0")
+    yr_surfbot <- map_dfr(month_labs, function(mm){
+      download_daily_surf_and_bot(
+        yyyymm = str_c(yyyy, mm), 
+        var_id = "temp")})
+    
+    # Save the data
+    print(str_c("Saving: ", yyyy, " Time: ", Sys.time()))
+    save_name <- str_c(save_location, "GOM3_daily_surfbottemp_", yr_x, ".parquet")
+    write_parquet(
+      daily_mean_dat,
+      save_name)
+    
+    # Garbage collection
+    rm(yr_surfbot, save_name)
+    gc(verbose = F)
+  }
+)
+
+
+```
+
+

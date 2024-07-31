@@ -43,10 +43,6 @@ fvcom_out <- str_c(proj_path, "FVCOM_support/")
 #source(here::here("R/FVCOM_Support.R"))
 ```
 
-# GOM3 - Prototyping
-
-
-
 
 
 # FVCOM GOM3
@@ -309,125 +305,6 @@ process_daily_surf_and_bot <- function(
 }
 ```
 
-
-```{r}
-# Looping through each day: Original
-
-
-# #' @title Process Daily NECOFS Surface & Bottom
-# #'
-# #' @param fvcom_nc ncdf object for the monthly file to process
-# #' @param date_vector day_number_vector, named as yyyy-mm-dd full dates for labeling
-# #' @param timestep_dom time step vector indicating which day of the month each timestep belongs
-# #' @param var_id nc variable name ("temp") in this case
-# #' @param bot_siglev Bottom layer sigma level (siglev)
-# #' @param total_nodes length of lon or lat dimension to indicate vector length for making an empty vector 
-# #'
-# #' @return
-# #' @export
-# #'
-# #' @examples
-# process_daily_surf_and_bot <- function(
-#     fvcom_nc,               
-#     var_id = "temp"){
-#   
-#   
-#   # 1. 
-#   # Extract Static Elements:
-#   gom3_times   <- fvcom_time(fvcom_nc)         # Actual times from nc
-#   # Problem: month files contain first day of month, and first day of next month:
-#   # Need to check for and not include that day's time index
-#   file_mnth  <- str_sub(gom3_times[1], 6,7)
-#   gom3_times <- gom3_times[which(str_sub(gom3_times, 6,7) == file_mnth)]
-#   
-#   # The rest are derived from those dates
-#   gom3_dates   <- lubridate::date(gom3_times)  # Just the date component
-#   timestep_dom <- lubridate::day(gom3_times)   # The day of month for the dates
-#   gom3_days    <- unique(timestep_dom)         # The unique day of month
-#   date_vector  <- setNames(gom3_days, unique(gom3_dates))
-#   
-#   
-#   
-#   # Lat & Lon
-#   lon_vals <- ncvar_get(fvcom_nc, "lon")
-#   lat_vals <- ncvar_get(fvcom_nc, "lat")
-#   
-#   # Bottom level index and total nodes
-#   bot_siglev  <- dim(ncvar_get(fvcom_nc, "siglay"))[2]
-#   total_nodes <- length(lon_vals)
-# 
-# 
-#   
-#   # 2.
-#   # Use map to process daily means
-#   daily_avgs_df <- map_dfr(
-#     # Operating on day of month, and the full date for it
-#     date_vector, 
-#     function(full_day_x){
-#     
-#     # Get the indices for start/count that match that full_day
-#     use_times <- which(timestep_dom == full_day_x)
-#     use_start <- min(use_times)
-#     
-#     # Get the data for that day, pulling data for each hour
-#     # Surface Layer
-#     hrly_surface <- map(
-#       use_times,
-#       function(use_start){
-#         ncvar_get(
-#           nc = fvcom_nc,
-#           varid = var_id,
-#           start = c(1, 1, use_start),
-#           count = c(-1,-1, 1))[,1]})
-# 
-# 
-#       # Bottom layer
-#       hrly_bottom <- map(
-#           use_times,
-#           function(use_start){
-#             ncvar_get(
-#               nc = fvcom_nc,
-#               varid = var_id,
-#               start = c(1, 1, use_start),
-#               count = c(-1,-1, 1))[, bot_siglev]})
-#     
-#       # Get the data for that day, pulling data for each hour
-#     
-#     
-#     # Now get the average across those time steps
-#     daily_surface <- rep(0, total_nodes)
-#     daily_bottom <- rep(0, total_nodes)
-#     for(hr in seq(1, length(hrly_surface))) {
-#       daily_surface <- daily_surface + hrly_surface[[hr]]
-#       daily_bottom  <- daily_bottom + hrly_bottom[[hr]]
-#     }
-#     
-#       
-#       # divide that by num hours: get daily average
-#       daily_surf_avg <- daily_surface / length(hrly_surface)
-#       daily_bot_avg <- daily_bottom / length(hrly_surface)
-#   
-#     
-#       # Tidy up
-#       rm(daily_bottom, hrly_bottom, daily_surface, hrly_surface)
-#     
-#     
-#       # Return it as a dataframe
-#       names_out <- c("lon", "lat", str_c("surf_", var_id), str_c("bot_", var_id))
-#       daily_out <- data.frame(
-#         lon      = lon_vals,
-#         lat      = lat_vals,
-#         surf_var = daily_surf_avg, 
-#         bot_var  = daily_bot_avg) %>% 
-#         setNames(names_out)
-#       
-#       return(daily_out)
-#   
-#     
-#     }, .id ="date")
-#   
-# }
-```
 
 
 ```{r}
