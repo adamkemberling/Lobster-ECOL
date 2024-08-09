@@ -1,0 +1,371 @@
+---
+title: "Gulf of Maine BT Interpolation Testing"
+format: html
+editor: visual
+---
+
+# About: Using the Gulf of Maine for Regional FVCOM Evaluation
+
+```{r}
+####. packages. ####
+library(gmRi)
+library(tidyverse)
+# library(duckdb)
+# library(duckplyr)
+# library(duckdbfs)
+# load_spatial()
+library(sf)
+library(rnaturalearth)
+library(fvcom)
+library(ncdf4)
+
+# Set the theme
+theme_set(theme_bw() + map_theme())
+
+# Project path
+lob_ecol_path <- cs_path("mills", "Projects/Lobster ECOL")
+fvcom_path <- cs_path("res", "FVCOM/Lobster-ECOL")
+poly_paths <- cs_path("mills", "Projects/Lobster ECOL/Spatial_Defs")
+
+# regional shapefiles
+new_england <- ne_states("united states of america", returnclass = "sf") %>% 
+  filter(postal %in% c("VT", "ME", "RI", "MA", "CT", "NH", "NY", "MD", "VA", "NJ", "DE", "NC", "PA", "WV"))
+
+
+```
+
+### Load Regional Shapefiles
+
+```{r}
+# Load inshore
+inshore_areas <- map(
+  setNames(
+    list.files(str_c(poly_paths, "inshore_areas"), full.names = T),
+    str_remove(list.files(str_c(poly_paths, "inshore_areas")), ".geojson")),
+  function(x){read_sf(x)})
+
+# Load offshore
+offshore_areas <- map(
+  setNames(
+    list.files(str_c(poly_paths, "offshore_areas"), full.names = T),
+    str_remove(list.files(str_c(poly_paths, "offshore_areas")), ".geojson")),
+  function(x){read_sf(x)})
+
+
+# Map everything
+ggplot() +
+  geom_sf(data = bind_rows(inshore_areas), aes(fill = area_id), alpha = 0.4) +
+  geom_sf(data = bind_rows(offshore_areas), aes(fill = Region), alpha = 0.4) +
+  geom_sf(data = new_england) +
+  theme(legend.position = "right") +
+  scale_fill_gmri() +
+  coord_sf(xlim = c(-78, -66), ylim = c(35.5, 45)) +
+  theme_bw() + map_theme() +
+  labs(fill = "Area")
+```
+
+### Open Daily Data
+
+Daily surface and bottom temperatures were obtained through direct communication with the Dr. Chen's group at UMASS Dartmouth, with special thanks for Drs. Wang & Li for their help and continued correspondence.
+
+From these daily-averagede NetCDF files and using the FVCOM r-package it should be possible to load the GOM3 triangular mesh as a simple features dataframe into R. 
+
+
+```{r}
+
+# Load some daily FVCOM that we downloaded and averaged
+daily_file <- nc_open(str_c(fvcom_path, "gom3_1978.nc"))
+
+
+
+# Get the mesh itself as a simple feature collection
+gom3_mesh <- get_mesh_geometry(daily_file, what = 'lonlat')
+
+
+# Map everything
+ggplot() +
+  geom_sf(data = gom3_mesh, alpha = 0.4, linewidth = 0.1) +
+  geom_sf(data = bind_rows(inshore_areas), aes(fill = area_id), alpha = 0.4) +
+  geom_sf(data = bind_rows(offshore_areas), aes(fill = Region), alpha = 0.4) +
+  geom_sf(data = new_england) +
+  theme(legend.position = "right") +
+  scale_fill_gmri() +
+  coord_sf(xlim = c(-78, -65), ylim = c(35.5, 45)) +
+  theme_bw() + map_theme() +
+  labs(
+    title = "Coverage overlap of FVCOM and study regions",
+    fill = "Area")
+
+```
+
+
+
+### Overlay Regions
+
+Within each region we will crop the FVCOM mesh, and from that geoprocessing operation we can then determine the node&element ID's to pull out of the netcdf files. We also will be able to calculate relative areas of resulting triangles and fractions of triangles to use for weighted-averages for zonal summaries.
+
+```{r}
+#| label: node-element-assignments
+
+
+
+# Nodes
+node_ids <- fvcom_nodes(daily_file) %>% 
+  rename(node_id = node) %>% 
+  st_as_sf(coords = c("lon", "lat"), crs = 4326)
+
+# Center elements
+elem_ids <- fvcom_elems(daily_file) %>% 
+  st_as_sf(coords = c("lon", "lat"), crs = 4326)
+
+# we want both the ids to join, but we also want to crop it...
+inshore_trans <- map(inshore_areas, ~st_transform(.x, crs = 6318))
+
+
+# everything below steps through the steps
+crop_t <- st_intersection(gom3_mesh, inshore_trans$`511-Eastern_Maine`) 
+
+
+# Map what is happening:
+ggplot() +
+  geom_sf(data = crop_t, aes(color = "FVCOM Mesh"), 
+          alpha = 0.5) +
+  geom_sf(data = inshore_trans$`511-Eastern_Maine`, 
+          aes(color = "511 - Eastern Maine"), linewidth = 1,
+          alpha = 0.5, fill = "transparent") +
+  labs(
+    title = "Assigning node/elements and area-weights to regions",
+    subtitle = "st_intersection(mesh, area_poly)",
+       color = "Geometry Source")
+```
+
+
+```{r}
+# From intersection we need to add areas
+mutate(crop_t, rel_area = st_area(crop_t), .before = "Join_Count") %>% 
+  select(SHORT_NAME, Id_1, FULL_NAME, elem, p1, p2, p3, rel_area) %>% 
+  st_drop_geometry() %>% 
+  head() %>% 
+  gt::gt() %>% gt::tab_header(
+    title = "Intersection Insight gained:",
+    subtitle = "Information needed to subset from NetCDF and weight Appropriately")
+
+
+```
+
+
+```{r}
+# Get the data that matches
+names(daily_file$var)
+ncvar_get(daily_file, "surface_t")
+
+```
+
+
+
+### Split Inshore/Offshore
+
+```{r}
+
+
+# Determine which nodes are within the inshore area
+gom3_in <- st_filter(gom3_single, inshore_diss, .predicate = st_within)
+gom4_in <- st_filter(gom4_single, inshore_diss, .predicate = st_within)
+
+
+# label the points for both, combine to one table to facet
+gom3_single <- gom3_single %>% mutate(
+  zone = if_else(node_id %in% gom3_in$node_id, "inshore", "offshore"))
+gom4_single <- gom4_single %>% mutate(
+  zone = if_else(node_id %in% gom4_in$node_id, "inshore", "offshore"))
+
+# Both version nodes labelled
+both_labelled <- bind_rows(gom3_single, gom4_single)
+
+# Clip the inshore offshore area with gom_epu
+gom_inshore_areas <- st_intersection(gom_epu, inshore_area)
+
+# Map the inshore-offshore split
+ggplot() +
+  geom_sf(data = both_labelled, aes(color = zone), size = 0.2, alpha = 0.4) +
+  geom_sf(data = gom_epu, fill = NA, linewidth = 0.5) +
+  geom_sf(data = gom_inshore_areas, fill = NA, linewidth = 0.5) +
+  facet_wrap(~fvcom_vers) +
+  scale_color_gmri() +
+  theme(legend.position = "bottom") +
+  labs(
+    title = "Test Area - Gulf of Maine Ecological Production Unit",
+    subtitle = "Inshore + Offshore Areas of Interest",
+    color = "Inshore vs. Offshore")
+
+```
+
+### Look at Timeseries + Changepoints
+
+Prior to any interpolations, timeseries for both inshore and offshore areas are evaluated for both long-term trends (Kendall test), and structural breaks in means/trends (changepoint/breakpoint tests). These tests determine the following:\
+- Significant trends = non-stationary, and global krigging model should not be used\
+- Breakpoints determine which groups of years should be used for seasonal kriging models
+
+```{r}
+#| label: both-version-inshoreoffshore
+
+# If we have inshore/offshore labels on the daily data, then we can use an inner join to filter spatially
+
+# pick a day that has both GOM3 versions, label inshore-offshore
+# then filter that, and use an inner join for either inshore/offshore to 
+# subset from the full dataset
+both_single <- fvcom_daily %>% 
+  filter(date == "2016-06-01") %>%
+  mutate(geometry = st_point(lon, lat)) %>% 
+  to_sf(crs = 4326) %>% 
+  st_filter(gom_epu, .predicate = st_within) 
+# assign inshore/offshore here
+
+# Determine which nodes are within the inshore area
+both_in <- st_filter(both_single, inshore_diss, .predicate = st_within)
+
+# label the points for both, combine to one table to facet
+both_single <- both_single %>% mutate(
+  zone = if_else(node_id %in% both_in$node_id, "inshore", "offshore"))
+
+
+# Pull the nodes
+inshore_nodes <- both_single %>% filter(zone == "inshore") %>% 
+  pull(node_id)
+offshore_nodes <- both_single %>% filter(zone == "offshore") %>% pull(node_id)
+```
+
+```{r}
+#| label: filter-inshoreoffshore-bynode
+
+# Use that single day to filter?
+# Inshore area
+daily_inshore <- fvcom_daily %>% 
+  mutate(year = lubridate::year(date)) %>% 
+  filter(node_id %in% inshore_nodes)
+daily_offshore <- fvcom_daily %>% 
+  mutate(year = lubridate::year(date)) %>% 
+  filter(node_id %in% offshore_nodes)
+
+
+
+# Testing map-reduce style workflows here
+# Get a vector of years to loop/map through
+year_index <- distinct(daily_inshore, year) %>% pull(year)
+
+
+
+# Does using map to chunk it out help?
+# Don't need to clip because we have the nodes filtered
+# Make yearly averages:
+Sys.time()
+year_inshore <- setNames(year_index, year_index) %>% 
+  map_dfr(function(x){
+    daily_inshore %>% 
+      filter(year == x) %>% 
+      mutate(geometry = st_point(lon, lat)) %>% 
+      # why does map_dfr need this?
+      to_sf(crs = 4326) %>% 
+      group_by(year, fvcom_vers, lon, lat) %>% 
+      summarise(
+        surf_temp = mean(surf_temp, na.rm = T),
+        bot_temp = mean(bot_temp, na.rm = T),
+        .groups = "drop") 
+  })
+Sys.time()
+
+
+# 40 minutes !!
+
+
+
+# Plot average temperature
+inshore_annual <- year_inshore %>% 
+  group_by(year, fvcom_vers) %>% 
+  summarise(bot_temp = mean(bot_temp, na.rm = T),
+            .groups = "drop")
+
+ggplot(inshore_annual, aes(year, bot_temp, color = fvcom_vers)) +
+  geom_line() +
+  scale_color_gmri()
+```
+
+```{r}
+# Select a Shorter subset of time for inshore and do daily summaries
+# plot 12, 18, & 20C Reference Lines with Bottom temperature
+
+
+```
+
+```{r}
+#| label: other-annual-summary-approach
+
+# # Assign inshore offshore for full timeseries
+# 
+# # Filter the area using that one-day slice
+# # Do some general filtering using the single day coords
+# min_lon <- min(gom3_in$lon)
+# max_lon <- max(gom3_in$lon)
+# min_lat <- min(gom3_in$lat)
+# max_lat <- max(gom3_in$lat)
+# 
+# # Inshore area
+# daily_inshore <- fvcom_daily %>% 
+#   dplyr::filter(
+#     lon >= min_lon,
+#     lon <= max_lon,
+#     lat >= min_lat,
+#     lat <= max_lat) %>% 
+#   mutate(year = lubridate::year(date)) 
+# 
+# 
+# # Testing map-reduce style workflows here
+# # Get a vector of years to loop/map through
+# year_index <- distinct(daily_inshore, year) %>% pull(year)
+# 
+# # Does using map to chunk it out help?
+# # Clip to GOM, 
+# # clip again to inshore or offshore
+# # Make yearly averages:
+# Sys.time()
+# year_inshore <- year_index %>% 
+#   map_dfr(function(x){
+#     daily_inshore %>% 
+#       filter(year == x) %>% 
+#       mutate(geometry = st_point(lon, lat)) %>% 
+#   to_sf(crs = 4326) %>% 
+#   st_filter(gom_epu, .predicate = st_within) %>% 
+#   st_filter(inshore_diss, .predicate = st_within) %>% 
+#   group_by(year, fvcom_vers, lon, lat) %>% 
+#   summarise(
+#     surf_temp = mean(surf_temp, na.rm = T),
+#     bot_temp = mean(bot_temp, na.rm = T),
+#     .groups = "drop") 
+#   })
+# Sys.time()
+# 
+# 
+# 
+# 
+# # # Merge in offshore vs. inshore to seasonal averages
+# # # Join node numbers over
+# year_inshore_labeled <- year_inshore %>%
+#   left_join(select(st_drop_geometry(gom3_single), lon, lat, gom3_node = node_id, zone), join_by("lon", "lat")) %>%
+#   left_join(select(st_drop_geometry(gom4_single), lon, lat, gom4_node = node_id, zone), join_by("lon", "lat", "zone")) %>%
+#   filter((is.na(gom3_node) == FALSE | is.na(gom4_node == FALSE)))
+# 
+# 
+# 
+# 
+# 
+# # Plot average temperature
+# inshore_annual <- year_inshore_labeled %>% 
+#   group_by(year, fvcom_vers) %>% 
+#   summarise(bot_temp = mean(bot_temp, na.rm = T),
+#             .groups = "drop")
+# 
+# ggplot(inshore_annual, aes(year, bot_temp, color = fvcom_vers)) +
+#   geom_line() +
+#   scale_color_gmri()
+  
+```

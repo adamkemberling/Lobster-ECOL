@@ -1,5 +1,6 @@
 # Lobster-ECOL README
 
+
 # Lobster-ECOL
 
 This is the ecological data processing code for the Lobster ecology
@@ -14,11 +15,12 @@ processed for further use in research.Code in this repository covers the
 acquisition and data processing of physical and ecological datasets at
 the following scales and from the following sources:
 
-# A.) Nearshore Scale Maine + New Hampshire Metrics:
+# A.) Nearshore Scale
 
-![](README_files/figure-commonmark/unnamed-chunk-3-1.png)
+<img src="README_files/figure-commonmark/fig-nearshore-scale-map-1.png"
+id="fig-nearshore-scale-map" />
 
-### Local Currents
+#### Local Currents
 
 1.  Maine Coastal Current, Turnoff
 
@@ -42,9 +44,13 @@ the following scales and from the following sources:
 
 ------------------------------------------------------------------------
 
-# B.) State/Regional Scale: Gulf of Maine, SNE & GB Metrics:
+# B.) Offshore & Regional Scale
 
-![](README_files/figure-commonmark/unnamed-chunk-4-1.png)
+1.  Gulf of Maine & Georges Bank
+2.  Southern New England
+
+<img src="README_files/figure-commonmark/fig-offshore-scale-map-1.png"
+id="fig-offshore-scale-map" />
 
 #### Sea Surface Temperature
 
@@ -91,7 +97,7 @@ the following scales and from the following sources:
 
 ------------------------------------------------------------------------
 
-# C.) Northeast US Shelf-wide Scale:
+# C.) Northeast US Shelf-wide Scale
 
 #### Gulf Stream Position
 

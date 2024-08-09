@@ -5,8 +5,8 @@ execute:
   echo: false
   warning: false
   message: false
-  fig.height: 1
-  fig.width: 3
+  fig.height: 2
+  fig.width: 4
   comment: ""
   fig.align: center
 ---
@@ -21,15 +21,28 @@ library(showtext)
 
 # Read Regions in
 proj_path <- cs_path("mills", "Projects/Lobster ECOL")
-vts_poly    <- read_sf(str_c(proj_path, "Ecological Data/Spatial_Boundaries/VTSsurvey_nearshore_area.geojson"))
-res_shapes  <- cs_path("res", "Shapefiles")
-epu_path    <- str_c(res_shapes, "EPU/")
-gom_poly    <- read_sf(str_c(epu_path, "individual_epus/GOM.geojson"))
-gb_poly     <- read_sf(str_c(epu_path, "individual_epus/GB.geojson"))
+
+# Load Shapefiles for inshore/offshore
+poly_paths <- cs_path("mills", "Projects/Lobster ECOL/Spatial_Defs")
+
+inshore_areas <- map(
+  setNames(
+    list.files(str_c(poly_paths, "inshore_areas"), full.names = T),
+    str_remove(list.files(str_c(poly_paths, "inshore_areas")), ".geojson")),
+  function(x){read_sf(x)}
+)
+
+offshore_areas <- map(
+  setNames(
+    list.files(str_c(poly_paths, "offshore_areas"), full.names = T),
+    str_remove(list.files(str_c(poly_paths, "offshore_areas")), ".geojson")),
+  function(x){read_sf(x)}
+)
 
 # Statebounds
 canada <- ne_states("Canada", returnclass = "sf") %>% filter(name_en %in% c("Nova Scotia", "Quebec", "New Brunswick", "Prince Edward Island"))
-ne_us <- ne_states("United States of America", returnclass = "sf") %>% filter(name %in% c("Maine", "Massachusetts", "Vermont", "New Hampshire", "Connecticut", "New York", "Rhode Island"))
+ne_us <- ne_states("united states of america", returnclass = "sf") %>% 
+  filter(postal %in% c("VT", "ME", "RI", "MA", "CT", "NH", "NY", "MD", "VA", "NJ", "DE", "NC", "PA", "WV"))
 
 # Map theme
 theme_set(theme_bw() + 
@@ -58,6 +71,7 @@ font_add(
 
 # Load the font
 showtext::showtext_auto()
+theme_set(theme_bw() + map_theme(text = element_text(family = "Avenir")))
 
 ```
 
@@ -67,23 +81,31 @@ This is the ecological data processing code for the Lobster ecology project. Thi
 
 At each of these spatial scales physical and ecological metrics have processed for further use in research.Code in this repository covers the acquisition and data processing of physical and ecological datasets at the following scales and from the following sources:
 
-# A.) Nearshore Scale Maine + New Hampshire Metrics:
+# A.) Nearshore Scale
+
 
 ```{r}
+#| label: fig-nearshore-scale-map
 #| echo: false
 
 ggplot() +
-  geom_sf(data = vts_poly, fill = gmri_cols("blue"), alpha = 0.4) +
+  geom_sf(data = bind_rows(inshore_areas), aes(fill = area_id), alpha = 0.4) +
   geom_sf(data = ne_us) +
   geom_sf(data = canada) +
-  coord_sf(xlim = c(-71.5, -66), ylim = c(42.5, 45)) +
-  labs(title = "Nearshore Scale")
+  coord_sf(xlim = c(-78, -66), ylim = c(35.5, 45)) +
+  labs(title = "Nearshore Scale: < 12nm", fill = "")
 
 ```
 
-### Local Currents
+#### Local Currents
 
  1. Maine Coastal Current, Turnoff
+ 
+ 
+```{r}
+
+```
+ 
  
 > Source: FVCOM
 
@@ -106,16 +128,20 @@ ggplot() +
 
 ---
 
-# B.) State/Regional Scale: Gulf of Maine, SNE & GB Metrics:
+# B.) Offshore & Regional Scale
+
+ 1. Gulf of Maine & Georges Bank
+ 2. Southern New England
 
 ```{r}
+#| label: fig-offshore-scale-map
+
 ggplot() +
-  geom_sf(data = gom_poly, fill = gmri_cols("orange"), alpha = 0.4) +
-  geom_sf(data = gb_poly, fill = gmri_cols("gmri green"), alpha = 0.4) +
+  geom_sf(data = bind_rows(offshore_areas), aes(fill = Region), alpha = 0.4) +
   geom_sf(data = ne_us) +
   geom_sf(data = canada) +
-  coord_sf(xlim = c(-72, -65), ylim = c(40, 45)) +
-  labs(title = "State/Regional Scales")
+  coord_sf(xlim = c(-78, -66), ylim = c(35.5, 45)) +
+  labs(title = "Offshore Scale: > 12nm", fill = "")
 ```
 
 
@@ -157,7 +183,7 @@ ggplot() +
 ---
 
 
-# C.) Northeast US Shelf-wide Scale:
+# C.) Northeast US Shelf-wide Scale
 
 
 
