@@ -66,13 +66,16 @@ daily_hindcast_base <- "http://www.smast.umassd.edu:8080/thredds/dodsC/models/fv
 
 
 # year/month details
-gom3_yr   <- 1978
+gom3_yr   <- 2016
 gom3_mnth <- "01"
 gom3_url  <- str_c(daily_hindcast_base, "gom3_daily_mean_", gom3_yr, gom3_mnth, ".nc")
 
 
 # Open Connection
 gom3_x <- nc_open(gom3_url)
+
+# What are all the longnames
+# c(map(gom3_x$var, ~pluck(.x, "longname")))
 ```
 
 
@@ -96,8 +99,9 @@ lon_vals <- ncvar_get(gom3_x, "lon")
 lat_vals <- ncvar_get(gom3_x, "lat")
 
 # Triangle details available?
-# What are all the longnames
-# map(gom3_x$var, ~pluck(.x, "longname"))
+# No
+ncvar_get(gom3_x, "nv")
+ncvar_get(gom3_x, "nele")
 ```
 
 The time dimension within an FVCOM netcdf file can be pulled directly and stored as well:
@@ -189,7 +193,7 @@ daily_hindcast_base <- "http://www.smast.umassd.edu:8080/thredds/dodsC/models/fv
         # Return it as one dataframe
         names_out <- c("lon", "lat", str_c("surf_", var_id), str_c("bot_", var_id))
         daily_out <- data.frame(
-         lon       = lon_vals,
+          lon      = lon_vals,
           lat      = lat_vals,
           surf_var = daily_surface, 
           bot_var  = daily_bottom)  %>% 
@@ -223,26 +227,23 @@ head(test_1978)
 
 
 
-#### Global constants
-
-# Save folder
-save_location <- cs_path("mills", "Projects/Lobster ECOL/FVCOM_processed/GOM3_daily")
+#### Save folder
+save_location <- here::here("data/")
+# save_location <- cs_path("mills", "Projects/Lobster ECOL/FVCOM_processed/GOM3_daily")
 #save_location <- cs_path("mills", "Projects/Lobster ECOL/FVCOM_parquet/GOM3_daily")
-
-# Base URL path
-daily_hindcast_base <- "http://www.smast.umassd.edu:8080/thredds/dodsC/models/fvcom/NECOFS/Archive/Seaplan_33_Hindcast_v1/"
-
 
 
 #### Temporal Ranges to Process
-
-
 # Saving a group of months sequentially:
-process_years <- c(1978)
+process_years <- c(1978:1979)
+
+
+
 
 
 ####  The big ole processin loop
-map(.x = process_dates, function(yyyy){
+print(paste0("Starting at: ", Sys.time()))
+map(.x = process_years, function(yyyy){
   
     # Download the Months for the year:
     month_labs <- str_pad(c(1:12), width = 2, side = "left", pad = "0")
@@ -253,9 +254,9 @@ map(.x = process_dates, function(yyyy){
     
     # Save the data
     print(str_c("Saving: ", yyyy, " Time: ", Sys.time()))
-    save_name <- str_c(save_location, "GOM3_daily_surfbottemp_", yr_x, ".parquet")
-    write_parquet(
-      daily_mean_dat,
+    save_name <- str_c(save_location, "GOM3_daily_surfbottemp_", yyyy, ".csv")
+    write_csv(
+      yr_surfbot,
       save_name)
     
     # Garbage collection
@@ -263,6 +264,51 @@ map(.x = process_dates, function(yyyy){
     gc(verbose = F)
   }
 )
+
+
+```
+
+
+# Compare to Daily Averages from Hourly Files
+
+```{r}
+# Load the file made from daily
+daily_1978 <- read_csv(
+  str_c(save_location, 
+        "GOM3_daily_surfbottemp_", 1978, ".csv"))
+
+# Load the files made from hourly
+hrly_1978 <- map_dfr(
+  str_c("1978_",
+        str_pad(1:12, width = 2, side = "left", pad = "0")),
+  .f = ~read_csv(
+    str_c(
+      cs_path("mills", "Projects/Lobster ECOL/FVCOM_processed/GOM3_daily"),
+      "GOM3_daily_surfbottemp_", .x, ".csv"))
+)
+
+
+# check the vectors against one another
+daily_check <- daily_1978 %>% filter(date == "1978-01-02") 
+hrly_check <- hrly_1978 %>% filter(date == "1978-01-02") 
+
+# Cool they don't match
+(sum(daily_check$surf_temp == hrly_check$surf_temp) / length(hrly_check))
+
+# What about histograms, are they just mixed up.
+ggplot() +
+  geom_histogram(data = daily_check, aes(surf_temp, fill = "Daily Files"), alpha = 0.5) +
+  geom_histogram(data = hrly_check, aes(surf_temp, fill = "Hourly Files"), alpha = 0.5)
+
+# 
+# # Timeseries
+# bind_rows(
+#   list("daily timestep file" = daily_1978,
+#        "hourly timestep file" = hrly_1978), 
+#   .id = "FVCOM Source") %>% 
+#   ggplot() +
+#   geom_boxplot(aes(factor(date), surf_temp, color = `FVCOM Source`), 
+#     alpha = 0.5, position = position_dodge(width = 0.25)) 
 
 
 ```
