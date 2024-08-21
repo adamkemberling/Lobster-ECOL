@@ -1,0 +1,276 @@
+---
+title: "Processing Monthly FVCOM Timeseries"
+description: | 
+  Documenting GMRI's FVCOM Inventory on Box
+date: "Updated on: `r Sys.Date()`"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    df-print: kable
+    self-contained: true
+execute: 
+  echo: true
+  warning: false
+  message: false
+  fig.height: 6
+  fig.width: 8
+  fig.align: "center"
+  comment: ""
+---
+
+## GMRI-Box GOM3-FVCOM Monthly Inventory
+
+As part of a previous project, the FVCOM GOM3 hindcast data was downloaded for local (cloud) storage. Data was re-saved as monthly means.
+
+This quarto doc will serve as documentation of how that data was processed into timeseries for regions of interest.
+
+A previous team member (Matt Dzaugis) was responsible for accessing and storing the data, and we are grateful for his time/effort in doing so.
+
+```{r}
+library(raster)
+library(sf) 
+library(fvcom) 
+library(ncdf4) 
+library(tidyverse)
+library(gmRi)
+
+# namespace conflicts
+conflicted::conflict_prefer("select", "dplyr")
+conflicted::conflict_prefer("filter", "dplyr")
+
+# Paths
+proj_path <- cs_path("mills", "Projects/Lobster ECOL")
+fvcom_out <- str_c(proj_path, "FVCOM_support/")
+
+# Support functions for FVCOM
+source(here::here("R/FVCOM_Support.R"))
+```
+
+## Changes in Mesh Over Time
+
+FVCOM/NECOFS mesh structure has been iterated upon over time, with different mesh resolution and the number of variables estimated by the model increasing with newer model iterations moving from gom3 -\> NECOFS.
+
+For the earlier years (1978-2016) we can use the same mesh:
+
+```{r}
+# We can Access Netcdf Files Directly
+box_fvcom <- cs_path("res", "FVCOM/monthly_means/gom3_mon_means")
+yr <- "2010"
+mon <- "01"
+
+# Build the full path
+nc_name <- str_c(box_fvcom, "gom3_monthly_mean_", yr, mon, ".nc")
+
+# Open (lazy-load) the netcdf connection
+x_early <- nc_open(nc_name)
+
+# Can also get the mesh itself as a simple feature collection
+gom3_mesh <- get_mesh_geometry(x_early, what = 'lonlat') 
+
+# And we can use the mesh to request variables with it
+plot(sf::st_geometry(gom3_mesh), 
+     border = scales::alpha("gray", 0.6), 
+     main = "GMRI Monthly FVCOM Coverage - gom3 hindcast")
+
+# nc_close(x_early)
+```
+
+# Building Regional Monthly Timseries:
+
+The code below will process the in-house inventory of FVCOM monthly mean data into timeseries for regions of interest relevant to the LOBSTER-ECOL project.
+
+### Trim Mesh to Areas
+
+```{r}
+# Read things in
+vts_poly    <- read_sf(str_c(proj_path, "Ecological Data/Spatial_Boundaries/VTSsurvey_nearshore_area.geojson"))
+res_shapes  <- cs_path("res", "Shapefiles")
+epu_path    <- str_c(res_shapes, "EPU/")
+gom_poly    <- read_sf(str_c(epu_path, "individual_epus/GOM.geojson"))
+gb_poly     <- read_sf(str_c(epu_path, "individual_epus/GB.geojson"))
+
+
+
+# Prep CRS for polygons
+gom_poly <- st_transform(gom_poly, st_crs(gom3_mesh))
+gb_poly  <- st_transform(gb_poly, st_crs(gom3_mesh))
+vts_poly <- st_transform(vts_poly, st_crs(gom3_mesh))
+
+
+
+# trim them:---------
+
+# Flag the locations that are within the domain, use them for next step
+vts_mesh <- mesh_trim(mesh = gom3_mesh, domain = vts_poly)
+gom_mesh <- mesh_trim(mesh = gom3_mesh, domain = gom_poly)
+gb_mesh  <- mesh_trim(mesh = gom3_mesh, domain = gb_poly)
+
+```
+
+### Validate the Process for 1 Month
+
+```{r}
+#| eval: false
+
+# variables we want
+node_var_list <- c('temp', 'salinity')
+
+# Get the time dimensions
+time_dim <- fvcom_time(x_early)
+
+
+# get_mesh will average over the time indices its given
+# Needs a dataset, a depth level, a mesh, and the time index value(s)
+surface_vars <- get_mesh(
+  x_early, # Dataset lazyloaded with ncdf4 from THREDDS 
+  y = 1, # integer, or indices for siglay or siglev (depth indices)
+  vars = c(node_var_list),  # Variables we want
+  mesh = vts_mesh, # Mesh to get them for
+  time = c(1:length(time_dim)), # All time intervals
+  )
+```
+
+# Get Monthly Summaries for Regions of Interest
+
+
+### VTS Survey Area
+
+```{r}
+#| label: VTS-Timeseries
+#| eval: false
+
+# creating vts_fvcom
+
+# How long does this take - long time, not efficient
+Sys.time()
+vts_fvcom <-  local_fvcom_to_timeseries(
+    start_yr  = 1978, 
+    end_yr    = 2016, 
+    mesh      = vts_mesh, 
+    folder    = cs_path("res", "FVCOM/FVCOM_gom3_mon_means"), 
+    var_names = c("temp", "salinity")) %>% mutate(
+  yr = str_sub(date, 1, 4),
+  mn = str_sub(date, 5, 6),
+  dt = as.Date(str_c(yr, mn, "01", sep = "-")))
+Sys.time()
+
+# Save
+# write_csv(vts_fvcom, here::here("data/fvcom_vts_area.csv"))
+
+```
+
+
+
+### Gulf of Maine EPU
+
+```{r}
+#| label: Gulf-of-Maine-Timeseries
+#| eval: false
+
+
+# Time the processing
+Sys.time()
+gom_fvcom <-  local_fvcom_to_timeseries(
+    start_yr  = 1978, 
+    end_yr    = 2016, 
+    mesh      = gom_mesh, 
+    folder    = cs_path("res", "FVCOM/FVCOM_gom3_mon_means"), 
+    var_names = c("temp", "salinity")) %>% 
+  mutate(
+  yr = str_sub(date, 1, 4),
+  mn = str_sub(date, 5, 6),
+  dt = as.Date(str_c(yr, mn, "01", sep = "-")))
+Sys.time()
+
+# Save
+# write_csv(gom_fvcom, here::here("data/fvcom_gom_area.csv"))
+
+
+```
+
+
+
+### Georges bank EPU
+
+```{r}
+#| label: Georges-Bank-Timeseries
+#| eval: false
+
+# Process georges bank
+
+
+# Run the full thing
+Sys.time()
+gb_fvcom <-  local_fvcom_to_timeseries(
+    start_yr  = 1978, 
+    end_yr    = 2016, 
+    mesh      = gb_mesh, 
+    folder    = cs_path("res", "FVCOM/FVCOM_gom3_mon_means"), 
+    var_names = c("temp", "salinity")) %>% 
+  mutate(
+  yr = str_sub(date, 1, 4),
+  mn = str_sub(date, 5, 6),
+  dt = as.Date(str_c(yr, mn, "01", sep = "-")))
+Sys.time()
+
+# Save
+# write_csv(gb_fvcom, here::here("data/fvcom_gb_area.csv"))
+```
+
+# Review What we Have Processed:
+
+```{r}
+# Read in the processed timeseries
+vts_fvcom <- read_csv(here::here("data/fvcom_vts_area.csv"))
+gom_fvcom <- read_csv(here::here("data/fvcom_gom_area.csv"))
+gb_fvcom <- read_csv(here::here("data/fvcom_gb_area.csv"))
+
+
+# combine them into one df for plotting convenience
+all_areas <- bind_rows(
+  mutate(vts_fvcom, area = "Nearshore - VTS"),
+  mutate(gom_fvcom, area = "Offshore - Gulf of Maine"),
+  mutate(gb_fvcom, area = "Offshore - Georges Bank")
+) %>% pivot_longer(
+  cols = c(2:5),
+  names_to = "var_name",
+  values_to = "val"
+)
+```
+
+::: panel-tabset
+### Monthly
+
+```{r}
+all_areas %>% 
+ggplot() +
+  geom_line(aes(dt, val, color = area), linewidth = 1, alpha = 0.6) +
+  facet_grid(var_name~., scales = "free") +
+  scale_color_gmri() +
+  theme_gmri()
+```
+
+### Yearly
+
+```{r}
+all_areas %>% 
+  group_by(area, var_name, yr = lubridate::year(dt)) %>% 
+  summarise(val = mean(val, na.rm = T)) %>% 
+ggplot() +
+  geom_line(aes(yr, val, color = area), linewidth = 1, alpha = 0.6) +
+  facet_grid(var_name~., scales = "free") +
+  scale_color_gmri() +
+  theme_gmri()
+```
+:::
+
+## Comparison Checks with Alternative Data Sources
+
+For our area it is common to use the following resources for these core environmental variables:
+
+*SST*<br> 1. OISSTv2<br> 2. GLORYs<br> 3. ROMS<br>
+
+*BT*<br> 1. GLORYs<br> 2. ROMS<br> 3. SODA<br>
+
+These data sources have varying degrees of spatial/temporal resolutions and temporal coverage so it very often is an exercise in picking the best resource for the project needs.

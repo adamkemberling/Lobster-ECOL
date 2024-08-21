@@ -1,0 +1,452 @@
+---
+title: "FVCOM Access in R  and Spatial Subsetting"
+description: | 
+  Using Bounding Polygons to Trim FVCOM Mesh Data
+date: "Updated on: `r Sys.Date()`"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    df-print: kable
+    self-contained: true
+execute: 
+  echo: false
+  warning: false
+  message: false
+  fig.height: 6
+  fig.width: 8
+  fig.align: "center"
+  comment: ""
+---
+
+## Subsetting FVCOM Spatially with {FVOM}
+
+This approach will lean on the work of Ben Tupper at Bigelow Labs, and their package fvcom. Many thanks to Ben and their team for their work on this.
+
+This package can be used to get fvcom data from downloaded files or from links to THREDDS/OPENDAP endpoints. Once the netcdf files are opened in the environment, the {FVCOM} package will use the coordinate information to generate a mesh using thee {sf} package. This mesh can then be clipped using geoprocessing functions in the {sf} package, and done this way triangular mesh structure is preserved, and no elements like the current direction etc. become orphaned.
+
+FVCOM meshes can be saved as shapefile/geojson/csv files as a lightweight file that contains the lat/lon index numbers and their coordinates for verification. These index numbers can be used directly to index from FVCOM files in R/python.
+
+**NOTE: Mesh structure is not consistent across FVCOM versions. FVCOM-GOM3 uses a different mesh than FVCOM-GOM4 or FVCOM-GOM5 which have expanded regional coverage and increased densities.**
+
+Read more about their package here: https://github.com/BigelowLab/fvcom
+
+```{r}
+#| eval: false
+
+# To install fvcom
+#devtools::install_github("BigelowLab/fvcom")
+```
+
+```{r}
+library(sf) 
+library(fvcom) 
+library(ncdf4) 
+library(tidyverse)
+library(gmRi)
+library(patchwork)
+library(rasterVis)
+library(metR)
+
+# Location to FVCOM project assets:
+proj_path <- cs_path("mills", "Projects/Lobster ECOL")
+fvcom_out <- str_c(proj_path, "FVCOM_support/")
+
+
+source(here::here("R/FVCOM_Support.R"))
+```
+
+### Accessing NECOFS GOM4
+
+As explained on the repo documentation for [Ben's {fvcom} package](https://github.com/BigelowLab/fvcom?tab=readme-ov-file), Data are served via OpeNDAP on a THREDDS Server. NECOFS has its own [THREDDS Directory](http://www.smast.umassd.edu:8080/thredds/catalog/models/fvcom/NECOFS/catalog.html) which can be used to browse what is available.
+
+```{r}
+# We can Access links from the THREDDS directory as if they are NETCDF files
+uri_base <- "http://www.smast.umassd.edu:8080/thredds/dodsC/models/fvcom/NECOFS/Archive/NECOFS_GOM/2019"
+
+# Files are monthly, so pick a month that year
+uri <- file.path(uri_base, "gom4_201907.nc")
+x <- nc_open(uri)
+```
+
+### Working with the Nodes & Elements
+
+We will use this Jan, 2019 data to get information about the Nodes we wish to gather data from.
+
+```{r}
+# Nodes and Elements
+x_nodes <- fvcom_nodes(x, what = "lonlat")
+x_elems <- fvcom_elems(x, what = "lonlat")
+
+# Time information, don't need it for this but good to know:
+head(fvcom_time(x, internal = TRUE), n = 6)
+
+# Can extract variables using node or element
+sst <- get_node_var(x, var = "temp")
+```
+
+### Working with the Mesh using Simple Features
+
+The {fvcom} package has functions that can generate the mesh a a simple features dataframe. This carries the node locations in a table as an inter-connected mesh.
+
+The point ID's for these nodes should correspond directly with their index order in the Netcdf files. If all goes to plan we should be able to crop/clip this mesh as we would any polygon, and use the remaining point id's later to subset from the OPENDaP connection.
+
+```{r}
+
+# Can also get the mesh itself as a simple feature collection
+gom4_mesh <- get_mesh_geometry(x, what = 'lonlat') 
+
+# And we can use the mesh to request variables with it
+plot(sf::st_geometry(gom4_mesh), border = scales::alpha("gray", 0.6))
+
+```
+
+### Finding the Nodes We Care About:
+
+We can do ourselves a favor by identifying which nodes we're interested in before pulling variables. There are a couple different approaches to try:
+
+1.  Use the nodes as points, use st_intersect to identify which are within the areas we are studying.\
+    **2. Use the mesh itself, to preserve the triangular geometries. Then use the {fvcom} functions to pull data**
+
+# Areas We are Interested in
+
+1.  VTS Survey, Nearshore Lobster Habitat
+2.  GOM & GB Ecological Production Units
+3.  Northeast Shelf
+
+```{r}
+# Read things in
+# source: R/Spatial-bounds/Spatial_Domains_LobsEcol.qmd
+
+vts_poly <- read_sf(str_c(proj_path, "Ecological Data/Spatial_Boundaries/VTSsurvey_nearshore_area.geojson"))
+
+res_shapes <- cs_path("res", "Shapefiles")
+epu_path <- str_c(res_shapes, "EPU/")
+gom_poly <- read_sf(str_c(epu_path, "individual_epus/GOM.geojson"))
+gb_poly <- read_sf(str_c(epu_path, "individual_epus/GB.geojson"))
+shelf_poly <- read_sf(str_c(epu_path, "EPU_extended.shp"))
+
+st_crs(shelf_poly) <- st_crs(gom_poly)
+
+```
+
+## Mesh Containment Within an Area
+
+Will test this first with the offshore areas. But plan is to take the mesh and check for overlap/containment within the above polygons
+
+```{r}
+# Prep CRS
+st_crs(gom4_mesh)
+gom_poly <- st_transform(gom_poly, st_crs(gom4_mesh))
+
+
+# Flag the locations that are within the domain
+gom_mesh <- gom4_mesh %>%
+    st_join(gom_poly, join = st_within) %>%
+    drop_na(EPU) %>% 
+    dplyr::select(-c(EPU, Shape_Leng, Shape_Area, source)) 
+
+# Plot how the clipping looks on a map
+ggplot() +
+  geom_sf(data = gom_mesh, aes(color = "FVCOM Mesh")) +
+  geom_sf(data = gom_poly, aes(color = "Gulf of Maine EPU"), fill = "transparent") +
+  labs("Mesh Triangles Within Gulf of Maine")
+```
+
+### Use New Mesh to Extract Vars:
+
+```{r}
+# These are the core variables at the nodes
+node_var_list <- c('temp', 'salinity')
+
+# Can we pass multiple time indices to get vars
+# ncvar_get(x, "time") # Isn't in time units
+time_dim <- fvcom_time(x)
+
+
+# Then Can we Grab what we want?
+gom_vars <- get_mesh(
+  x, # Dataset lazyloaded with ncdf4 from THREDDS 
+  y = 1, # integer, or indices for siglay or siglev (depth indices)
+  vars = c(node_var_list),  # Variables we want
+  mesh = gom_mesh, # Mesh to get them for
+  time = 24 # 24th Time interval
+  )
+
+#  Plot Them
+p1 <- ggplot(gom_vars) +
+  geom_sf(aes(fill = temp), color = "white") +
+  scale_fill_distiller(palette = "RdBu", limits = c(0,9)) +
+  map_theme() + 
+  labs(title = str_c("Surf Temp at ", time_dim[24]))
+
+p1
+```
+
+### Getting Averages Over Multiple Times
+
+```{r}
+
+# Depth indices
+dim(ncvar_get(x, "siglay")) # midpoints in the sigma levels, siglev
+dim(ncvar_get(x, "siglev"))
+
+
+# Then Can we Grab what we want? Surface
+gom_vars_t <- get_mesh(
+  x, # Dataset lazyloaded with ncdf4 from THREDDS 
+  y = 1, # integer, or indices for siglay or siglev (depth indices)
+  vars = c(node_var_list),  # Variables we want
+  mesh = gom_mesh, # Mesh to get them for
+  time = c(1:length(time_dim)), # All time intervals
+  fun = mean )
+
+#  Plot Them
+p2 <- ggplot(gom_vars_t) +
+  geom_sf(aes(fill = temp), color = "white") +
+  scale_fill_distiller(palette = "RdBu") +
+  map_theme() +
+  labs(title = str_c("Surf Temp Avg. from\n", time_dim[1], " to ", time_dim[length(time_dim)]))
+
+p2 
+```
+
+### Bottom Temp:
+
+I had originally done this with January and the bottom temperatures were higher than surface temperatures. Revisiting it with July Data
+
+```{r}
+# Then Can we Grab what we want? Bottom
+gom_vars_bot <- get_mesh(
+  x, # Dataset lazyloaded with ncdf4 from THREDDS 
+  # integer, or indices for siglay or siglev (depth indices)
+  y = dim(ncvar_get(x, "siglay"))[2], 
+  vars = c(node_var_list),  # Variables we want
+  mesh = gom_mesh, # Mesh to get them for
+  time = c(1:length(time_dim)), # All time intervals
+  fun = mean 
+  )
+
+#  Plot Them
+p3 <- ggplot(gom_vars_bot) +
+  geom_sf(aes(fill = temp), color = "white") +
+  scale_fill_distiller(palette = "RdBu") +
+  map_theme() +
+  labs(title = str_c("Bot Temp Avg.\nfrom ", time_dim[1], " to ", time_dim[length(time_dim)]))
+p3
+```
+
+### Surface/Bottom Comparison
+
+Compare the difference in surface and bottom measurements:
+
+```{r}
+(p2 + scale_fill_distiller(palette = "RdBu", limits = c(0,20)) )| 
+  (p3 + scale_fill_distiller(palette = "RdBu", limits = c(0,20)) )
+
+
+```
+
+## Extracting Vector Elements
+
+The magnitude and direction of current flows are measured as two vectors, the relative strengths of a Northward ("u") and Eastward ("v") water velocities. These are stored in FVCOM as zonal elements, with single values associated with the centroids of the triangular mesh pieces.
+
+The fvcom package has a function for extracting data for these elements:
+
+```{r}
+
+
+# Information at the centroids
+elem_var_list <- c('u', 'v') #Northward and Eastward Water Velocity
+
+# Use the unique elem ID's to get data at the points we care about
+gom_vects <- get_elem_var(
+  x, # Dataset lazyloaded with ncdf4 from THREDDS 
+  y = 1, # integer, or indices for siglay or siglev (depth indices)
+  var = elem_var_list, 
+  elem = unique(gom_mesh$elem), 
+  time = 1
+)
+
+
+
+# Or locate the element centroid locations and use them to get the relevant lon/lat info for this stuff
+gom_elems <- fvcom_elems(x, what = "lonlat", index = unique(gom_mesh$elem)) %>% 
+  left_join(gom_vects) %>% 
+  rename(clon = lon, clat = lat)
+
+# Join them back to the mesh
+gom_vars <- left_join(gom_vars, gom_elems)
+
+
+# Plot the Vector information as vectors on a map
+# Looks messy b/c its not a regular grid
+ggplot(gom_vars) +
+   geom_sf(aes(fill = temp), color = "transparent") +
+  geom_vector(
+    aes(x = clon, y = clat, dx = u, dy = v), 
+    arrow.angle = 30, arrow.type = "open", arrow.length = .25, 
+    pivot = 0, 
+    preserve.dir = TRUE, 
+    direction = "ccw", 
+    color = "gray20", 
+    alpha = 0.15)+
+  scale_fill_distiller(palette = "RdBu") +
+  map_theme()
+
+```
+
+### Interpolate Currents to Regular Grid
+
+```{r}
+gom_elems_regular <- raster::stack(
+  sapply(
+    #c(node_var_list, elem_var_list), 
+    elem_var_list, 
+    function(f) { fvcom::rasterize(gom_vars, field = f) }, 
+    simplify = FALSE))
+
+
+# Use Rastervis to make vectorplot
+
+rasterVis::vectorplot(
+  gom_elems_regular, 
+  isField = 'dXY', 
+  col.arrows = "white", 
+  main = 'Surface Currents - Regular Grid')
+```
+
+------------------------------------------------------------------------
+
+# Next Steps - GOM3 Node/Data Matching
+
+To go back further than 2016 we need to use the gom3 hindcast records. These have a different file location on the THREDDS directory, and we'll need to confirm the grid structure and variables are consistent across these different model runs.
+
+#### Verify that the IDS for nodes and elements are the same between NECOFS and FVCOMGom3.
+
+If we want to go back further in time then NECOFS won't yet be online and we'll need to use data from the FVCOM GOM3 hindcast. Best-case scenario these mesh id's match so we can append the time-periods together
+
+```{r}
+# The hindcast has a differnent URL in the THREDDS Catalog
+# source: http://www.smast.umassd.edu:8080/thredds/hindcasts.html?dataset=fvcom/hindcasts/30yr_gom3
+gom3_url = "http://www.smast.umassd.edu:8080/thredds/dodsC/fvcom/hindcasts/30yr_gom3"
+gom3_x <- nc_open(gom3_url)
+
+
+# Get the mesh itself as a simple feature collection to compare against the other
+gom3_mesh <- get_mesh_geometry(x, what = 'lonlat') 
+
+
+# And we can use the mesh to request variables with it
+plot(sf::st_geometry(gom3_mesh), border = scales::alpha("gray", 0.6), main = "GOM3 30-year HindCast Mesh")
+```
+
+Can we verify they match? They seem to have the same number of nodes and the same number zonal elements.
+
+```{r}
+# Check they match, from an eyeball check it looks like it, yay, even with the geomtries
+# st_drop_geometry(gom4_mesh) == st_drop_geometry(gom3_mesh)
+
+# Check the numbers of nodes/elements
+gom3_mesh_df <- st_drop_geometry(gom3_mesh)
+gom4_mesh_df <- st_drop_geometry(gom4_mesh)
+
+# Same number of zonal elements
+gom3_zonal_elems <- distinct(gom3_mesh_df, elem) %>% pull()
+gom4_zonal_elems <- distinct(gom4_mesh_df, elem) %>% pull()
+length(gom3_zonal_elems) == length(gom4_zonal_elems)
+
+# Same number of nodes? - Seems like it... Odd
+gom3_nodes <- gom3_mesh_df %>% 
+  select(-elem) %>% 
+  pivot_longer(cols = everything(), names_to = "triangle_point", values_to = "node_id") %>% 
+  distinct(node_id) %>% 
+  pull()
+gom4_nodes <- gom4_mesh_df %>% 
+  select(-elem) %>% 
+  pivot_longer(cols = everything(), names_to = "triangle_point", values_to = "node_id") %>% 
+  distinct(node_id) %>% 
+  pull()
+length(gom3_nodes) == length(gom4_nodes)
+
+```
+
+### Temporal Frequency
+
+What about the time frequency, what is the pace of the hind-cast data records? Looks hourly, That's probably too much. This will require some thought on how to match hourly data to daily biological data, and pulling the right indices over which to average.
+
+```{r}
+# 30 years, in daily records
+fvcom_time(gom3_x) %>% 
+  as.Date() %>% 
+  length() / (365 * 30)
+
+```
+
+#### Save Node/Element ID's for regions of interest
+
+Now that we know that the node and element ID's are consistent across GOM3 & NECOFS, we can use the approach above to save the mesh information for areas within the regions we are looking at:
+
+These can be used if-needed to limit the data being transferred over the OPeNDAP connection and save us data transfer/processing time. Would also be useful to have just as a means to match points to a standalone mesh geometry.
+
+```{r}
+# Prep CRS
+st_crs(gom3_mesh)
+vts_poly   <- st_transform(vts_poly, st_crs(gom3_mesh))
+gom_poly   <- st_transform(gom_poly, st_crs(gom3_mesh))
+gb_poly    <- st_transform(gb_poly, st_crs(gom3_mesh))
+
+
+# Run all Four
+vts_mesh   <- mesh_trim(mesh = gom3_mesh, domain = vts_poly)
+gom_mesh   <- mesh_trim(mesh = gom3_mesh, domain = gom_poly)
+gb_mesh    <- mesh_trim(mesh = gom3_mesh, domain = gb_poly)
+#shelf_mesh <- mesh_trim(mesh = mesh, domain = shelf_poly)
+
+
+
+# Save them
+
+# # Do we want to save the geometry with? Guess so...
+# st_write(vts_mesh, str_c(fvcom_out, "VTSSurvey_FVCOM_nodes.geojson"), overwrite = T)
+# st_write(gom_mesh, str_c(fvcom_out, "GOM_EPU_FVCOM_nodes.geojson"), overwrite = T)
+# st_write(gb_mesh, str_c(fvcom_out, "GB_EPU_FVCOM_nodes.geojson"), overwrite = T)
+```
+
+```{r}
+# How do they look when loaded
+vts_check <- read_sf(str_c(fvcom_out, "VTSSurvey_FVCOM_nodes.geojson"))
+
+# Lookin Goood!
+ggplot() +
+  geom_sf(data = vts_check, aes(color = "mesh"))+
+  geom_sf(data = vts_poly, aes(color = "bounds"), fill = NA)
+
+```
+
+------------------------------------------------------------------------
+
+# Testing Multiple Dates of Data with Target Mesh
+
+So where are we at: \*
+ 1. Need to write some code that can open a connection for an area we care about\* 
+ 2. grab 1-4 variables at the surface, and the ones at the bottom\* 
+ 3. average for the month and spit them out in a table\*
+
+#### Accessing mesh data for an extended period of time.
+
+We don't need hourly, or even daily records. But we will need to make sure we're aggregating in time correctly and not just grabbing snapshots.
+
+So where we sit now. We know the exact ID's for the nodes and centroids that make complete mesh elements that fall within our area of interest. We aslo know the variables we are interested in, and possibly the time period we want to cover and the temporal resolution we're interested in (months).
+
+```{r}
+# VTS mesh is somehow smallest so lets use that one:
+# Mesh was made with gom4
+vts_mesh <- read_sf(str_c(fvcom_out, "VTSSurvey_FVCOM_nodes.geojson"))
+
+# Lets use the hindcast as our access point:
+gom3_url = "http://www.smast.umassd.edu:8080/thredds/dodsC/fvcom/hindcasts/30yr_gom3"
+gom3_x <- nc_open(gom3_url)
+```
+
+
