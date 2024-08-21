@@ -1,0 +1,457 @@
+---
+title: "Handling Daily/Hourly FVCOM Data"
+format: html
+description: | 
+  Approaches for handling FVCOM's Densest Files
+date: "Updated on: `r Sys.Date()`"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    df-print: kable
+    self-contained: true
+execute: 
+  echo: true
+  warning: false
+  message: false
+  fig.align: "center"
+  comment: ""
+---
+
+# Handling Daily/Hourly FVCOM Data (Hindcast 1978-2016, NECOFS 2016-2023)
+
+FVCOM data is large, and the formats with daily/hourly formats are stored remotely with limited access bandwidth.
+
+We need to access daily FVCOM information for two purposes:\*
+ 1. To perform date/time/location matching to point locations of research survey
+ 2. Calculate metrics related to heat stress and time within thermal preference ranges for species
+
+```{r}
+#library(raster)
+library(sf) 
+library(fvcom) 
+library(ncdf4) 
+library(tidyverse)
+library(gmRi)
+library(patchwork)
+
+conflicted::conflict_prefer("select", "dplyr")
+conflicted::conflict_prefer("filter", "dplyr")
+proj_path <- cs_path("mills", "Projects/Lobster ECOL")
+fvcom_out <- str_c(proj_path, "FVCOM_support/")
+
+#source(here::here("R/FVCOM_Support.R"))
+```
+
+
+
+# FVCOM GOM3
+
+
+For the years 1978-2016 there are hourly-timestep files spanning one-month of time each. Data for this period in time are from the FVCOM hindcast (Seaplan_33_Hindcast_v1), which uses the GOM3 mesh and boundary conditions.
+
+
+```{r}
+#| label: GOM3-data-access
+#| eval: false
+#| echo: true
+
+# We can Access links from the THREDDS directory as if they are NETCDF files
+
+
+# Files contain data for one month, 
+# so pick a month, year to construct a THREDDS connection url
+
+# Base URL path
+gom3_base <- "http://www.smast.umassd.edu:8080/thredds/dodsC/models/fvcom/NECOFS/Archive/Seaplan_33_Hindcast_v1"
+
+
+# year/month details
+gom3_yr   <- 1978
+gom3_mnth <- "01"
+gom3_url  <- str_c(gom3_base, "/gom3_", gom3_yr, gom3_mnth, ".nc")
+
+
+# # Open Connection
+# gom3_x <- nc_open(gom3_url)
+```
+
+
+### Grabbing Static GOM3 Elements
+
+The index numbers & positions of mesh nodes and the number of depth layers in the hindcast files do not change within FVCOM versions. We can grab this static information a single time from any of the files and store them for later.
+
+```{r}
+#| label: gom3-static-elements
+
+#------- Get static elements
+#  (grab once) - quick
+# Location indices and coordinate dimensions don't change over time
+# We can grab those one time and store them
+
+# Get the max sigma layer (depth)
+max_depth <- dim(ncvar_get(gom3_x, "siglay"))[2]
+
+# Lat & Lon
+lon_vals <- ncvar_get(gom3_x, "lon")
+lat_vals <- ncvar_get(gom3_x, "lat")
+```
+
+The time dimension within an FVCOM netcdf file can be pulled directly, and can be used to build an index structure for processing means at different temporal intervals (daily/weekly/monthly averages)
+
+
+```{r}
+#| label: gom3-time-dimension-details
+
+
+#-------- Get Time Vector information
+
+# Date/Time values:
+gom3_times  <- fvcom_time(gom3_x)
+gom3_dates  <- lubridate::date(gom3_times)
+gom3_dayset <- lubridate::day(gom3_times)
+gom3_days   <- unique(gom3_dayset)
+
+
+```
+
+
+```{r}
+#| label: gom3-single-day-test
+#| eval: false
+
+# full_day will be loop index
+full_day <- gom3_days[1]
+
+# Get the indices for start/count that match that full_day
+use_times <- which(gom3_dayset == full_day)
+use_start <- min(use_times)
+use_count <- length(use_times)
+
+
+# Get the data for that day:
+# Gonna have to repeat for each hour
+
+# Pull Surface Layer for each timestep within the day
+hourly_stemps <- map(
+  use_times,
+  function(use_start){
+    ncvar_get(
+      nc = gom3_x, 
+      varid = "temp", 
+      start = c(1, 1, use_start), 
+      count = c(-1,-1, 1))[,1]
+  }
+)
+
+
+# Now get the value across those time steps
+daily_stemp <- rep(0, length(lon_vals))
+for(hr in seq(1, length(hourly_stemps))) {
+  daily_stemp <- daily_stemp + hourly_stemps[[hr]]
+}
+
+
+# Divide that by num hours to get mean
+new_daily_stemp <- daily_stemp / length(hourly_stemps)
+
+
+
+#------  assemble df at the end to include lat/lon/date, save it
+
+# Assemble it with lat/lon/time information
+gom3_tday_summ <- data.frame(
+  lon   = lon_vals,
+  lat   = lat_vals,
+  stemp = new_daily_stemp,
+  date  = str_c(gom3_yr, gom3_mnth, "0", gom3_days[1], sep = "-"),
+  mod   = "FVCOM-GOM3")
+
+# Plot to check
+ggplot(gom3_tday_summ) +
+  geom_point(aes(lon, lat, color = stemp), size = 0.25) +
+  scale_color_distiller(palette= "RdBu") +
+  labs(title = "Single Day Average Test",
+       subtitle = str_c(gom3_yr, gom3_mnth, "0", gom3_days[1], sep = "-")) +
+  theme_dark()
+```
+
+
+
+# Process Daily Averaging Function for Full Month
+
+Monthly files containing hourly (or multi-hour) time-steps can be converted to daily averages this way:
+
+
+
+```{r}
+# Optimizing it - testing
+
+#' @title Process Daily NECOFS Surface & Bottom
+#'
+#' @param fvcom_nc ncdf object for the monthly file to process
+#' @param date_vector day_number_vector, named as yyyy-mm-dd full dates for labeling
+#' @param timestep_dom time step vector indicating which day of the month each timestep belongs
+#' @param var_id nc variable name ("temp") in this case
+#' @param bot_siglev Bottom layer sigma level (siglev)
+#' @param total_nodes length of lon or lat dimension to indicate vector length for making an empty vector 
+#'
+#' @return
+#' @export
+#'
+#' @examples
+process_daily_surf_and_bot <- function(
+    fvcom_nc,               
+    var_id = "temp"){
+  
+  
+  # 1. 
+  # Extract Static Elements:
+  gom3_times   <- fvcom_time(fvcom_nc)         # Actual times from nc
+  # Problem: month files contain first day of month, and first day of next month:
+  # Need to check for and not include that day's time index
+  file_mnth  <- str_sub(gom3_times[1], 6,7)
+  gom3_times <- gom3_times[which(str_sub(gom3_times, 6,7) == file_mnth)]
+  
+  # The rest are derived from those dates
+  gom3_dates   <- lubridate::date(gom3_times)  # Just the date component
+  timestep_dom <- lubridate::day(gom3_times)   # The day of month for the dates
+  gom3_days    <- unique(timestep_dom)         # The unique day of month
+  date_vector  <- setNames(gom3_days, unique(gom3_dates))
+  
+  
+  
+  # Lat & Lon
+  lon_vals <- ncvar_get(fvcom_nc, "lon")
+  lat_vals <- ncvar_get(fvcom_nc, "lat")
+  
+  # Bottom level index and total nodes
+  bot_siglev  <- dim(ncvar_get(fvcom_nc, "siglay"))[2]
+  total_nodes <- length(lon_vals)
+
+
+  
+  # 2.
+  # Use map to process daily means
+  daily_avgs_df <- map_dfr(
+    # Operating on day of month, and the full date for it
+    date_vector, 
+    function(full_day_x){
+    
+    # Get the indices for start/count that match that full_day
+    use_times <- which(timestep_dom == full_day_x)
+    use_start <- min(use_times)
+    
+    # Fetch surface and bottom in the same map call 
+    # Pulls hour indices within that day
+    hrly_dat <- map(
+      use_times,
+      function(use_start){
+        
+        # Surface siglev
+        hr_surface <- ncvar_get(
+          nc = fvcom_nc, 
+          varid = var_id, 
+          start = c(1, 1, use_start), 
+          count = c(-1,-1, 1))[,1]
+        
+        # Bottome siglev
+        hr_bottom <- ncvar_get(
+              nc = fvcom_nc, 
+              varid = var_id, 
+              start = c(1, 1, use_start), 
+              count = c(-1,-1, 1))[, bot_siglev]
+        
+        return(
+          list("surface" = hr_surface,  
+               "bottom"  = hr_bottom))
+        
+        })
+  
+      # Now get the average across those time steps
+      # Get the sum:
+      daily_surface <- rep(0, total_nodes)
+      daily_bottom <- rep(0, total_nodes)
+      for(hr in seq(1, length(use_times))) {
+        daily_surface <- daily_surface + hrly_dat[[hr]][["surface"]]
+        daily_bottom  <- daily_bottom + hrly_dat[[hr]][["bottom"]]
+      }
+      
+      # divide that by num hours: get daily average
+      daily_surf_avg <- daily_surface / length(use_times)
+      daily_bot_avg <- daily_bottom / length(use_times)
+  
+    
+      # Tidy up
+      rm(daily_bottom, hrly_dat, daily_surface)
+      # rm(daily_bottom, hrly_bottom, daily_surface, hrly_surface)
+      # gc(verbose = F)
+    
+    
+      # Return it as a dataframe
+      names_out <- c("lon", "lat", str_c("surf_", var_id), str_c("bot_", var_id))
+      daily_out <- data.frame(
+        lon      = lon_vals,
+        lat      = lat_vals,
+        surf_var = daily_surf_avg, 
+        bot_var  = daily_bot_avg) %>% 
+        setNames(names_out)
+      
+      return(daily_out)
+  
+    
+    }, .id ="date")
+  
+}
+```
+
+
+
+```{r}
+#| label: month-function-test
+#| eval: false
+
+# Perform Daily Processing for one month
+# Can put these in a big list if we want to do multiple
+# then save as we go when doing that
+
+
+# Base URL path
+gom3_base <- "http://www.smast.umassd.edu:8080/thredds/dodsC/models/fvcom/NECOFS/Archive/Seaplan_33_Hindcast_v1/"
+
+  
+# year/month details
+gom3_yr   <- 1978
+gom3_mnth <- "02"
+gom3_url  <- str_c(gom3_base,  "gom3_", gom3_yr, gom3_mnth, ".nc")
+
+# Open Connection
+gom3_x <- nc_open(gom3_url)
+  
+  
+# Check the time before
+Sys.time()
+
+jan78_daily <- process_daily_surf_and_bot(
+    fvcom_nc = gom3_x,               
+    var_id = "temp")
+
+# Check the time
+Sys.time()
+
+
+
+# Plot it
+jan78_daily %>% 
+  filter(date %in% c("1978-01-01", "1978-01-15")) %>% 
+  pivot_longer(cols = c(bot_temp, surf_temp), names_to = "var", values_to = "temp") %>% 
+  ggplot() +
+  geom_point(aes(lon, lat, color = temp), size = 0.2) +
+  scale_color_distiller(palette = "RdBu") +
+  facet_grid(date~var)
+
+```
+
+
+# Process a Year
+
+```{r}
+
+
+#### Global constants
+
+# Save folder
+save_location <- cs_path("mills", "Projects/Lobster ECOL/FVCOM_processed/GOM3_daily")
+#save_location <- cs_path("mills", "Projects/Lobster ECOL/FVCOM_parquet/GOM3_daily")
+
+# Base URL path
+gom3_base <- "http://www.smast.umassd.edu:8080/thredds/dodsC/models/fvcom/NECOFS/Archive/Seaplan_33_Hindcast_v1/"
+
+
+
+
+#### Temporal Ranges to Process
+
+# # Saving a group of months sequentially:
+# process_dates <- list(
+#   "years" = c(
+#     rep("1982", 12),
+#     rep("1983", 12),
+#     rep("1984", 12),
+#     rep("1985", 12)),
+#   "months" = rep(
+#     str_pad(c(1:12), width = 2, side = "left", pad = "0"),
+#     4)
+# )
+
+# Saving a group of months sequentially:
+process_dates <- list(
+  "years" = c(
+    rep("1978", 12),
+    rep("1979", 12),
+    rep("1980", 12),
+    rep("1981", 12)),
+  "months" = rep(
+    str_pad(c(1:12), width = 2, side = "left", pad = "0"),
+    4)
+)
+
+
+
+####  The big ole processin loop
+map2(
+  .x = process_dates$years,
+  .y = process_dates$months,
+  function(yr_x = .x, mon_x = .y){
+    
+    # THREDDS URL for the month+year
+    month_url  <- str_c(gom3_base, "gom3_", yr_x, mon_x, ".nc")
+      
+    # Open the connection
+    gom3_month_x <- nc_open(month_url)
+    
+    # Process Daily Averages for Surface and Bottom
+    daily_mean_dat <- process_daily_surf_and_bot(
+      fvcom_nc = gom3_month_x,               
+      var_id = "temp")
+    
+    # Save the data
+    print(str_c("Saving: ", yr_x, "-", mon_x, " Time: ", Sys.time()))
+    save_name <- str_c(save_location, "GOM3_daily_surfbottemp_", yr_x, "_", mon_x, ".csv")
+    write_csv(
+      daily_mean_dat,
+      save_name)
+    
+    
+    # Close the connection
+    nc_close(gom3_month_x)
+    
+    # Garbage collection
+    rm(gom3_month_x, daily_mean_dat)
+    gc(verbose = F)
+  }
+)
+
+
+```
+
+
+
+
+
+## Matching Date/Time Locations to Daily Records
+
+This is relatively straightforward for dates from 1978-2016. It becomes more cumbersome after 2016 because we'll need to get a daily average using monthly records.
+
+What we can do to lesson the amount of data being requested is use lat/lon matching to determine the nearest nodes that we need. Then we can load data for just that lat/lon node using its index number.
+
+Otherwise we need to load a region near it, which is really inefficient since the grid isn't ordered. That will force us to pull the whole region in for every hour that day, subsetting to a smaller area each time once its already loaded...
+
+
+```{r}
+# Load some lat/lon/time coordinate info
+
+
+# Make
+```
+
