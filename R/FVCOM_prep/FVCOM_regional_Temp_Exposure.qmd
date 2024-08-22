@@ -1,5 +1,5 @@
 ---
-title: "GLORYs Lobster Thresholds"
+title: "FVCOM/GLORYs Lobster Thresholds"
 author: "Adam Kemberling"
 url: "https://github.com/adamkemberling"
 affiliation: "Gulf of Maine Research Institute"
@@ -573,7 +573,7 @@ ggplot() +
     data = filter(bot_temp_mhw, depth_type == "nearshore"),
     aes(time, sst_anom, color = "Bottom Temperature Anomaly"), 
     alpha = 0.8, linewidth = 0.35) +
-  facet_grid(area_id ~ .) +
+  facet_grid(area_id ~ model_source, scales = "free") +
   scale_color_gmri() +
   scale_y_continuous(labels = label_number(suffix = deg_c)) +
   theme_gmri(
@@ -607,7 +607,7 @@ ggplot() +
   theme_gmri(
     legend.position = "bottom",
     strip.text.y = element_text(angle = 0)) +
-  labs(y = "Temperature", color = "", x = "Date", title = "Surface Temperature")
+  labs(y = "Temperature Anomaly", color = "", x = "Date", title = "Surface Temperature")
 
 
 
@@ -632,51 +632,59 @@ ggplot() +
   theme_gmri(
     legend.position = "bottom",
     strip.text.y = element_text(angle = 0)) +
-  labs(y = "Temperature", color = "", x = "Date", title = "Bottom Temperature")
+  labs(y = "Temperature Anomaly", color = "", x = "Date", title = "Bottom Temperature")
 ```
 
 :::
 
 
-# MHW Events
+# Threshold Events
 
 ```{r}
 # Process summaries
 inshore_summ <- bind_rows(
-    inshore_hw_surf %>% 
-      group_by(year = lubridate::year(time), area_id) %>% 
+    surface_temp_mhw %>% 
+      filter(depth_type == "nearshore") %>% 
+      group_by(year = lubridate::year(time), area_id, model_source) %>% 
       summarise(
         var = "Surface Temperature",
         mhw_days = sum(mhw_event, na.rm = T),
         over_20 = sum(sst >20, na.rm = T),
-        between_1218 = sum(between(sst, 12,18), na.rm = T)),
-    inshore_hw_bot %>% 
-      group_by(year = lubridate::year(time), area_id) %>% 
+        between_1218 = sum(between(sst, 12,18), na.rm = T),
+        .groups = "drop"),
+    bot_temp_mhw %>% 
+      filter(depth_type == "nearshore") %>% 
+      group_by(year = lubridate::year(time), area_id, model_source) %>% 
       summarise(
         var = "Bottom Temperature",
         mhw_days = sum(mhw_event, na.rm = T),
         over_20 = sum(sst >20, na.rm = T),
-        between_1218 = sum(between(sst, 12,18), na.rm = T))
+        between_1218 = sum(between(sst, 12,18), na.rm = T),
+        .groups = "drop")
     
   )
 
 
 # Offshore
 offshore_summ <- bind_rows(
-    offshore_hw_surf %>% 
-      group_by(year = lubridate::year(time), area_id) %>% 
+    surface_temp_mhw %>% 
+      filter(depth_type == "offshore") %>% 
+      group_by(year = lubridate::year(time), area_id, model_source) %>% 
       summarise(
         var = "Surface Temperature",
         mhw_days = sum(mhw_event, na.rm = T),
         over_20 = sum(sst >20, na.rm = T),
-        between_1218 = sum(between(sst, 12,18), na.rm = T)),
-    offshore_hw_bot %>% 
-      group_by(year = lubridate::year(time), area_id) %>% 
+        between_1218 = sum(between(sst, 12,18), na.rm = T),
+        .groups = "drop"),
+    bot_temp_mhw %>% 
+      filter(depth_type == "offshore") %>% 
+      group_by(year = lubridate::year(time), area_id, model_source) %>% 
       summarise(
         var = "Bottom Temperature",
         mhw_days = sum(mhw_event, na.rm = T),
         over_20 = sum(sst >20, na.rm = T),
-        between_1218 = sum(between(sst, 12,18), na.rm = T))
+        between_1218 = sum(between(sst, 12,18), na.rm = T),
+        .groups = "drop")
     
   )
   
@@ -694,20 +702,21 @@ offshore_summ <- bind_rows(
 #| fig-height: 10
 
 ggplot() +
-  geom_line(
+  geom_col(
     data = inshore_summ,
-      aes(year, mhw_days, color = var), 
+      aes(year, mhw_days, fill = model_source), 
       alpha = 0.8, position = "dodge") +
-  facet_grid(area_id ~ .) +
-  scale_color_gmri() +
+  facet_grid(area_id  ~  var) +
+  scale_fill_gmri() +
+  scale_x_continuous(limits = c(1993, 2016)) +
   scale_y_continuous(limits = c(0,365)) +
   theme_gmri(
     legend.position = "bottom",
     strip.text.y = element_text(angle = 0)) +
   labs(
-    title = "Marine Heatwave Days\n(1993-2022 Climatology)", 
+    title = "Marine Heatwave Days\n(1993-2016 Climatology)", 
     y = "Days",
-    color = "", 
+    fill = "", 
     x = "Date")
 ```
 
@@ -717,20 +726,21 @@ ggplot() +
 ```{r}
 
 ggplot() +
-  geom_line(
+  geom_col(
     data = offshore_summ,
-      aes(year, mhw_days, color = var), 
+    aes(year, mhw_days, fill = model_source), 
       alpha = 0.8, position = "dodge") +
-  facet_grid(area_id ~ .) +
+  facet_grid(area_id  ~  var) +
+  scale_fill_gmri() +
+  scale_x_continuous(limits = c(1993, 2016)) +
   scale_y_continuous(limits = c(0,365)) +
-  scale_color_gmri() +
   theme_gmri(
     legend.position = "bottom",
     strip.text.y = element_text(angle = 0)) +
   labs(
-    title = "Marine Heatwave Days\n(1993-2022 Climatology)", 
+    title = "Marine Heatwave Days\n(1993-2016 Climatology)", 
     y = "Days",
-    color = "", 
+    fill = "", 
     x = "Date")
 ```
 
@@ -747,12 +757,13 @@ ggplot() +
 #| fig-height: 10
 
 ggplot() +
-  geom_line(
+  geom_col(
     data = inshore_summ,
-      aes(year, over_20, color = var), 
+      aes(year, over_20, fill = model_source), 
       alpha = 0.8, position = "dodge") +
-  facet_grid(area_id ~ .) +
-  scale_color_gmri() +
+  facet_grid(area_id ~ var) +
+  scale_fill_gmri() +
+  scale_x_continuous(limits = c(1993, 2016)) +
   scale_y_continuous(limits = c(0,365)) +
   theme_gmri(
     legend.position = "bottom",
@@ -760,7 +771,7 @@ ggplot() +
   labs(
     title = "Days Above 20C", 
     y = "Days",
-    color = "", 
+    fill = "", 
     x = "Date")
 ```
 
@@ -770,13 +781,13 @@ ggplot() +
 ```{r}
 
 ggplot() +
-  geom_line(
+  geom_col(
     data = offshore_summ,
-      aes(year, over_20, color = var), 
-      alpha = 0.8, position = "dodge",
-    linewidth = 1) +
-  facet_wrap(~area_id, ncol = 1) +
-  scale_color_gmri() +
+     aes(year, over_20, fill = model_source), 
+      alpha = 0.8, position = "dodge") +
+  facet_grid(area_id ~ var) +
+  scale_fill_gmri() +
+  scale_x_continuous(limits = c(1993, 2016)) +
   scale_y_continuous(limits = c(0,365)) +
   theme_gmri(
     legend.position = "bottom",
@@ -801,12 +812,13 @@ ggplot() +
 #| fig-height: 10
 
 ggplot() +
-  geom_line(
+  geom_col(
     data = inshore_summ,
-      aes(year, between_1218, color = var), 
+      aes(year, between_1218, fill = model_source), 
       alpha = 0.8, position = "dodge") +
-  facet_grid(area_id ~ .) +
-  scale_color_gmri() +
+  facet_grid(area_id ~ var) +
+  scale_fill_gmri() +
+  scale_x_continuous(limits = c(1993, 2016)) +
   scale_y_continuous(limits = c(0,365)) +
   theme_gmri(
     legend.position = "bottom",
@@ -829,10 +841,11 @@ ggplot() +
 ggplot() +
   geom_line(
     data = offshore_summ,
-      aes(year, between_1218, color = var), 
+      aes(year, between_1218, fill = model_source), 
       alpha = 0.8, position = "dodge") +
-  facet_grid(area_id ~ .) +
-  scale_color_gmri() +
+  facet_grid(area_id ~ var) +
+  scale_fill_gmri() +
+  scale_x_continuous(limits = c(1993, 2016)) +
   scale_y_continuous(limits = c(0,365)) +
   theme_gmri(
     legend.position = "bottom",
@@ -905,11 +918,12 @@ find_threshold_cross <- function(df, col_x, date_col, threshold, roll_avg = T){
 
 
 ```{r}
-#| eval: true
+#| eval: false
 
 # Process inshore growing season start
 inshore_thresh <- bind_rows(
-    inshore_hw_surf %>% 
+    surface_temp_mhw %>% 
+      filter(depth_type == "nearshore") %>% 
       mutate(year_area = str_c(lubridate::year(time), "XX", area_id)) %>% 
       split(.$year_area) %>% 
       map_dfr(function(x){
@@ -924,7 +938,8 @@ inshore_thresh <- bind_rows(
       mutate(var = "Surface Temperature")
     ,
       
-    inshore_hw_bot %>% 
+    bot_temp_mhw %>% 
+      filter(depth_type == "nearshore") %>% 
       mutate(year_area = str_c(lubridate::year(time), "XX", area_id)) %>% 
       split(.$year_area) %>% 
       map_dfr(function(x){
@@ -944,7 +959,8 @@ inshore_thresh <- bind_rows(
 
 # Process Offshore
 offshore_thresh <- bind_rows(
-    offshore_hw_surf %>% 
+    surface_temp_mhw %>% 
+      filter(depth_type == "nearshore") %>% 
       mutate(year_area = str_c(lubridate::year(time), "XX", area_id)) %>% 
       split(.$year_area) %>% 
       map_dfr(function(x){
@@ -959,7 +975,8 @@ offshore_thresh <- bind_rows(
       mutate(var = "Surface Temperature")
     ,
       
-    offshore_hw_bot %>% 
+    bot_temp_mhw %>% 
+      filter(depth_type == "nearshore") %>% 
       mutate(year_area = str_c(lubridate::year(time), "XX", area_id)) %>% 
       split(.$year_area) %>% 
       map_dfr(function(x){
@@ -985,6 +1002,7 @@ offshore_thresh <- bind_rows(
 
 ```{r}
 #| fig-height: 10
+#| eval: false
 
 inshore_thresh %>% 
   drop_na(time) %>% 
@@ -1022,6 +1040,9 @@ inshore_thresh %>%
 ### Offshore
 
 ```{r}
+#| eval: false
+
+
 offshore_thresh %>% 
   drop_na(time) %>% 
   mutate(

@@ -1,7 +1,20 @@
 ---
 title: "Gulf of Maine BT Interpolation Testing"
-format: html
-editor: visual
+description: | 
+  Processing Regional Timeseries of Surface and Bottom Temperatures
+date: "Updated on: `r Sys.Date()`"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    df-print: kable
+    self-contained: true
+execute: 
+  echo: true
+  warning: false
+  message: false
+  fig.align: "center"
+  comment: ""
 ---
 
 # About: Using the Gulf of Maine for Regional FVCOM Evaluation
@@ -27,12 +40,49 @@ lob_ecol_path <- cs_path("mills", "Projects/Lobster ECOL")
 fvcom_path <- cs_path("res", "FVCOM/Lobster-ECOL")
 poly_paths <- cs_path("mills", "Projects/Lobster ECOL/Spatial_Defs")
 
-# regional shapefiles
+# Shapefiles
 new_england <- ne_states("united states of america", returnclass = "sf") %>% 
   filter(postal %in% c("VT", "ME", "RI", "MA", "CT", "NH", "NY", "MD", "VA", "NJ", "DE", "NC", "PA", "WV"))
 canada <- ne_states("canada", returnclass = "sf")
 
 ```
+
+
+
+```{r}
+#| label: style-sheet
+#| results: asis
+
+# Use GMRI style
+use_gmri_style_rmd()
+
+```
+
+
+
+
+```{r}
+#| label: fonts-config
+#| echo: false
+library(showtext)
+
+# Path to the directory containing the font file (replace with your actual path)
+font_dir <- paste0(system.file("stylesheets", package = "gmRi"), "/GMRI_fonts/Avenir/")
+
+# Register the font
+font_add(
+  family = "Avenir",
+  file.path(font_dir, "LTe50342.ttf"),
+  bold = file.path(font_dir, "LTe50340.ttf"),
+  italic = file.path(font_dir, "LTe50343.ttf"),
+  bolditalic = file.path(font_dir, "LTe50347.ttf"))
+
+# Load the font
+showtext::showtext_auto()
+
+```
+
+
 
 ### Load Regional Shapefiles
 
@@ -227,7 +277,6 @@ zonal_assignments %>%
 
 ```
 
-
 # Get triangle-specific averages of nodal values
 
 For surface and bottom temperatures the values are stored/calculated at the triangle vertices, or nodes. For zonal statistics like the regional average temperature, we need to average the three nodes to get a value representative of the interior space.
@@ -377,7 +426,7 @@ fvcom_zonal_averages <- function(mesh_poly_intersection, zonal_means, nc){
 ```
 
 ```{r}
-#| eval:false
+#| eval: false
 #| label: fvcom_zonal_averages testing
 
 #------
