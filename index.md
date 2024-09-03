@@ -27,7 +27,7 @@
 [Processing Regional Daily Surface/Bottom Temperature Timeseries](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/FVCOM_Regional_Temperature_Timeseries.html)
 
 
-[Regional FVCOM & GLORYs Surface/Bottom Timeseries Comparison](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/FVCOM_regional_Temperature_Exposure.html)
+[Regional FVCOM & GLORYs Surface/Bottom Timeseries Comparison](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/FVCOM_regional_Temp_Exposure.html)
 
 
 

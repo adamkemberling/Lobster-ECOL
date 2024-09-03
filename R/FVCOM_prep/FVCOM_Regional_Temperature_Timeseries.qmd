@@ -19,9 +19,9 @@ execute:
 
 # About: Using the Gulf of Maine for Regional FVCOM Evaluation
 
-For this project we need to use FVCOM for point-value interpolations (what was the temperature at this location, at this time), and for zonal summaries (what was the average temperature over time for this area).
+For this project we need to use FVCOM for point-value interpolations (what was the temperature at this location, at this time), and for regional summaries (what was the average temperature over time for this area).
 
-This document steps through the approaach to getting zonal sumaries for our areas of interest.
+This document steps through the approaach to getting regional sumaries for our areas of interest.
 
 ```{r}
 ####. packages. ####
@@ -162,7 +162,7 @@ ggplot() +
 
 For each region we will need to perform an intersection with the FVCOM mesh. From that geoprocessing operation we can then determine the node & element ID's to pull out of the netcdf files.
 
-At this step we can also calculate relative areas of resulting triangles and fractions of triangles to use for weighted-averages for zonal summaries.
+At this step we can also calculate relative areas of resulting triangles and fractions of triangles to use for weighted-averages for regional summaries.
 
 ```{r}
 #| label: node-element-assignments
@@ -259,7 +259,7 @@ offshore_zones <- read_csv(here::here("local_data/offshore_areas_mesh_weights.cs
 
 
 # Put the inshore and offshore together
-zonal_assignments <- bind_rows(
+regional_assignments <- bind_rows(
     dplyr::select(inshore_zones, area_id = SHORT_NAME, elem, p1, p2, p3, rel_area),
     dplyr::select(offshore_zones, area_id = Region, elem, p1, p2, p3, rel_area)) %>% 
   mutate(rel_area = as.numeric(rel_area))
@@ -268,23 +268,23 @@ zonal_assignments <- bind_rows(
 # From intersection we need to add areas
 # mutate(crop_t, rel_area = st_area(crop_t), .before = "Join_Count") %>% 
 #   select(SHORT_NAME, Id_1, FULL_NAME, elem, p1, p2, p3, rel_area) %>% 
-zonal_assignments %>% 
+regional_assignments %>% 
   st_drop_geometry() %>% 
   head() %>% 
   gt::gt() %>% gt::tab_header(
     title = "Intersection Insight gained:",
-    subtitle = "Information needed to subset from NetCDF and weight appropriately for zonal statistics")
+    subtitle = "Information needed to subset from NetCDF and weight appropriately for regional statistics")
 
 ```
 
 # Get triangle-specific averages of nodal values
 
-For surface and bottom temperatures the values are stored/calculated at the triangle vertices, or nodes. For zonal statistics like the regional average temperature, we need to average the three nodes to get a value representative of the interior space.
+For surface and bottom temperatures the values are stored/calculated at the triangle vertices, or nodes. For regional statistics like the regional average temperature, we need to average the three nodes to get a value representative of the interior space.
 
-This step loops through all the zonal elements that are within any of our regions and processes that value once for each. These are then stored in a named list that can be accessed later.
+This step loops through all the regional elements that are within any of our regions and processes that value once for each. These are then stored in a named list that can be accessed later.
 
 ```{r}
-#| label: zonal_from_nodes function
+#| label: regional_from_nodes function
 
 
 # Now we want to pull all values on the time dimension 
@@ -307,7 +307,7 @@ This step loops through all the zonal elements that are within any of our region
 #' @export
 #'
 #' @examples
-zonal_from_nodes <- function(fvcom_mesh_trios, nc, nc_varname = "surface_t"){
+regional_from_nodes <- function(fvcom_mesh_trios, nc, nc_varname = "surface_t"){
   
   
   # Take the unique elements from our table:
@@ -321,7 +321,7 @@ zonal_from_nodes <- function(fvcom_mesh_trios, nc, nc_varname = "surface_t"){
   triangle_temps <- map(unique_elems, function(elem_id){
     
     # Slice the row for that element, get distinct in case >1
-    elem_df <- filter(zonal_assignments, elem == elem_id) %>% 
+    elem_df <- filter(regional_assignments, elem == elem_id) %>% 
       distinct(elem, p1, p2, p3)
     
     # Get element id
@@ -356,23 +356,23 @@ zonal_from_nodes <- function(fvcom_mesh_trios, nc, nc_varname = "surface_t"){
 ```
 
 ```{r}
-#| label: test zonal_from_nodes
+#| label: test regional_from_nodes
 #| eval: false
 
 # Run that for all the years I guess?!?
-triangle_avg_1978 <- zonal_from_nodes(
-  fvcom_mesh_trios = zonal_assignments, 
+triangle_avg_1978 <- regional_from_nodes(
+  fvcom_mesh_trios = regional_assignments, 
   nc = fvcom_yrx, 
   nc_varname = "surface_t")
 # Sys.time()
 ```
 
-# Area-weighted Zonal Averages
+# Area-weighted Regional Averages
 
 Within each polygon overlay, we want to weight the averages of each triangle we just estimated by their relative areas. This will give us the average value for the entire polygon, appropriately weighting each of the component areas.
 
 ```{r}
-#| label: fvcom_zonal_averages function
+#| label: fvcom_regional_averages function
 
 
 # Take the code above and calculate the weighted averages:
@@ -384,19 +384,19 @@ Within each polygon overlay, we want to weight the averages of each triangle we 
 
 
 
-#' @title Zonal Averages from FVCOM-Polygon Intersection
+#' @title Regional Averages from FVCOM-Polygon Intersection
 #' 
 #' @description
 #'
 #' @param mesh_poly_intersection 
-#' @param zonal_means 
+#' @param regional_means 
 #' @param nc 
 #'
 #' @return
 #' @export
 #'
 #' @examples
-fvcom_zonal_averages <- function(mesh_poly_intersection, zonal_means, nc){
+fvcom_regional_averages <- function(mesh_poly_intersection, regional_means, nc){
   
   # Get the elements
   poly_elems <- as.character(mesh_poly_intersection$elem)
@@ -409,7 +409,7 @@ fvcom_zonal_averages <- function(mesh_poly_intersection, zonal_means, nc){
   # Get the timeseries that go with the triangles
   # multiply the relevant relative areas
   poly_wtd_ts <- purrr::map(poly_elems, function(x){
-    wtd_vals <- zonal_means[[x]] * poly_wts[[x]]
+    wtd_vals <- regional_means[[x]] * poly_wts[[x]]
     return(wtd_vals)}) %>% 
     reduce(.x = ., .f = `+`)
   
@@ -417,26 +417,26 @@ fvcom_zonal_averages <- function(mesh_poly_intersection, zonal_means, nc){
   poly_tot_area <- sum(as.numeric(mesh_poly_intersection$rel_area))
   
   # Add the time dimension and return as dataframe
-  poly_zonal <- data.frame(
+  poly_regional <- data.frame(
     "time"     = as.Date(ncvar_get(nc, "Times")),
-    "zonal_mu" = poly_wtd_ts / poly_tot_area)
-  return(poly_zonal)
+    "regional_mu" = poly_wtd_ts / poly_tot_area)
+  return(poly_regional)
   
 }
 ```
 
 ```{r}
 #| eval: false
-#| label: fvcom_zonal_averages testing
+#| label: fvcom_regional_averages testing
 
 #------
 
 # Why is this not working...
 # Works great on one table at a time
 
-fvcom_zonal_averages(
-      mesh_poly_intersection = filter(zonal_assignments, area_id == "Eastern Maine"),
-      zonal_means = triangle_avg_1978, 
+fvcom_regional_averages(
+      mesh_poly_intersection = filter(regional_assignments, area_id == "Eastern Maine"),
+      regional_means = triangle_avg_1978, 
       nc = fvcom_yrx)
 
 
@@ -444,19 +444,19 @@ fvcom_zonal_averages(
 
 # Now we loop over areas
 poly_avgs_1978 <-  map_dfr(
-  .x = zonal_assignments %>% split(.$area_id),
-  .f = ~fvcom_zonal_averages(
+  .x = regional_assignments %>% split(.$area_id),
+  .f = ~fvcom_regional_averages(
     mesh_poly_intersection = .x,
-    zonal_means = triangle_avg_1978, 
+    regional_means = triangle_avg_1978, 
     nc = fvcom_yrx),
   .id = "area_id"
 )
 
 
 mutate(poly_avgs_1978, time = as.Date(time)) %>% 
-ggplot(aes(time, zonal_mu, color = area_id)) +
+ggplot(aes(time, regional_mu, color = area_id)) +
   geom_line(alpha = 0.4, linewidth = 0.5) +
-  labs(title = "Zonal Average SST for Lob-ECOL Polygons: 1978 Test")
+  labs(title = "regional Average SST for Lob-ECOL Polygons: 1978 Test")
 
 
 
@@ -490,20 +490,20 @@ all_region_surface_temp <- map_dfr(fvcom_surfbot_files, function(nc_x){
   
   # 2. Get the average values for the triangles
   # Run that for all the years I guess?!?
-  triangle_avgs <- zonal_from_nodes(
-    fvcom_mesh_trios = zonal_assignments, 
+  triangle_avgs <- regional_from_nodes(
+    fvcom_mesh_trios = regional_assignments, 
     nc = yr_x_fvcom, 
     nc_varname = fvcom_var_name)
   
   
-  # Get the zonal averages for each region/group
-  poly_avgs_yr_x <-  zonal_assignments %>% 
+  # Get the regional averages for each region/group
+  poly_avgs_yr_x <-  regional_assignments %>% 
     split(.$area_id) %>% 
     map_dfr(
     .x = .,
-    .f = ~fvcom_zonal_averages(
+    .f = ~fvcom_regional_averages(
       mesh_poly_intersection = .x,
-      zonal_means = triangle_avgs, 
+      regional_means = triangle_avgs, 
       nc = yr_x_fvcom),
     .id = "area_id"
   )
@@ -511,7 +511,7 @@ all_region_surface_temp <- map_dfr(fvcom_surfbot_files, function(nc_x){
   # Close the netcdf connection
   nc_close(yr_x_fvcom)
   
-  # Return the zonal averages
+  # Return the regional averages
   return(poly_avgs_yr_x)
   
 })
@@ -523,7 +523,7 @@ Sys.time()
 # # Save them individually
 # fvcom_regional_surface_temps %>% 
 # # all_region_surface_temp %>%
-#   # rename(surface_temp = zonal_mu) %>%
+#   # rename(surface_temp = regional_mu) %>%
 #   split(.$area_id) %>%
 #   iwalk(
 #     function(.x,.y){
@@ -536,7 +536,7 @@ Sys.time()
 # all_region_surface_temp %>% 
 #   mutate(time = as.Date(time)) %>% 
 #   ggplot() +
-#   geom_line(aes(time, zonal_mu, color = area_id),
+#   geom_line(aes(time, regional_mu, color = area_id),
 #             linewidth = 0.4, alpha = 0.4)
 
 
@@ -562,20 +562,20 @@ all_region_bottom_temp <- map_dfr(fvcom_surfbot_files, function(nc_x){
   
   # 2. Get the average values for the triangles
   # Run that for all the years I guess?!?
-  triangle_avgs <- zonal_from_nodes(
-    fvcom_mesh_trios = zonal_assignments, 
+  triangle_avgs <- regional_from_nodes(
+    fvcom_mesh_trios = regional_assignments, 
     nc = yr_x_fvcom, 
     nc_varname = fvcom_var_name)
   
   
-  # Get the zonal averages for each region/group
-  poly_avgs_yr_x <-  zonal_assignments %>% 
+  # Get the regional averages for each region/group
+  poly_avgs_yr_x <-  regional_assignments %>% 
     split(.$area_id) %>% 
     map_dfr(
     .x = .,
-    .f = ~fvcom_zonal_averages(
+    .f = ~fvcom_regional_averages(
       mesh_poly_intersection = .x,
-      zonal_means = triangle_avgs, 
+      regional_means = triangle_avgs, 
       nc = yr_x_fvcom),
     .id = "area_id"
   )
@@ -583,7 +583,7 @@ all_region_bottom_temp <- map_dfr(fvcom_surfbot_files, function(nc_x){
   # Close the netcdf connection
   nc_close(yr_x_fvcom)
   
-  # Return the zonal averages
+  # Return the regional averages
   return(poly_avgs_yr_x)
   
 })
@@ -593,12 +593,10 @@ Sys.time()
 
 
 
-
-
 # # Save them individually
 # fvcom_regional_bottom_temps %>% 
 # #all_region_bottom_temp %>%
-#   #rename(bottom_temp = zonal_mu) %>%
+#   #rename(bottom_temp = regional_mu) %>%
 #   split(.$area_id) %>%
 #   iwalk(
 #     function(.x,.y){
@@ -608,112 +606,113 @@ Sys.time()
 
 
 
-
 # Plot
 all_region_bottom_temp %>% 
   mutate(time = as.Date(time)) %>% 
   filter(area_id %in% c("GOM_GBK", "SNE"))
   ggplot() +
-  geom_line(aes(time, zonal_mu, color = area_id),
+  geom_line(aes(time, regional_mu, color = area_id),
             linewidth = 0.4, alpha = 0.4)
 ```
 
-### Running 2012 B/C I missed it
+### Running 2012/2017-2019 
+
+On the first pass I was missing a number of files which were later added. This section covers processing a subset of years and adding them back to the collection.
 
 This is a good example of what the process looks likg for a single NetCDF file.
 
 ```{r}
-#| label: single year zonal fix
+#| label: single year(s) regional fix
 #| eval: false
 
-# Run 2012
+# Paths to single years
 fvcom_2012_file <- str_c(fvcom_path, "gom3_2012.nc")
+fvcom_2017_file <- str_c(fvcom_path, "gom3_2017.nc")
+fvcom_2018_file <- str_c(fvcom_path, "gom3_2018.nc")
+fvcom_2019_file <- str_c(fvcom_path, "gom3_2019.nc")
 
-# 1. Open the netcdf:
-fvcom_2012_nc <- nc_open(fvcom_2012_file)
 
-  
+
+
+# 1. Open the netcdf file to update/add:
+fvcom_year_nc <- nc_open(fvcom_2019_file)
+
+
 # 2. Get the average values for the triangles
 # Run that for all the years I guess?!?
-stemp_triangle_avgs <- zonal_from_nodes(
-  fvcom_mesh_trios = zonal_assignments, 
-  nc = fvcom_2012_nc, 
+stemp_triangle_avgs <- regional_from_nodes(
+  fvcom_mesh_trios = regional_assignments, 
+  nc = fvcom_year_nc, 
   nc_varname = "surface_t")
 
 # bottom as well
-btemp_triangle_avgs <- zonal_from_nodes(
-  fvcom_mesh_trios = zonal_assignments, 
-  nc = fvcom_2012_nc, 
+btemp_triangle_avgs <- regional_from_nodes(
+  fvcom_mesh_trios = regional_assignments, 
+  nc = fvcom_year_nc, 
   nc_varname = "bottom_t")
 
 
-# 3. Get the zonal averages for each region/group
-stemp_poly_avgs <-  zonal_assignments %>% 
+# 3. Get the regional averages for each region/group
+stemp_poly_avgs <-  regional_assignments %>% 
   split(.$area_id) %>% 
   map_dfr(
   .x = .,
-  .f = ~fvcom_zonal_averages(
+  .f = ~fvcom_regional_averages(
     mesh_poly_intersection = .x,
-    zonal_means = stemp_triangle_avgs, 
-    nc = fvcom_2012_nc),
+    regional_means = stemp_triangle_avgs, 
+    nc = fvcom_year_nc),
   .id = "area_id")
 
 # Btemp
-btemp_poly_avgs <-  zonal_assignments %>% 
+btemp_poly_avgs <-  regional_assignments %>% 
   split(.$area_id) %>% 
   map_dfr(
   .x = .,
-  .f = ~fvcom_zonal_averages(
+  .f = ~fvcom_regional_averages(
     mesh_poly_intersection = .x,
-    zonal_means = btemp_triangle_avgs, 
-    nc = fvcom_2012_nc),
+    regional_means = btemp_triangle_avgs, 
+    nc = fvcom_year_nc),
   .id = "area_id")
 
 
 
-########
-
-# Join them back in with the surface and bottom
-
-# Surface Temperatures
-fvcom_regional_surface_temps <- bind_rows(
-  all_region_surface_temp,
-  stemp_poly_avgs) %>% 
-  mutate(time = as.Date(time)) %>% 
-  rename(surface_t = zonal_mu)
-
+# Reshape/format them to put together
+# Put them into one table:
+yearx_regional_temperatures <- left_join(
+  stemp_poly_avgs  %>% 
+    mutate(time = as.Date(time)) %>% 
+    rename(surface_t = regional_mu), 
+  btemp_poly_avgs  %>% 
+    mutate(time = as.Date(time)) %>% 
+    rename(bottom_t = regional_mu))
 
 
 
-# Bottom Temperatures
-fvcom_regional_bottom_temps <- bind_rows(
-  all_region_bottom_temp,
-  btemp_poly_avgs) %>% 
-  mutate(time = as.Date(time)) %>% 
-  rename(bottom_t = zonal_mu)
+# Load the collection if necessary:
+fvcom_regional_temperatures <- read_csv(str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_temperatures_daily.csv"))
 
-# Plot
-fvcom_regional_surface_temps %>% 
+
+# Put them into one table to save them:
+fvcom_regional_temperatures <- bind_rows(fvcom_regional_temperatures, yearx_regional_temperatures)
+
+# Plot to look
+fvcom_regional_temperatures %>% 
   filter(area_id %in% c("GOM_GBK", "SNE")) %>% 
   ggplot() +
-  geom_line(aes(time, surface_t, color = area_id),
-            linewidth = 0.4, alpha = 0.4)
-
-# Plot
-fvcom_regional_bottom_temps %>% 
-  filter(area_id %in% c("GOM_GBK", "SNE")) %>% 
-  ggplot() +
-  geom_line(aes(time, bottom_t, color = area_id),
-            linewidth = 0.4, alpha = 0.4)
+  geom_line(aes(time, surface_t, color = "Surface Temperature"), linewidth = 0.8, alpha = 0.6) +
+  geom_line(aes(time, bottom_t, color = "Bottom Temperature"), linewidth = 0.8, alpha = 0.6) +
+  scale_color_gmri() +
+  facet_wrap(~area_id, nrow = 2)
 
 
-# Put them into one table and save them:
-fvcom_regional_temperatures <- left_join(fvcom_regional_surface_temps, fvcom_regional_bottom_temps)
-
+# # Exporting
 # write_csv(
-#   fvcom_regional_temperatures, 
+#   fvcom_regional_temperatures,
 #   str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_temperatures_daily.csv"))
 ```
+
+
+
 
 # Inspecting Timeseries
 
