@@ -21,6 +21,7 @@ execute:
 ```{r}
 
 # Packages
+{
 library(raster)        # netcdf data as raster
 library(sf)            # vector spatial mapping/operations
 library(fvcom)         # fvcom mesh and variable extractions
@@ -32,7 +33,7 @@ library(rnaturalearth) # coastlines and state polygons
 library(geometry)      # bathycentric coordinates
 library(Matrix)        # matrix algebra
 library(sysfonts)      # font support
-
+}
 
 
 # Paths + conflicts
@@ -142,8 +143,9 @@ mesh geometry.
 ```{r}
 #| label: load-fvcom-resources
 
-# Load some daily FVCOM that we downloaded and averaged
-daily_fpath <- cs_path("mills", "Projects/Lobster ECOL/FVCOM_processed/GOM3_daily")
+# Load some daily FVCOM that we downloaded and averaged ahead of time
+# These aren't 100% reliable but they will work for demonstration sake
+daily_fpath <- cs_path("mills", "Projects/Lobster ECOL/FVCOM_processed/ignore_manually_downloaded/ignore_GOM3_daily")
 gom3_2014 <- read_csv(str_c(daily_fpath, "GOM3_daily_surfbottemp_2014_01.csv"))
 gom3_oneday <- gom3_2014 %>% filter(date == "2014-01-01")
 

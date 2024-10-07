@@ -43,9 +43,9 @@ deg_c <- "\u00b0C"
 
 # Project paths
 lob_ecol_path <- cs_path("mills", "Projects/Lobster ECOL")
-fvcom_path <- cs_path("res", "FVCOM/Lobster-ECOL")
-poly_paths <- cs_path("mills", "Projects/Lobster ECOL/Spatial_Defs")
-glorys_path <- cs_path("mills", "Projects/Lobster ECOL/GLORYs_processed")
+fvcom_path    <- cs_path("res", "FVCOM/Lobster-ECOL")
+poly_paths    <- cs_path("mills", "Projects/Lobster ECOL/Spatial_Defs")
+glorys_path   <- cs_path("mills", "Projects/Lobster ECOL/GLORYs_processed")
 
 
 #### Separate Shapes for Easier Paralell Workflow  ####
