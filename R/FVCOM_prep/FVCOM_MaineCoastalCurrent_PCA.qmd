@@ -18,14 +18,17 @@ execute:
 ---
 
 ```{r}
-library(raster)
-library(sf) 
-library(fvcom) 
-library(ncdf4) 
-library(tidyverse)
-library(gmRi)
-library(patchwork)
-library(rnaturalearth)
+
+{
+  library(raster)
+  library(sf) 
+  library(fvcom) 
+  library(ncdf4) 
+  library(tidyverse)
+  library(gmRi)
+  library(patchwork)
+  library(rnaturalearth)
+}
 
 # namespace conflicts
 conflicted::conflict_prefer("select", "dplyr")
@@ -50,17 +53,13 @@ source(here::here("R/FVCOM_Support.R"))
 ```
 
 
-
 ```{r}
 #| label: style-sheet
 #| results: asis
 
 # Use GMRI style
 use_gmri_style_rmd()
-
 ```
-
-
 
 
 ```{r}
@@ -85,8 +84,7 @@ showtext::showtext_auto()
 ```
 
 
-
-# Processing Maine Coastal Current Information from FVCOM
+# Approaching the Maine Coastal Current Information from FVCOM
 
 The Gulf of Maine Coastal Current (GMCC) can be divided into to principal branches (Eastern Maine Coastal Current EMCC & Western Maine Coastal Current WMCC), separated by a junction near Penobscot bay. 
 

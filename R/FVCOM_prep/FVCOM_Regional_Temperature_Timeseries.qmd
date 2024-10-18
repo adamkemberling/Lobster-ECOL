@@ -1,5 +1,5 @@
 ---
-title: "Gulf of Maine BT Interpolation Testing"
+title: "Lobster Ecology Region of Interest Timeseries Processing"
 description: | 
   Processing Regional Timeseries of Surface and Bottom Temperatures
 date: "Updated on: `r Sys.Date()`"
@@ -17,11 +17,11 @@ execute:
   comment: ""
 ---
 
-# About: Using the Gulf of Maine for Regional FVCOM Evaluation
+# About: Processing Timeseries of Surface/Bottom Temeprature
 
 For this project we need to use FVCOM for point-value interpolations (what was the temperature at this location, at this time), and for regional summaries (what was the average temperature over time for this area).
 
-This document steps through the approaach to getting regional sumaries for our areas of interest.
+This document steps through the approach to getting regional sumaries for our areas of interest. The areas of interest for this project are a combination of nearshore areas (12nm buffers from shore intersections with lobster management strata) and offshore regions (Gulf of Maine, Georges Bank, EPUS). 
 
 ```{r}
 ####. packages. ####
@@ -86,7 +86,10 @@ showtext::showtext_auto()
 
 ### Load Regional Shapefiles
 
-This work is looking at two scales: a nearshore scale within 12nm of the coast, which is further sub-divided by NMFS statistical areas. The second is an offshore scale extending beyond 12nm to the shelf break. This area is split into Southern New England and a Northern Gulf of Maine + Georges Bank region.
+Regions of interest are looking at temperature dynamics ar two spatial scales: 
+
+ 1.a nearshore scale within 12nm of the coast, which is further sub-divided by NMFS statistical areas. \
+ 2. The second is an offshore scale extending beyond 12nm to the shelf break. This area is split into Southern New England and a Northern Gulf of Maine + Georges Bank region.\
 
 ```{r}
 # Load inshore

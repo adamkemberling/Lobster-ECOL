@@ -12,9 +12,9 @@
 
 ## Introductory Data Exploration
 
-[Area Subsetting in R with {FVCOM}](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/general_methods/FVCOM_Area_Subsetting_Demo.html)
+[Area Subsetting in R with {FVCOM}](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/fvcom_general_methods/FVCOM_Area_Subsetting_Demo.html)
 
-[Interpolation Methods for Point Coordinates](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/FVCOM_interpolation.html)
+[Interpolation Methods for Point Coordinates](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/fvcom_general_methods/FVCOM_interpolation.html)
 
 [Exploring Pre-Downloaded Monthly Hindcast File Contents and Structures](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/gmri_inventory_exploration/FVCOM_GMRI-Monthly-Inventory-Check.html)
 
@@ -23,11 +23,14 @@
 
 [Maine Coastal Current Area and Current PCA Processing](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/FVCOM_MaineCoastalCurrent_PCA.html)
 
-
 [Processing Regional Daily Surface/Bottom Temperature Timeseries](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/FVCOM_Regional_Temperature_Timeseries.html)
+
+[Extracting Interpolated FVCOM Temperatures for NEFSC+VTS Survey Locations](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/Survey_Locations_Temp_Interpolation.html)
+
+
+### LOB-ECOL Temperature Data Evaluation
 
 
 [Regional FVCOM & GLORYs Surface/Bottom Timeseries Comparison](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/FVCOM_regional_Temp_Exposure.html)
-
 
 [GLORYs Regional Temperatures](https://adamkemberling.github.io/Lobster-ECOL/R/GLORYs_prep/GLORYs_Temp_Exposure.html)
