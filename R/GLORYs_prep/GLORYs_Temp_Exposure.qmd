@@ -23,6 +23,12 @@ execute:
 
 This document reviews the temperature characteristics for regions along the Northeast shelf using the GLORYs ocean reanalysis model outputs from 1993-2023. 
 
+GLORYS data was downloaded using the Copernicus Marine Toolbox API, code for the relevant download can be found here: https://github.com/adamkemberling/glorys_northeast. 
+
+Processing of these timeseries was performed in the following notebook:
+https://github.com/adamkemberling/glorys_northeast/blob/main/py/LOBECOL_SurfBot_Temp_Processing.ipynb 
+
+
 Temperature change is presented for 19 zones in the area, and presented with respect to key temperatures for lobster growth and survival.
 
 
@@ -214,6 +220,7 @@ ggplot(offshore_timeseries) +
 ```
 
 :::
+
 # Temperature Anomalies
 
 

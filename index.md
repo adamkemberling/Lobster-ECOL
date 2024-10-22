@@ -25,7 +25,9 @@
 
 [Processing Regional Daily Surface/Bottom Temperature Timeseries](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/FVCOM_Regional_Temperature_Timeseries.html)
 
-[Extracting Interpolated FVCOM Temperatures for NEFSC+VTS Survey Locations](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/Survey_Locations_Temp_Interpolation.html)
+[Extracting Interpolated FVCOM Temperatures for NEFSC+VTS Survey Locations](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/Survey_Locations_FVCOMTemp_Interpolation.html)
+
+[Extracting GLORYS Temperatures for NEFSC+VTS Survey Locations](https://adamkemberling.github.io/Lobster-ECOL/R/GLORYS_prep/Survey_Locations_GLORYSTemp_extractions.html)
 
 
 ### LOB-ECOL Temperature Data Evaluation
