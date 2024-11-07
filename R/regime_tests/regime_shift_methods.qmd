@@ -1,0 +1,57 @@
+---
+title: "Regime Shift / Tipping Points"
+format: html
+editor: visual
+bibliography: references.bib
+---
+
+# Regime Shifts & Tipping Points
+
+This is a methods exploration of various packages available for regime shifts and for ecological tipping point detection. I will also try to flag and cite key ideas found in the literature.
+
+## What is a regime shift / tipping point - Core Ideas
+
+> The concept of tipping points usually implies discontinuous regime shifts of systems and includes three characteristics: (1) abrupt change, (2) hysteresis, and (3) non-stationary functional relationships. -@blöcker2023
+
+**Hysteresis:** When the pathway of recovery of an ecosystem differs from its pathway of degradation (Suding & Hobbs 2009)
+
+**Alternative-Steady State:** Since the first papers on the subject appeared, two perspectives have developed to describe how communities shift from one stable state to another. One assumes a constant environment with shifts in variables such as population density, and the other anticipates changes to underlying parameters or environmental “drivers”. (Beisner et al. 2003)
+
+**Non-Stationary Relationships:**
+
+**Resilience:**
+
+## Detection Methods
+
+### Abrupt Shifts
+
+-   Statistical Changepoint Analysis
+
+    -   [{bcp}](https://github.com/swang87/bcp) Bayesian changepoint detection
+
+    -   [{changepoint}](https://cran.r-project.org/web/packages/changepoint/index.html) Binary segmentation algorithm *BinSeg*, multiple changepoint search
+
+    -   [{mcp}](https://lindeloev.github.io/mcp/index.html) Regression with multiple change points/trend evaluation
+
+    -   {rparts}
+
+### Hysteresis
+
+-   Temporal evolution of relationships e.g. SSB \~ F
+
+    -   stats::ccf() for visual inspection of correlation for SSB \~ F at $t-n$ time lags.
+
+    -   [{strucchange}](https://cran.r-project.org/web/packages/strucchange/index.html)
+
+### Non-Stationary Relationships
+
+-   Non-stationarity in the SRR (stock recruit relationship)
+
+### Trend Changes
+
+-   
+
+```         
+```
+
+The `echo: false` option disables the printing of code (only output is displayed).

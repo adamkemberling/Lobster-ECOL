@@ -9,7 +9,7 @@ format:
     code-tools: true
     df-print: kable
     self-contained: true
-execute: 
+execute: =
   echo: true
   warning: false
   message: false
@@ -96,7 +96,7 @@ To acquire modeled bottom temperature values from the survey programs we need to
 
 A way to do this is using linear interpolation or some other method. The following code will step through performing these steps for the federal bottom trawl survey. We can then compare how the FVCOM hindcast performs relative to the CTD data from the survey.
 
-### Load Trawl Data
+### Load NEFSC Trawl Data
 
 ```{r}
 # Load the trawl data
@@ -115,8 +115,67 @@ trawl_locations <- trawl_dat %>%
 
 ```
 
+### Load State Trawl Data
 
-# Load VTS Survey Data
+
+```{r}
+#| label: load state trawl surveys
+#| eval: true
+
+# # Path(s) to state trawl survey data
+asmfc_path <- cs_path("mills", "Projects/Lobster/Trawl_fromASMFC")
+# 
+# # load the different state survey datasets - ASMFC editions
+# load(str_c(asmfc_path, "MassDMF_Lobster_StationsNLengths_1979_2023_230718.Rdata"))
+# load(str_c(asmfc_path, "MENH Trawl.Rdata"))
+load(str_c(asmfc_path, "RI_LOBSTER_TRAWL_012324.Rdata"))
+ri_trawl <- RI_Stations %>% 
+  distinct(TrawlIdentity, Season, TowNumb, StratumCode, Year, Month, Day, LAT, LON)
+
+# Maine NH Trawl Survey
+menh_path <- cs_path("res", "Maine_NH_Trawl/data_2024")
+menh_trawl <- read_csv(str_c(menh_path, "MaineDMR_Trawl_Survey_Tow_Data_2024-05-17.csv")) 
+
+# Mass Trawl
+mass_path <- cs_path("res", "MA_Trawl/Pull_20240716/Manipulated")
+mass_trawl <- read_csv(str_c(mass_path, "MADMF_SVSTA_SW_2024.csv"))
+
+# Set up dates for later
+menh_trawl <- mutate(menh_trawl, date = as.Date(Start_Date))
+mass_trawl <- mass_trawl %>% 
+  mutate(date = as.Date(
+    str_c(Year, 
+          str_pad(Month, side = "left", pad = "0", width = 2), 
+          str_pad(Day, side = "left", pad = "0", width = 2),
+          sep = "-")))
+ri_trawl <- ri_trawl %>% 
+  mutate(date = as.Date(
+    str_c(Year, 
+          str_pad(Month, side = "left", pad = "0", width = 2), 
+          str_pad(Day, side = "left", pad = "0", width = 2),
+          sep = "-")))
+
+
+# Plot them all
+ggplot() + 
+  geom_sf(data = new_england) +
+  geom_point(data = ri_trawl, aes(LON, LAT, color = "RI Survey"), 
+             shape = 3, size = 0.5, alpha = 0.4) +
+  geom_point(data = menh_trawl, aes(Start_Longitude, Start_Latitude, color = "ME + NH Survey"), 
+             shape = 3, size = 0.5, alpha = 0.4) +
+  geom_point(data = mass_trawl, aes(`Start lon`, `Start lat`, color = "MASS Survey"), 
+             shape = 3, size = 0.5, alpha = 0.4) +
+  coord_sf(xlim = c(-72, -67), ylim = c(41, 44.75)) +
+  scale_color_gmri() +
+  labs(x = "Longitude", y = "Latitude")
+
+
+```
+
+
+
+
+### Load VTS Survey Data
 
 We also have point locations for the VTS survey. Load these and get unique date/time information with metadata to rejoin later.
 
@@ -486,7 +545,8 @@ trawl_fvcom_temps %>%
 
 
 
-### Extract VTS Temperatures
+
+# Interpolate at VTS Locations
 
 Repeat the process for the VTS survey locations. Streamline the code down to a single chunk for brevity, steps remain the same.
 
@@ -549,39 +609,238 @@ vts_fvcom_temps <- vts_pts_weighted %>%
 
 ```
 
-### Map Interpolated Values
+
+# Interpolate State Survey Locations
+
+```{r}
+# 1. Join them by their date to match them to FVCOM file names and their time index
+
+# Maine + NH
+menh_dates_matched <- menh_trawl %>% 
+  left_join(
+    mutate(fvcom_dates, fvcom_date = as.Date(fvcom_date)),
+    join_by(date == fvcom_date)) %>% 
+  mutate(
+    lon = Start_Longitude,
+    lat = Start_Latitude) %>% 
+  st_as_sf(coords = c("lon", "lat"), crs = 4326, remove = F)
+
+# Mass
+mass_dates_matched <- mass_trawl %>% 
+  left_join(
+    mutate(fvcom_dates, fvcom_date = as.Date(fvcom_date)),
+    join_by(date == fvcom_date)) %>% 
+  mutate(
+    lon = `Start lon`,
+    lat = `Start lat`) %>% 
+  st_as_sf(coords = c("lon", "lat"), crs = 4326, remove = F)
+
+# Rhode Island
+ri_dates_matched <- ri_trawl %>% 
+  left_join(
+    mutate(fvcom_dates, fvcom_date = as.Date(fvcom_date)),
+    join_by(date == fvcom_date)) %>% 
+  mutate(
+    lon = LON,
+    lat = LAT) %>% 
+  drop_na(lon, lat) %>% 
+  st_as_sf(coords = c("lon", "lat"), crs = 4326, remove = F)
+```
 
 
 ```{r}
+# 2. overlay the points to get the node ids
+# Also applies the weights for linear interpolation
 
-# Make a plot
-vts_fvcom_temps %>% 
-  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326, remove = F)  %>% 
-  ggplot() +
-  geom_sf(aes(color = bot_temp_c), size = 0.5, alpha = 0.4) +
-  geom_sf(data = new_england) +
-  geom_sf(data = canada) +
-  scale_color_distiller(palette = "RdBu") +
-  coord_sf(xlim = c(-71, -67), ylim = c(41, 45))
+# Maine + NH
+menh_pts_weighted <- triangulation_linear_weighting(
+  pts_sf = menh_dates_matched, 
+  fvcom_mesh = gom3_mesh) %>% 
+  st_drop_geometry()
+
+# Mass
+mass_pts_weighted <- triangulation_linear_weighting(
+  pts_sf = mass_dates_matched, 
+  fvcom_mesh = gom3_mesh) %>% 
+  st_drop_geometry()
+
+# Rhode Island
+ri_pts_weighted <- triangulation_linear_weighting(
+  pts_sf = ri_dates_matched, 
+  fvcom_mesh = gom3_mesh) %>% 
+  st_drop_geometry()
+
 
 ```
 
-### Plot Both Surveys Together
 
 ```{r}
-# Make a plot
-vts_fvcom_temps %>% 
-  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326, remove = F)  %>% 
-  ggplot() +
-  geom_sf(aes(color = bot_temp_c, shape = "VTS Survey"), size = 0.5, alpha = 0.8) +
+# 3. Map over the yearly files, perform interpolation
+
+
+# Maine + NH
+menh_fvcom_temps <- menh_pts_weighted %>% 
+  drop_na(time_idx) %>% 
+  mutate(year = year(date)) %>% 
+  split(.$year) %>% 
+  map_dfr(
+    .f = function(samples_year_x){
+    
+    # Get the file to open
+    nc_name <- samples_year_x[["fv_file"]][[1]][[1]]
+    
+    
+    # Open the corresponding Netcdf
+    fvcom_yr_x <- nc_open(fvcom_surfbot_files[[nc_name]])
+    
+    
+    # Split by row to iterate on each point
+    locations_bydate <- samples_year_x %>% 
+      base::split(., seq_len(nrow(.))) 
+    
+    # Iterate on those - do bottom temp and surface temp
+    dates_interpolated <- locations_bydate %>%
+      map(.f = ~interpolate_at_timestep(
+        dated_points_weighted = .x,
+        fvcom_nc = fvcom_yr_x,
+        fvcom_varid = "surface_t", 
+        var_out = "surf_temp_c")) %>% 
+      map_dfr(.f = ~interpolate_at_timestep(
+        dated_points_weighted = .x,
+        fvcom_nc = fvcom_yr_x,
+        fvcom_varid = "bottom_t", 
+        var_out = "bot_temp_c"))
+    
+    return(dates_interpolated)
+    
+  })
+
+
+# Mass 
+mass_fvcom_temps <- mass_pts_weighted %>% 
+  drop_na(time_idx) %>% 
+  mutate(year = year(date)) %>% 
+  split(.$year) %>% 
+  map_dfr(
+    .f = function(samples_year_x){
+    
+    # Get the file to open
+    nc_name <- samples_year_x[["fv_file"]][[1]][[1]]
+    
+    
+    # Open the corresponding Netcdf
+    fvcom_yr_x <- nc_open(fvcom_surfbot_files[[nc_name]])
+    
+    
+    # Split by row to iterate on each point
+    locations_bydate <- samples_year_x %>% 
+      base::split(., seq_len(nrow(.))) 
+    
+    # Iterate on those - do bottom temp and surface temp
+    dates_interpolated <- locations_bydate %>%
+      map(.f = ~interpolate_at_timestep(
+        dated_points_weighted = .x,
+        fvcom_nc = fvcom_yr_x,
+        fvcom_varid = "surface_t", 
+        var_out = "surf_temp_c")) %>% 
+      map_dfr(.f = ~interpolate_at_timestep(
+        dated_points_weighted = .x,
+        fvcom_nc = fvcom_yr_x,
+        fvcom_varid = "bottom_t", 
+        var_out = "bot_temp_c"))
+    
+    return(dates_interpolated)
+    
+  })
+
+
+# Rhode Island
+ri_fvcom_temps <- ri_pts_weighted %>% 
+  drop_na(time_idx) %>% 
+  mutate(year = year(date)) %>% 
+  split(.$year) %>% 
+  map_dfr(
+    .f = function(samples_year_x){
+    
+    # Get the file to open
+    nc_name <- samples_year_x[["fv_file"]][[1]][[1]]
+    
+    
+    # Open the corresponding Netcdf
+    fvcom_yr_x <- nc_open(fvcom_surfbot_files[[nc_name]])
+    
+    
+    # Split by row to iterate on each point
+    locations_bydate <- samples_year_x %>% 
+      base::split(., seq_len(nrow(.))) 
+    
+    # Iterate on those - do bottom temp and surface temp
+    dates_interpolated <- locations_bydate %>%
+      map(.f = ~interpolate_at_timestep(
+        dated_points_weighted = .x,
+        fvcom_nc = fvcom_yr_x,
+        fvcom_varid = "surface_t", 
+        var_out = "surf_temp_c")) %>% 
+      map_dfr(.f = ~interpolate_at_timestep(
+        dated_points_weighted = .x,
+        fvcom_nc = fvcom_yr_x,
+        fvcom_varid = "bottom_t", 
+        var_out = "bot_temp_c"))
+    
+    return(dates_interpolated)
+    
+  })
+
+
+```
+
+# Map All Interpolated Values
+
+
+```{r}
+#| fig-height: 10
+#| label: map of everything
+
+# Make a plot of everything
+vts_sf <- vts_fvcom_temps %>% 
+  mutate(Month = month(Date)) %>% 
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326, remove = F)
+nefsc_sf <- trawl_fvcom_temps %>% 
+  mutate(Month = month(est_towdate)) %>% 
+  st_as_sf(coords = c("decdeg_beglon", "decdeg_beglat"), crs = 4326)
+menh_sf <- menh_fvcom_temps %>% 
+  mutate(Month = month(date)) %>% 
+  st_as_sf(coords = c("lon", "lat"), crs = 4326)
+mass_sf <- mass_fvcom_temps %>% 
+  st_as_sf(coords = c("lon", "lat"), crs = 4326)
+ri_sf <- ri_fvcom_temps %>% 
+  st_as_sf(coords = c("lon", "lat"), crs = 4326) 
+
+# Build the map
+ggplot() +
   geom_sf(
-    data =  trawl_fvcom_temps %>% 
-      st_as_sf(coords = c("decdeg_beglon", "decdeg_beglat"), crs = 4326),
+    data = vts_sf,
+    aes(color = bot_temp_c, shape = "VTS Survey"), 
+    size = 0.4, alpha = 0.9) +
+  geom_sf(
+    data =  nefsc_sf,
     aes(color = bot_temp_c, shape = "NEFSC Trawl Survey"),
-     size = 0.6, alpha = 0.8) +
+     size = 0.4, alpha = 0.9) +
+  geom_sf(
+    data =  menh_sf,
+    aes(color = bot_temp_c, shape = "MENH Trawl Survey"),
+     size = 0.4, alpha = 0.9) +
+  geom_sf(
+    data =  mass_sf,
+    aes(color = bot_temp_c, shape = "Mass Trawl Survey"),
+     size = 0.4, alpha = 0.9) +
+  geom_sf(
+    data =  ri_sf,
+    aes(color = bot_temp_c, shape = "RI Trawl Survey"),
+     size = 0.4, alpha = 0.9) +
   geom_sf(data = new_england) +
   geom_sf(data = canada) +
-  facet_wrap(~fct_rev(season)) +
+  facet_wrap(~Month, ncol = 3) +
   scale_color_distiller(palette = "RdBu") +
   # coord_sf(xlim = c(-71, -67), ylim = c(41, 45)) +
   coord_sf(xlim = c(-78, -65), ylim =c(34, 45)) +
@@ -589,8 +848,9 @@ vts_fvcom_temps %>%
   labs(
     x = "",
     y = "",
-    title = "NEFSC + VTS Survey FVCOM Interpolations"
-  )
+    title = "Trawl + VTS FVCOM Interpolations",
+    color = "FVCOM\nBottom Temperature\n\u00b0C",
+    shape = "Survey")
 ```
 
 
@@ -602,7 +862,20 @@ vts_fvcom_temps %>%
 
 ```{r}
 # # # Save VTS Bottom temperatures
-# write_csv(trawl_fvcom_temps, here::here("data/point_location_temperatures", "NEFSCtrawl_location_fvcom_temps.csv"))
-# write_csv(vts_fvcom_temps, here::here("data/point_location_temperatures", "VTS_location_fvcom_temps.csv"))
+# write_csv(
+#   x = trawl_fvcom_temps, 
+#   file = here::here("data/point_location_temperatures", "NEFSCtrawl_location_fvcom_temps.csv"))
+# write_csv(
+#   x = vts_fvcom_temps, 
+#   file = here::here("data/point_location_temperatures", "VTS_location_fvcom_temps.csv"))
+# write_csv(
+#   x = menh_fvcom_temps, 
+#   file = here::here("data/point_location_temperatures", "MENH_trawl_fvcom_temps.csv"))
+# write_csv(
+#   x = mass_fvcom_temps, 
+#   file = here::here("data/point_location_temperatures", "MA_trawl_fvcom_temps.csv"))
+# write_csv(
+#   x = ri_fvcom_temps, 
+#   file = here::here("data/point_location_temperatures", "RI_trawl_fvcom_temps.csv"))
 ```
 

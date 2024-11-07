@@ -535,12 +535,12 @@ Sys.time()
 #     )
 
 
-# # Plot
-# all_region_surface_temp %>% 
-#   mutate(time = as.Date(time)) %>% 
-#   ggplot() +
-#   geom_line(aes(time, regional_mu, color = area_id),
-#             linewidth = 0.4, alpha = 0.4)
+# Plot
+all_region_surface_temp %>%
+  mutate(time = as.Date(time)) %>%
+  ggplot() +
+  geom_line(aes(time, regional_mu, color = area_id),
+            linewidth = 0.4, alpha = 0.4)
 
 
 ```
@@ -715,6 +715,91 @@ fvcom_regional_temperatures %>%
 ```
 
 
+## How many Nodes/Elements
+
+As another layer of information, it may be useful to know how many nodes/elements (proxies for resolution) contributed to mean estimates:
+
+```{r}
+
+# This gets the average area of the polygons within the strata
+strata_resolutions <- lobster_intersections %>% 
+  group_by(strata) %>% 
+  summarise(n_elems = n_distinct(elem),
+            avg_area_km2 =  mean(rel_area)/1e6) 
+
+# We also probably want the number of nodes, and center elements
+# we can get the center coordinates this way
+gom3_mesh_elems <- data.frame(
+  "lonc" = ncvar_get(fvcom_yrx, "lonc"),
+  "latc" = ncvar_get(fvcom_yrx, "latc")) %>% 
+  mutate(elem = row_number()) %>% 
+  st_as_sf(coords = c("lonc", "latc"), 
+           crs = st_crs(gom3_mesh), 
+           remove = F)
+# and the nodes this way
+gom3_mesh_nodes <- data.frame(
+  "lon" = ncvar_get(fvcom_yrx, "lon"),
+  "lat" = ncvar_get(fvcom_yrx, "lat")) %>% 
+  mutate(node = row_number()) %>% 
+  st_as_sf(coords = c("lon", "lat"), 
+           crs = st_crs(gom3_mesh), 
+           remove = F)
+
+# validate we have the coordinates right
+ggplot() +
+  geom_sf(data = gom3_mesh_nodes, shape = 3, size = 0.2, alpha = 0.4, color = "gray20") +
+  geom_sf(data = gom3_mesh_elems, shape = 3, size = 0.2, alpha = 0.2, color = "orange")
+
+
+# Use crop to count the points within each one
+strata_points <- map_dfr(
+  .x = lobster_areas, 
+  .f = possibly(function(strata_x){
+  n_nodes <- st_crop(x = gom3_mesh_nodes, y = strata_x) %>% 
+      nrow()
+  n_centers <- st_crop(x = gom3_mesh_elems, y = strata_x) %>% 
+      nrow()
+  tibble(
+    "n_nodes" = n_nodes,
+    "n_centers" = n_centers)
+  }, 
+  otherwise = tibble("n_nodes" = 0, "n_centers" = 0)), 
+  .id = "strata")
+
+# totally missed it, use the new trick i learned
+#strata_points <- .Last.value
+
+
+
+# Join them together:
+strata_resolution_data <- left_join(
+  mutate(strata_resolutions, strata = as.character(strata)),
+  y = strata_points)
+
+# Check the distribution
+#hist(strata_resolution_data$avg_area_km2)
+
+# Mqp the avg resolution in each strata
+lobster_strata %>% 
+  mutate(strata = as.character(strata)) %>% 
+  left_join(strata_resolution_data) %>% 
+  ggplot() +
+  #geom_sf(data = gom3_mesh, color = "gray80", alpha = 0.2) +
+  geom_sf(aes(fill = avg_area_km2)) +
+  scale_fill_distiller(palette = "RdYlGn")
+
+
+
+
+
+# # Save that out:
+# write_csv(strata_resolution_data, here::here("local_data", "jkipp_areas_fvcom_elem_resolution.csv"))
+```
+
+
+# Inspecting Timeseries
+
+Timeseries can now be evaluated:
 
 
 # Inspecting Timeseries
@@ -730,7 +815,7 @@ These tests determine the following:\
 
 # Load and add inshore/offshore labels on the daily data
 fvcom_regional_temperatures <- read_csv(
-  str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_temperatures_daily.csv")) %>% 
+  str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/jkipp_regions_fvcom_temperatures_daily.csv")) %>% 
   mutate(depth_type = if_else(area_id %in% c("GOM_GBK", "SNE"), "offshore", "nearshore"))
 
 ```
