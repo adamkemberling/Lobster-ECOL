@@ -1,9 +1,78 @@
 ---
 title: "Regime Shift / Tipping Points"
-format: html
-editor: visual
-bibliography: references.bib
+description: | 
+  Detailing common methods and preprocessing steps for regime shift detection methods
+date: "Updated on: `r Sys.Date()`"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    df-print: kable
+    self-contained: true
+execute: 
+  echo: true
+  warning: false
+  message: false
+  fig.align: "center"
+  comment: ""
 ---
+
+```{r}
+library(here)
+library(tidyverse)
+library(rshift)
+library(gmRi)
+
+# Make sure lag is done correctly
+conflicted::conflict_prefer("lag", "stats")
+conflicted::conflict_prefer("filter", "dplyr")
+
+# Path to timeseries
+lob_ecol_path <- cs_path("mills", "Projects/Lobster ECOL")
+
+# Load and add inshore/offshore labels on the daily data
+lobecol_fvcom <- read_csv(
+  str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_temperatures_daily.csv")) %>% 
+  mutate(depth_type = if_else(area_id %in% c("GOM_GBK", "SNE"), "offshore", "nearshore"))
+
+```
+
+
+
+
+```{r}
+#| label: style-sheet
+#| results: asis
+
+# Use GMRI style for fonts
+use_gmri_style_rmd()
+
+```
+
+
+
+
+```{r}
+#| label: fonts-config
+#| echo: false
+library(showtext)
+
+# Path to the directory containing the font file (replace with your actual path)
+font_dir <- paste0(system.file("stylesheets", package = "gmRi"), "/GMRI_fonts/Avenir/")
+
+# Register the font
+font_add(
+  family = "Avenir",
+  file.path(font_dir, "LTe50342.ttf"),
+  bold = file.path(font_dir, "LTe50340.ttf"),
+  italic = file.path(font_dir, "LTe50343.ttf"),
+  bolditalic = file.path(font_dir, "LTe50347.ttf"))
+
+# Load the font
+showtext::showtext_auto()
+
+```
+
 
 # Regime Shifts & Tipping Points
 
@@ -13,7 +82,7 @@ This is a methods exploration of various packages available for regime shifts an
 
 > The concept of tipping points usually implies discontinuous regime shifts of systems and includes three characteristics: (1) abrupt change, (2) hysteresis, and (3) non-stationary functional relationships. -@blöcker2023
 
-**Hysteresis:** When the pathway of recovery of an ecosystem differs from its pathway of degradation (Suding & Hobbs 2009)
+**Hysteresis:** When the pathway of recovery of an ecosystem differs from its pathway of degradation (Suding & Hobbs 2009)
 
 **Alternative-Steady State:** Since the first papers on the subject appeared, two perspectives have developed to describe how communities shift from one stable state to another. One assumes a constant environment with shifts in variables such as population density, and the other anticipates changes to underlying parameters or environmental “drivers”. (Beisner et al. 2003)
 
@@ -27,13 +96,25 @@ This is a methods exploration of various packages available for regime shifts an
 
 -   Statistical Changepoint Analysis
 
+    -   Sequential t-test Analysis of Regime Shifts (STARS, rodionov 2004).
+
+        -   Originally an Excel add-in. STARS mean-shift testing has been implemented with [{rshift}](https://github.com/alexhroom/rshift)
+
+        -   Outlier weighting and prewhitening routines have been implemented in Stirnimann 2019's repository [{rstars}](https://github.com/LStirnimann/rstars/tree/master).
+
+        -   Additional code snippet also available [here](https://figshare.com/articles/dataset/Supplement_1_Annotated_R_scripts_and_sediment_core_data_used_to_investigate_regime_shift_dynamics_in_a_Galapagos_coastal_lagoon_/3560655?file=5632209)
+
+    -   [{EnvCpt}]() Detection of Structural Changes in Climate and Environment Time Series using 12 methods and evaluated with AIC. Based on paper by Beaulieu et al 2012.
+
     -   [{bcp}](https://github.com/swang87/bcp) Bayesian changepoint detection
 
     -   [{changepoint}](https://cran.r-project.org/web/packages/changepoint/index.html) Binary segmentation algorithm *BinSeg*, multiple changepoint search
 
     -   [{mcp}](https://lindeloev.github.io/mcp/index.html) Regression with multiple change points/trend evaluation
 
-    -   {rparts}
+    -   {strucchange}
+
+    -   {rpart}: Package for chronological clustering, a clustering approach for multivariate timeseries. See: Peretti et al 2017
 
 ### Hysteresis
 
@@ -49,9 +130,416 @@ This is a methods exploration of various packages available for regime shifts an
 
 ### Trend Changes
 
--   
-
-```         
-```
+-   [{EnvCpt}]() has model forms that evaluate non-stationary trends
 
 The `echo: false` option disables the printing of code (only output is displayed).
+
+# STARS Implementation - Basic
+
+One of the most broadly cited/used regime shift methods is Sequential t-test Analysis of Regime Shifts (STARS, rodionov 2004).
+
+This approach is made available as an excel macro through [Sergei Rodionov's personal site](https://sites.google.com/view/regime-shift-test/downloads?authuser=0). There have also been recent adaptations of this approach implemented in R/python.
+
+The original method was built to detect shifts in the mean for some series of data. The approach was later improved, now incorporating outlier weighting via a Huber's weight argument, as well as red-noise detection and "prewhitening" routines. This additions lowered the orignal algorithms sensitivity to outliers and reduced the likelihood of false-positive detections in cases where an autocorrelative structure is present.
+
+In R, the methodology for implementing the STARS approach is available in {rshift}, however at this time the outlier detection and prewhitening routines are not part of the package.
+
+Another [repository/package in R (rstars)](https://github.com/LStirnimann/rstars/tree/master) contains the rodionov stars implementation, with huber weighting, and functions for the four prewhitening routines described in Stirnimann 2019.
+
+### Basic Implementation - rshift
+
+The STARS method requires several arguments: `data` a dataframe containing a time index column `time` and the variable of interest `col`, an argument for the minimum length for a regime `l` (integer value using whatever timestep `time` is in), and a detection probability `prob` with which to flag a regime shift.
+
+```{r}
+
+# Test timeseries
+tester <- filter(lobecol_fvcom, area_id == "GOM_GBK")
+
+# Regime Shift Test
+t1_regimes <- rshift::Rodionov(
+  data = tester, 
+  col = "bottom_t", 
+  time = "time", 
+  l = 365*7, 
+  prob = 0.05, 
+  startrow = 1, 
+  merge = T )
+
+# Plot
+RSI_graph(
+  t1_regimes, 
+  col =  "bottom_t", 
+  time =  "time", 
+  rsi =  "RSI", 
+  mean_lines = TRUE)
+```
+
+
+Upon quick glance we may get the sense that there is something going on that is leading to many values near the end of the timeseries flagged for different areas of interest.
+
+
+
+# STARS v3.2+ Enhancments
+
+Since the initial paper, Rodionov added a number of anhancements to the approach which improve its ability to detect true shifts in the mean in the presence of outliers, autocorrelation (red-noise), and trends.
+
+
+### Outlier Detection / Weighting
+
+Due to outliers, the average is not representative for the mean value of the regimes, and this may significantly affect the results of the regime shift detection. Ideally the weight for the data value should be chosen such that it is small if that value is considered as an outlier. To handle the outliers, the program uses the Huber's weight function, which is calculated here as
+
+`weight = min( 1, parameter/(|anomaly|))`
+
+Where `anomaly` is the deviation from the expected mean value of the new regime normalized by the standard deviation averaged for all consecutive sections of the cut-off length in the series. If anomalies are less than or equal to the value of the parameter then their weights are equal to one. Otherwise, the weights are inversely proportional to the distance from the expected mean value of the new regime.
+
+
+
+### Red Noise Removal
+
+One pre-processing step done by Rodionov in newer STARS versions (the excel macro version) is an accountance of variability related to "red noise" processes, which can appear as regimes themselves and interfere with regime shift identification.
+
+> Red noise is the same as a first-order autoregressive (AR1) stationary Gaussian process with a positive correlation at lag 1, also called the Markov process. If red noise or serial correlation is present in the time series, it is necessary to either adjust the significance level of the shifts by calculating the effective degrees of freedom, or use a so-called "prewhitening" procedure prior to application of a regime shift detection method. In any case, it requires an estimate of the AR1 autoregressive parameter, which is equal to the sample lag-1 autocorrelation coefficient (r1).
+
+What about prewhitening? Prewhitening describes aproaches used to remove "red-noise" from a time series before analysis. The methods evaluated in Stirnimann et al. 2019 that were added in the Rodionov 2006 study include:
+
+Ordinary Least Squares (OLS)\
+Marriott-Pope and Kendall (MPK)\
+Inverse Proportionality with four corrections (IP4)
+
+A written description of the approach that Rodionov used/uses can be found here: https://www.beringclimate.noaa.gov/regimes/help3.html
+
+> Note that the OLS estimate is calculated using the entire time series. The MPK and IP4 methods break the time series into subsamples, estimate bias corrected r1 for each subsample and then use the median value of all estimates. The suggested subsample size m is calculated as m = (l + 1)/3, where l is the cutoff length. It is recommended to experiment with different subsample sizes to see how it affects the r1 estimate.
+
+The following chunk of code is to my understanding the OLS approach, which is done on the full dataset:
+
+```{r}
+
+# Take the tester to demo prewhitening
+
+# Fit AR(1) Model
+fit <- arima(ts(tester$bottom_t), order = c(1, 0, 0))
+
+# Extract Residuals
+prewhitened_series <- residuals(fit)
+
+# Plot the original and pre-whitened series
+tester %>% 
+  mutate(mpk = prewhitened_series) %>% 
+  ggplot(aes(time)) +
+  geom_line(aes(y = bottom_t, color = "Original Time Series")) +
+  geom_line(aes(y = mpk, color = "Pre-Whitened Time Series"))
+
+
+# Test for Remaining Autocorrelation
+Box.test(prewhitened_series, lag = 10, type = "Ljung-Box")
+
+# Get the AR1 coefficient
+summary(fit)
+coef(fit)
+```
+
+
+This approach would need to be adjusted to faithfully follow the Rodionov 2006 methods to include subsampling for the MPK and IP4 approaches:
+
+> The MPK and IP4 methods break the time series into subsamples, estimate bias corrected r1 for each subsample and then use the median value of all estimates. The suggested subsample size m is calculated as m = (l + 1)/3, where l is the cutoff length. It is recommended to experiment with different subsample sizes to see how it affects the r1 estimate.
+
+# Preprocessing Topics: Seasonality / Periodicity and Trends
+
+From Lund et al. 2023
+
+>To account for correlation in an AMOC changepoint analysis, prewhitening first fits a pth-order autoregressive [AR(p)] model to the series (this assumes nonperi-
+odic data).
+
+
+> BEST PRACTICE 3
+Account for all potential features in the mean of a series. If in doubt, allow for a trend and/or seasonality and use the statistical methods to distinguish which features are present in the series.
+
+> As an aside, we comment that model fitting is not about maximizing or mini-
+mizing p values, but rather making sure that all relevant statistical features are accounted for in a parsimonious model
+
+> PITFALL 5: APPLYING MEAN SHIFT MCPT TECHNIQUES TO SERIES WITH TRENDS OR
+SEASONALITY WITHOUT ACCOUNTING FOR THESE FEATURES. Similar to AMOC techniques in pitfall 2, applying a MCPT technique that neglects trends and seasonality can result in spurious changepoint declarations. For example, an increasing long-term trend will likely be estimated as a series of change-points acting as an increasing stairway. 
+
+> In a multiple changepoint analysis of a daily series, methods may flag many spurious changepoints within a year in an attempt to track the seasonal mean cycle should it be ignored in the modeling cycle
+
+Based on reading the review paper. 
+
+If we wish to continue with STARS we should:
+
+ 1. Deal with seasonality (subtract seasonal mean)
+ 2. Deal with any long-term trend (remove trend)
+ 3. Then-prewhiten to address AR()
+ 4. Then run through rstars
+ 
+If we want to use EnvCPT:
+
+ 1. Deal with seasonality (subtract seasonal mean)
+ 2. then run through envcpt
+
+### Removing a Trend
+
+
+### Modeling Seasonality
+
+> STARS works best when the time series contains no deterministic trend, such as the PDO series, from which the global warming trend is removed by design. However, assuming the AR1 autoregressive parameter is not changing over time, both MPK and IP4 procedures can accurately estimate it not only in the presence of regime shifts, but also in the presence of a weak-to-moderate trend. Subsequent prewhitening eliminates both the linear trend and red noise, without having a substantial impact on the magnitude of regime shifts (Rodionov, 2006).
+
+> In summary, if a trend and/or serial correlation are present in the time series, it is critically important to eliminate them using either MPK or IP4 prewhitening procedure, specifically designed to work with time series containing regime shifts. If a linear trend is strong, it is better to detrend the time series first to improve accuracy of estimation of the lag-1 autocorrelation coefficient.
+
+De-trending can be done quickly with `lm`
+
+```{r}
+
+# linear model with time
+tester_trend_mod <- lm(bottom_t ~ time, tester)
+
+# residuals are the detrended timeseries
+# we can re-add global mean if we want it in original units
+tester <- broom::augment(x = tester_trend_mod) %>% 
+  rename(trend_fit = .fitted,
+         trend_resid = .resid)
+
+# Plot detrended timeseries
+tester %>% 
+  ggplot(aes(time, trend_resid)) +
+  geom_line() +
+  labs(title = "Detrended Timeseries")
+
+
+# Next, prewhiten
+# Fit AR(1) Model
+ar_fit <- arima(ts(tester$trend_resid), order = c(1, 0, 0))
+
+# Extract Residuals
+tester$detrend_prewhitened <- as.numeric(residuals(ar_fit))
+
+# Plot the original and pre-whitened series
+tester %>% 
+  ggplot(aes(time)) +
+  geom_line(aes(y = bottom_t, color = "Original Time Series")) +
+  geom_line(aes(y = trend_resid, color = "Detrended Time Series")) +
+  geom_line(aes(y = detrend_prewhitened, color = "Detrended + Pre-Whitened")) +
+  labs(title = "Detrending + Prewhitening of Bottom Temperature")
+
+```
+
+We can then re-run STARS and see if the shifts we were seeing before have changed. They have not really, which could point to a variance shift issue.
+
+```{r}
+# Regime Shift Test on prewhitened timeseries
+detrend_regimes <- rshift::Rodionov(
+  data = tester,
+  col = "detrend_prewhitened", 
+  time = "time", 
+  l = 365*5, 
+  prob = 0.05, 
+  startrow = 1, 
+  merge = T )
+
+# # Plot 
+# ggplot(t1_regimes) +
+#   geom_line(aes(time, RSI))
+
+# Plot the RSI
+RSI_graph(
+  data = detrend_regimes, 
+  col =  "detrend_prewhitened", 
+  time =  "time", 
+  rsi =  "RSI", 
+  mean_lines = TRUE)
+
+```
+
+
+
+
+# rstars Implementation
+
+We can try the more detailed approach using the {rstars} implementation by sourcing the repo functions which have been downloaded locally:
+
+This repository was made by Luca Stirnimann for their 2019 publication.
+
+
+```{r}
+
+
+# # Data used as an example looks like this
+# PDO <- read.table(here::here("rstars-master","PDO.txt"),header = T, dec = ".")
+
+# Stirnimann used these values in their paper:
+# l = 5,10,15,17.5 years, with monthly data
+# Huber = 1
+# Subsampling = (l + 1)/3
+
+
+# Load the function(s)
+source(here::here("rstars-master","rSTARS.R"))
+
+
+
+# Need it to be a dataframe not a tibble for indexing to work
+tester_df <- as.data.frame(tester[,c("time", "bottom_t")])
+test_rstars <- rstars(
+  data.timeseries = tester_df, 
+  l.cutoff = 365*7, 
+  pValue = 0.05, 
+  Huber = 1, 
+  Endfunction = T,
+  preWhitening = T, # Apply prewhitening T/F
+  OLS = F,          # OLSprewhitening method T/F
+  MPK = T,          # Marriott-Pope + Kennedy prewhitening method T/F
+  IP4 = F,          # IP4 prewhitening method T/F
+  SubsampleSize = (365*7 + 1)/3, # subsampling rate for hubers + prewhitening
+  returnResults = T # Return the results as a dataframe
+  )  
+
+
+
+# # Saves 3 Files before I modified it:
+# filtered_ts <- read_table(str_c(here::here("rstars_results/tester_"), "Filteredts.txt"))
+# tester_rsi  <- read_table(str_c(here::here("rstars_results/tester_"), "RSI.txt"))
+# tester_mean <- read_table(str_c(here::here("rstars_results/tester_"), "tsMean.txt"))
+
+
+# Results now look like this:
+ggplot(test_rstars) +
+  geom_line(aes(time, bottom_t), linewidth = 0.5, alpha = 0.5) +
+  geom_line(aes(time, regime_mu), linewidth = 1)
+
+# Results now look like this on anomaly scales:
+ggplot(test_rstars) +
+  geom_line(aes(time, bottom_t_pw), linewidth = 0.5, alpha = 0.5) +
+  geom_line(aes(time, regime_mu_pw), linewidth = 1) +
+  scale_y_continuous(limits = c(-0.35, 0.35))
+```
+
+
+Everything is done with a single function, and so its possible (once the pre-processing has been done) to run each timeseries of interest using map/lapply/etc.
+
+
+```{r}
+
+# # Run them all
+# bot_temp_shifts <- lobecol_fvcom %>%
+#   split(.$area_id) %>%
+#   map_dfr(function(.x){
+# 
+#     rstars(
+#       data.timeseries = as.data.frame(.x[,c("time", "bottom_t")]),
+#       l.cutoff = 365*7, 
+#       pValue = 0.05, 
+#       Huber = 1, 
+#       Endfunction = F,
+#       preWhitening = T, 
+#       OLS = F, 
+#       MPK = T, 
+#       IP4 = F, 
+#       SubsampleSize = (365*7 + 1)/3, 
+#       returnResults = T)
+# 
+#     }, .id = "area_id")
+# 
+# 
+# # Save it
+# write_csv(bot_temp_shifts, here::here("rstars_results/lobecol_shifts.csv"))
+```
+
+And if we did all of them for bottom temperature, we'd return a bunch of lines that look like this:
+
+```{r}
+#| eval: true
+
+# Load that data again
+bot_temp_shifts <- read_csv(here::here("rstars_results/lobecol_shifts.csv"))
+
+
+# Plot the RSI
+bot_temp_shifts %>% 
+  # mutate(RSI = if_else(RSI == 0, NA, RSI)) %>% 
+  ggplot() +
+  geom_line(aes(time, RSI), linewidth = 0.5, alpha = 0.5) +
+  geom_hline(yintercept = 0, color = "gray") +
+  facet_grid() +
+  labs(
+    x = "Time",
+    #y = "RSI",
+    title = "")
+
+```
+
+
+```{r}
+#| eval: false
+
+bot_temp_shifts %>% 
+  ggplot() +
+  #geom_line(aes(time, bottom_t_pw, color = area_id), alpha = 0.1, linewidth = 0.2) +
+  geom_line(aes(time, regime_mu_pw, color = area_id), linewidth = 0.35) +
+  geom_hline(yintercept = 0, color = "gray") +
+  facet_grid() +
+  labs(
+    x = "Time",
+    y = "Prewhitened Regime Means",
+    title = "")
+```
+
+
+
+# EnvCpt Implementation
+
+{EnvCpt} is another changepoint implementation that fits a variety of model forms based on the work of Beaulieu and Killick (2018) .
+
+This is Rodionov's rundown of their methods:
+
+> They used their own method named EnvCpt that fits eight models with different combinations of a trend, changepoints (regime shifts) and red noise and then identifies the most appropriate one according to the Akaike information criterion.
+
+This approach throws a range of 12 possible trend and changepoint model structures at a dataset and can quickly visualize each. AIC/BIC are then used to evaluate support for the different changepoint structures.
+
+```{r}
+library(EnvCpt)
+
+# The envcpt function is the workhorse
+test_envcpt <- envcpt(tester$bottom_t, minseglen = 365*3)
+
+# Can plot the breaks found easily
+plot(test_envcpt)
+
+# Details on best
+pull_best <- function(x){
+    best <- names(which.min(AIC(x)))
+    best_summ <- x[[best]]
+    x$best_type <- best
+    x$best_summ <- best_summ
+    return(x)}
+
+
+```
+
+With this test timeseries the structure with most support is the "meanar2cpt", which is a mean changepoint structure with an Ar(2) structure:
+
+```{r}
+# Pull details on the winner (most parsimonious)
+best_cpt <- pull_best(test_envcpt)
+# best_cpt$best_type
+# best_cpt$best_summ
+# test_envcpt$trendar2cpt
+
+# Plot GOM, the only one with changepoints
+#str(best_cpt$best_summ) # structure
+#best_cpt$best_summ@cpts # changepoint locations
+
+ggplot(tester) +
+  geom_line(aes(time, bottom_t), linewidth = 0.5, color = "gray50") +
+  geom_vline(
+    data = data.frame(x = tester$time[best_cpt$best_summ@cpts]),
+    aes(xintercept = x), linetype = 1, linewidth = 1, color = "royalblue") +
+  theme_classic() +
+  labs(x = "time", y = "bottom temperature", title = best_cpt$best_type)
+```
+
+As with STARS it may be necessary to remove a trend prior to changepoint detection.
+
+Here is that same timeseries after detrending:
+
+```{r}
+
+```

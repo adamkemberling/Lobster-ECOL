@@ -36,3 +36,8 @@
 [Regional FVCOM & GLORYs Surface/Bottom Timeseries Comparison](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/FVCOM_regional_Temp_Exposure.html)
 
 [GLORYs Regional Temperatures](https://adamkemberling.github.io/Lobster-ECOL/R/GLORYs_prep/GLORYs_Temp_Exposure.html)
+
+
+# Regime Shift Evaluation
+
+[Regime Shift Common Methods](https://adamkemberling.github.io/Lobster-ECOL/R/regime_tests/regime_shift_methods.html)
