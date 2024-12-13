@@ -22,6 +22,8 @@ library(here)
 library(tidyverse)
 library(rshift)
 library(gmRi)
+library(mgcv)
+library(EnvCpt)
 
 # Make sure lag is done correctly
 conflicted::conflict_prefer("lag", "stats")
@@ -34,6 +36,8 @@ lob_ecol_path <- cs_path("mills", "Projects/Lobster ECOL")
 lobecol_fvcom <- read_csv(
   str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_temperatures_daily.csv")) %>% 
   mutate(depth_type = if_else(area_id %in% c("GOM_GBK", "SNE"), "offshore", "nearshore"))
+
+theme_set(theme_minimal())
 
 ```
 
@@ -153,7 +157,9 @@ The STARS method requires several arguments: `data` a dataframe containing a tim
 ```{r}
 
 # Test timeseries
-tester <- filter(lobecol_fvcom, area_id == "GOM_GBK")
+test_area <- "GOM_GBK"
+tester <- filter(lobecol_fvcom, area_id == test_area)
+
 
 # Regime Shift Test
 t1_regimes <- rshift::Rodionov(
@@ -181,7 +187,7 @@ Upon quick glance we may get the sense that there is something going on that is 
 
 # STARS v3.2+ Enhancments
 
-Since the initial paper, Rodionov added a number of anhancements to the approach which improve its ability to detect true shifts in the mean in the presence of outliers, autocorrelation (red-noise), and trends.
+Since the initial 2004 paper (and not included in rshift presently), Rodionov added a number of enhancements and recommendations to the approach which improve its ability to detect true shifts in the mean in the presence of outliers, autocorrelation (red-noise), and trends.
 
 
 ### Outlier Detection / Weighting
@@ -196,15 +202,15 @@ Where `anomaly` is the deviation from the expected mean value of the new regime 
 
 ### Red Noise Removal
 
-One pre-processing step done by Rodionov in newer STARS versions (the excel macro version) is an accountance of variability related to "red noise" processes, which can appear as regimes themselves and interfere with regime shift identification.
+One pre-processing / pre-whitening step done by Rodionov in newer STARS versions is accounting for variability related to "red noise" processes. These are sequential runs (autocorrelation) in the data which can appear as regimes themselves and interfere with regime shift identification.
 
 > Red noise is the same as a first-order autoregressive (AR1) stationary Gaussian process with a positive correlation at lag 1, also called the Markov process. If red noise or serial correlation is present in the time series, it is necessary to either adjust the significance level of the shifts by calculating the effective degrees of freedom, or use a so-called "prewhitening" procedure prior to application of a regime shift detection method. In any case, it requires an estimate of the AR1 autoregressive parameter, which is equal to the sample lag-1 autocorrelation coefficient (r1).
 
-What about prewhitening? Prewhitening describes aproaches used to remove "red-noise" from a time series before analysis. The methods evaluated in Stirnimann et al. 2019 that were added in the Rodionov 2006 study include:
+Prewhitening describes aproaches used to remove "red-noise" from a time series before analysis. There are three methods evaluated in Stirnimann et al. 2019 that were added in the Rodionov 2006 study include:
 
-Ordinary Least Squares (OLS)\
-Marriott-Pope and Kendall (MPK)\
-Inverse Proportionality with four corrections (IP4)
+ * Ordinary Least Squares (OLS)\
+ * Marriott-Pope and Kendall (MPK)\
+ * Inverse Proportionality with four corrections (IP4)
 
 A written description of the approach that Rodionov used/uses can be found here: https://www.beringclimate.noaa.gov/regimes/help3.html
 
@@ -230,12 +236,12 @@ tester %>%
   geom_line(aes(y = mpk, color = "Pre-Whitened Time Series"))
 
 
-# Test for Remaining Autocorrelation
-Box.test(prewhitened_series, lag = 10, type = "Ljung-Box")
-
-# Get the AR1 coefficient
-summary(fit)
-coef(fit)
+# # Test for Remaining Autocorrelation
+# Box.test(prewhitened_series, lag = 10, type = "Ljung-Box")
+# 
+# # Get the AR1 coefficient
+# summary(fit)
+# coef(fit)
 ```
 
 
@@ -243,118 +249,13 @@ This approach would need to be adjusted to faithfully follow the Rodionov 2006 m
 
 > The MPK and IP4 methods break the time series into subsamples, estimate bias corrected r1 for each subsample and then use the median value of all estimates. The suggested subsample size m is calculated as m = (l + 1)/3, where l is the cutoff length. It is recommended to experiment with different subsample sizes to see how it affects the r1 estimate.
 
-# Preprocessing Topics: Seasonality / Periodicity and Trends
-
-From Lund et al. 2023
-
->To account for correlation in an AMOC changepoint analysis, prewhitening first fits a pth-order autoregressive [AR(p)] model to the series (this assumes nonperi-
-odic data).
-
-
-> BEST PRACTICE 3
-Account for all potential features in the mean of a series. If in doubt, allow for a trend and/or seasonality and use the statistical methods to distinguish which features are present in the series.
-
-> As an aside, we comment that model fitting is not about maximizing or mini-
-mizing p values, but rather making sure that all relevant statistical features are accounted for in a parsimonious model
-
-> PITFALL 5: APPLYING MEAN SHIFT MCPT TECHNIQUES TO SERIES WITH TRENDS OR
-SEASONALITY WITHOUT ACCOUNTING FOR THESE FEATURES. Similar to AMOC techniques in pitfall 2, applying a MCPT technique that neglects trends and seasonality can result in spurious changepoint declarations. For example, an increasing long-term trend will likely be estimated as a series of change-points acting as an increasing stairway. 
-
-> In a multiple changepoint analysis of a daily series, methods may flag many spurious changepoints within a year in an attempt to track the seasonal mean cycle should it be ignored in the modeling cycle
-
-Based on reading the review paper. 
-
-If we wish to continue with STARS we should:
-
- 1. Deal with seasonality (subtract seasonal mean)
- 2. Deal with any long-term trend (remove trend)
- 3. Then-prewhiten to address AR()
- 4. Then run through rstars
- 
-If we want to use EnvCPT:
-
- 1. Deal with seasonality (subtract seasonal mean)
- 2. then run through envcpt
-
-### Removing a Trend
-
-
-### Modeling Seasonality
-
-> STARS works best when the time series contains no deterministic trend, such as the PDO series, from which the global warming trend is removed by design. However, assuming the AR1 autoregressive parameter is not changing over time, both MPK and IP4 procedures can accurately estimate it not only in the presence of regime shifts, but also in the presence of a weak-to-moderate trend. Subsequent prewhitening eliminates both the linear trend and red noise, without having a substantial impact on the magnitude of regime shifts (Rodionov, 2006).
-
-> In summary, if a trend and/or serial correlation are present in the time series, it is critically important to eliminate them using either MPK or IP4 prewhitening procedure, specifically designed to work with time series containing regime shifts. If a linear trend is strong, it is better to detrend the time series first to improve accuracy of estimation of the lag-1 autocorrelation coefficient.
-
-De-trending can be done quickly with `lm`
-
-```{r}
-
-# linear model with time
-tester_trend_mod <- lm(bottom_t ~ time, tester)
-
-# residuals are the detrended timeseries
-# we can re-add global mean if we want it in original units
-tester <- broom::augment(x = tester_trend_mod) %>% 
-  rename(trend_fit = .fitted,
-         trend_resid = .resid)
-
-# Plot detrended timeseries
-tester %>% 
-  ggplot(aes(time, trend_resid)) +
-  geom_line() +
-  labs(title = "Detrended Timeseries")
-
-
-# Next, prewhiten
-# Fit AR(1) Model
-ar_fit <- arima(ts(tester$trend_resid), order = c(1, 0, 0))
-
-# Extract Residuals
-tester$detrend_prewhitened <- as.numeric(residuals(ar_fit))
-
-# Plot the original and pre-whitened series
-tester %>% 
-  ggplot(aes(time)) +
-  geom_line(aes(y = bottom_t, color = "Original Time Series")) +
-  geom_line(aes(y = trend_resid, color = "Detrended Time Series")) +
-  geom_line(aes(y = detrend_prewhitened, color = "Detrended + Pre-Whitened")) +
-  labs(title = "Detrending + Prewhitening of Bottom Temperature")
-
-```
-
-We can then re-run STARS and see if the shifts we were seeing before have changed. They have not really, which could point to a variance shift issue.
-
-```{r}
-# Regime Shift Test on prewhitened timeseries
-detrend_regimes <- rshift::Rodionov(
-  data = tester,
-  col = "detrend_prewhitened", 
-  time = "time", 
-  l = 365*5, 
-  prob = 0.05, 
-  startrow = 1, 
-  merge = T )
-
-# # Plot 
-# ggplot(t1_regimes) +
-#   geom_line(aes(time, RSI))
-
-# Plot the RSI
-RSI_graph(
-  data = detrend_regimes, 
-  col =  "detrend_prewhitened", 
-  time =  "time", 
-  rsi =  "RSI", 
-  mean_lines = TRUE)
-
-```
+Thankfully, code from the Stirnimann paper is available which implements the other methods.
 
 
 
+# {rstars} Implementation
 
-# rstars Implementation
-
-We can try the more detailed approach using the {rstars} implementation by sourcing the repo functions which have been downloaded locally:
+We can try the more detailed approach using the [{rstars}](https://github.com/LStirnimann/rstars) implementation by sourcing the repo functions which have been downloaded locally:
 
 This repository was made by Luca Stirnimann for their 2019 publication.
 
@@ -383,7 +284,7 @@ test_rstars <- rstars(
   l.cutoff = 365*7, 
   pValue = 0.05, 
   Huber = 1, 
-  Endfunction = T,
+  Endfunction = T,  # Some behavior at the end of the timeseries
   preWhitening = T, # Apply prewhitening T/F
   OLS = F,          # OLSprewhitening method T/F
   MPK = T,          # Marriott-Pope + Kennedy prewhitening method T/F
@@ -403,14 +304,22 @@ test_rstars <- rstars(
 # Results now look like this:
 ggplot(test_rstars) +
   geom_line(aes(time, bottom_t), linewidth = 0.5, alpha = 0.5) +
-  geom_line(aes(time, regime_mu), linewidth = 1)
+  geom_line(aes(time, regime_mu), linewidth = 1) +
+  geom_vline(data = filter(test_rstars, RSI != 0),
+             aes(xintercept = time), color = "red", linewidth = 1) +
+  labs(x = "", y = "Bottom Temp")
 
 # Results now look like this on anomaly scales:
 ggplot(test_rstars) +
   geom_line(aes(time, bottom_t_pw), linewidth = 0.5, alpha = 0.5) +
   geom_line(aes(time, regime_mu_pw), linewidth = 1) +
-  scale_y_continuous(limits = c(-0.35, 0.35))
+  geom_vline(data = filter(test_rstars, RSI != 0),
+             aes(xintercept = time), color = "red", linewidth = 1) +
+  scale_y_continuous(limits = c(-0.35, 0.35))  +
+  labs(x = "", y = "Prewhitened Temperature")
 ```
+
+Running the code from this repository on the same daily bottom temperature series yields the above results.
 
 
 Everything is done with a single function, and so its possible (once the pre-processing has been done) to run each timeseries of interest using map/lapply/etc.
@@ -454,33 +363,191 @@ bot_temp_shifts <- read_csv(here::here("rstars_results/lobecol_shifts.csv"))
 
 # Plot the RSI
 bot_temp_shifts %>% 
-  # mutate(RSI = if_else(RSI == 0, NA, RSI)) %>% 
-  ggplot() +
+ ggplot() +
   geom_line(aes(time, RSI), linewidth = 0.5, alpha = 0.5) +
-  geom_hline(yintercept = 0, color = "gray") +
+  geom_hline(yintercept = 0) +
   facet_grid() +
   labs(
     x = "Time",
-    #y = "RSI",
+    y = "RSI",
     title = "")
 
 ```
 
+
+
+## Preprocessing Topics: 
+
+
+It is strongly recommended by a number of publications to apply a number of preprocessing steps when performing a changepoint/breakpoint or mean-shift tests. These preprocessing steps increase the likelihood that detected events are true abrupt shifts in the data, and not other common processes. They also point out that prewhitening alone does not resolve sytemic processes in the data which can present
+
+
+From Lund et al. 2023
+
+>To account for correlation in an AMOC changepoint analysis, prewhitening first fits a pth-order autoregressive [AR(p)] model to the series (this assumes nonperiodic data).
+
+
+In their review paper they also note a number of best practices and pitfalls (some below, not exhaustive).
+
+> BEST PRACTICE 3
+Account for all potential features in the mean of a series. If in doubt, allow for a trend and/or seasonality and use the statistical methods to distinguish which features are present in the series.
+
+> As an aside, we comment that model fitting is not about maximizing or mini-
+mizing p values, but rather making sure that all relevant statistical features are accounted for in a parsimonious model
+
+> PITFALL 5: APPLYING MEAN SHIFT MCPT TECHNIQUES TO SERIES WITH TRENDS OR
+SEASONALITY WITHOUT ACCOUNTING FOR THESE FEATURES. Similar to AMOC techniques in pitfall 2, applying a MCPT technique that neglects trends and seasonality can result in spurious changepoint declarations. For example, an increasing long-term trend will likely be estimated as a series of change-points acting as an increasing stairway. 
+
+> In a multiple changepoint analysis of a daily series, methods may flag many spurious changepoints within a year in an attempt to track the seasonal mean cycle should it be ignored in the modeling cycle
+
+Based on reading the review paper. 
+
+If we wish to continue with STARS we should:
+
+ 1. Deal with seasonality (subtract seasonal mean)
+ 2. Deal with any long-term trend (remove trend)
+ 3. Then-prewhiten to address AR()
+ 4. Then run through rstars
+ 
+If we want to use EnvCPT:
+
+ 1. Deal with seasonality (subtract seasonal mean)
+ 2. then run through envcpt
+
+### Removing Trend & Seasonality
+
+
+> STARS works best when the time series contains no deterministic trend, such as the PDO series, from which the global warming trend is removed by design. However, assuming the AR1 autoregressive parameter is not changing over time, both MPK and IP4 procedures can accurately estimate it not only in the presence of regime shifts, but also in the presence of a weak-to-moderate trend. Subsequent prewhitening eliminates both the linear trend and red noise, without having a substantial impact on the magnitude of regime shifts (Rodionov, 2006).
+
+> In summary, if a trend and/or serial correlation are present in the time series, it is critically important to eliminate them using either MPK or IP4 prewhitening procedure, specifically designed to work with time series containing regime shifts. If a linear trend is strong, it is better to detrend the time series first to improve accuracy of estimation of the lag-1 autocorrelation coefficient.
+
+De-trending can be done quickly with `lm`
 
 ```{r}
-#| eval: false
 
-bot_temp_shifts %>% 
-  ggplot() +
-  #geom_line(aes(time, bottom_t_pw, color = area_id), alpha = 0.1, linewidth = 0.2) +
-  geom_line(aes(time, regime_mu_pw, color = area_id), linewidth = 0.35) +
-  geom_hline(yintercept = 0, color = "gray") +
-  facet_grid() +
-  labs(
-    x = "Time",
-    y = "Prewhitened Regime Means",
-    title = "")
+# linear model with time
+tester_trend_mod <- lm(bottom_t ~ time, tester)
+
+# residuals are the detrended timeseries
+# we can re-add global mean if we want it in original units
+tester <- broom::augment(x = tester_trend_mod) %>% 
+  rename(trend_fit = .fitted,
+         trend_resid = .resid)
+
+# # Plot detrended timeseries
+# tester %>% 
+#   ggplot(aes(time, trend_resid)) +
+#   geom_line() +
+#   labs(title = "Detrended Timeseries")
+
+
+# Next, prewhitening
+# Fit AR(1) Model
+ar_fit <- arima(ts(tester$trend_resid), order = c(1, 0, 0))
+
+# Extract Residuals
+tester$detrend_prewhitened <- as.numeric(residuals(ar_fit))
+
+# Plot the original and pre-whitened series
+tester %>% 
+  ggplot(aes(time)) +
+  geom_line(aes(y = bottom_t, color = "Original Time Series")) +
+  geom_line(aes(y = trend_resid, color = "Detrended Time Series")) +
+  geom_line(aes(y = detrend_prewhitened, color = "Detrended & Pre-Whitened")) +
+  labs(title = "Linear Detrending + Prewhitening of Bottom Temperature")
+
 ```
+
+To remove a seasonal trend as well, we can use a number of methods, but using a GAM we could do the trend and seasonality in one step:
+
+```{r}
+# Load GAM library
+library(mgcv)
+
+# Make a day of year value to cycle over
+tester <- tester %>% mutate(yday = lubridate::yday(time))
+
+# Model a linear trend and the seasonal cycle
+seasonal_gam <- gam(
+  bottom_t ~ s(yday, bs = "cc") + time, 
+  data = tester,
+  method = "REML")
+
+# Add the predictions and residuals
+tester <- broom::augment(x = seasonal_gam) %>% 
+  rename(seasonal_fit = .fitted,
+         seasonal_resid = .resid)
+
+# Plot the fit of that process
+tester %>% 
+  ggplot(aes(x = time)) +
+  geom_line(aes(y = bottom_t, color = "Original Timeseries"), alpha = 0.75, linewidth = 1) +
+  geom_line(aes(y = seasonal_fit, color = "Seasonal Cycle + Trend"), alpha = 0.75, linewidth = 0.5) +
+  labs(color = "Data")
+```
+
+The last step is to remove autocorrelation:
+
+```{r}
+# Next, prewhitening
+# Fit AR(1) Model
+season_ar_fit <- arima(ts(tester$seasonal_resid), order = c(1, 0, 0))
+
+# Extract Residuals
+tester$season_detrend_prewhitened <- as.numeric(residuals(season_ar_fit))
+
+# Make the Detrended Dataset
+tester %>% 
+  ggplot(aes(x = time)) +
+  geom_line(aes(y = bottom_t, color = "Original Timeseries"), alpha = 0.75, linewidth = 1) +
+  geom_line(aes(y = seasonal_fit, color = "Seasonal Cycle + Trend"), alpha = 0.75, linewidth = 0.5) +
+  geom_line(aes(y = seasonal_resid,  color = "Detrend: Seasonal Cycle + Trend"), alpha = 0.75, linewidth = 1) +
+  geom_line(aes(y = season_detrend_prewhitened,  color = "Seasonality + Trend Removed + PW"), alpha = 0.75, linewidth = 0.5) +
+  labs(title = "Full Prep: Remove Seasonality + Trend, Pre-whiten")
+```
+
+If we pass this new pre-procesed timeseries into the rstars function we can get the following new changepoints:
+
+```{r}
+
+# Need it to be a dataframe not a tibble for indexing to work
+preprocess_df <- as.data.frame(tester[,c("time", "season_detrend_prewhitened")])
+
+# Run it without prewhitening
+# Or do the prewhitening on the detrended data?
+preprocess_rstars <- rstars(
+  data.timeseries = preprocess_df, 
+  l.cutoff = 365*7, 
+  pValue = 0.05, 
+  Huber = 1, 
+  Endfunction = T,  # Some behavior at the end of the timeseries
+  preWhitening = F, # Apply prewhitening T/F
+  OLS = F,          # OLSprewhitening method T/F
+  MPK = F,          # Marriott-Pope + Kennedy prewhitening method T/F
+  IP4 = F,          # IP4 prewhitening method T/F
+  SubsampleSize = (365*7 + 1)/3, # subsampling rate for hubers + prewhitening
+  returnResults = T # Return the results as a dataframe
+  )  
+  
+
+
+# Results now look like this:
+
+ggplot(preprocess_rstars) +
+  geom_line(aes(time, season_detrend_prewhitened), 
+            linewidth = 0.5, alpha = 0.5) +
+  geom_line(aes(time, regime_mu), linewidth = 1) +
+  geom_vline(
+    data = filter(preprocess_rstars, RSI != 0),
+    aes(xintercept = time), color = "red", linewidth = 1) +
+  scale_y_continuous(limits = c(-0.35, 0.35)) +
+  labs(x = "", 
+       y = "Detrended Bottom Temp Anomaly",
+       title = "STARS Results - After full pre-processing steps",
+       subtitle = test_area)
+
+```
+
 
 
 
@@ -495,10 +562,10 @@ This is Rodionov's rundown of their methods:
 This approach throws a range of 12 possible trend and changepoint model structures at a dataset and can quickly visualize each. AIC/BIC are then used to evaluate support for the different changepoint structures.
 
 ```{r}
-library(EnvCpt)
+
 
 # The envcpt function is the workhorse
-test_envcpt <- envcpt(tester$bottom_t, minseglen = 365*3)
+test_envcpt <- envcpt(tester$bottom_t, minseglen = 365*7)
 
 # Can plot the breaks found easily
 plot(test_envcpt)
@@ -538,8 +605,29 @@ ggplot(tester) +
 
 As with STARS it may be necessary to remove a trend prior to changepoint detection.
 
-Here is that same timeseries after detrending:
+Here are the results when done on the pre-processed timeseries from above:
 
 ```{r}
+
+# The envcpt function is the workhorse
+preprocess_envcpt <- envcpt(
+  preprocess_df$season_detrend_prewhitened, 
+  minseglen = 365*7)
+
+# Can plot the breaks found easily
+plot(preprocess_envcpt)
+
+# Pull details on the winner (most parsimonious)
+best_cpt <- pull_best(preprocess_envcpt)
+
+#
+ggplot(preprocess_df) +
+  geom_line(aes(time, season_detrend_prewhitened), 
+            linewidth = 0.5, color = "gray50") +
+  geom_vline(
+    data = data.frame(x = tester$time[best_cpt$best_summ@cpts]),
+    aes(xintercept = x), linetype = 1, linewidth = 1, color = "royalblue") +
+  theme_classic() +
+  labs(x = "time", y = "bottom temperature", title = best_cpt$best_type)
 
 ```
