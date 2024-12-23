@@ -125,6 +125,7 @@ trawl_locations <- trawl_dat %>%
 # # Path(s) to state trawl survey data
 asmfc_path <- cs_path("mills", "Projects/Lobster/Trawl_fromASMFC")
 # 
+
 # # load the different state survey datasets - ASMFC editions
 # load(str_c(asmfc_path, "MassDMF_Lobster_StationsNLengths_1979_2023_230718.Rdata"))
 # load(str_c(asmfc_path, "MENH Trawl.Rdata"))
@@ -132,22 +133,29 @@ load(str_c(asmfc_path, "RI_LOBSTER_TRAWL_012324.Rdata"))
 ri_trawl <- RI_Stations %>% 
   distinct(TrawlIdentity, Season, TowNumb, StratumCode, Year, Month, Day, LAT, LON)
 
+
 # Maine NH Trawl Survey
 menh_path <- cs_path("res", "Maine_NH_Trawl/data_2024")
 menh_trawl <- read_csv(str_c(menh_path, "MaineDMR_Trawl_Survey_Tow_Data_2024-05-17.csv")) 
 
+
+
 # Mass Trawl
-mass_path <- cs_path("res", "MA_Trawl/Pull_20240716/Manipulated")
+mass_path  <- cs_path("res", "MA_Trawl/Pull_20240716/Manipulated")
 mass_trawl <- read_csv(str_c(mass_path, "MADMF_SVSTA_SW_2024.csv"))
 
-# Set up dates for later
+
+# Set up dates for matching with later
 menh_trawl <- mutate(menh_trawl, date = as.Date(Start_Date))
 mass_trawl <- mass_trawl %>% 
   mutate(date = as.Date(
-    str_c(Year, 
-          str_pad(Month, side = "left", pad = "0", width = 2), 
-          str_pad(Day, side = "left", pad = "0", width = 2),
-          sep = "-")))
+    str_c(
+      Year, 
+      str_pad(Month, side = "left", pad = "0", width = 2), 
+      str_pad(Day, side = "left", pad = "0", width = 2),
+      sep = "-")))
+
+# do it for RI survey too
 ri_trawl <- ri_trawl %>% 
   mutate(date = as.Date(
     str_c(Year, 
@@ -859,23 +867,51 @@ ggplot() +
 
 ## Export
 
+```{r}
+# Join them back to their original information for matching, tidy it up
+# don't need pt and element index numbers or geometries
+# save to box folder
+
+names(trawl_fvcom_temps)
+names(vts_fvcom_temps)
+names(menh_fvcom_temps)
+names(mass_fvcom_temps)
+names(ri_fvcom_temps)
+
+
+remove_fvcom_meta <- function(df){
+  df %>% 
+    select(-c(p1, p2, p3, p1_wt, p2_wt, p3_wt, fv_file, time_idx, elem)) %>% 
+    rename(
+      fvcom_surf_temp_c = surf_temp_c, 
+      fvcom_bot_temp_c = bot_temp_c)
+}
+
+remove_fvcom_meta(trawl_fvcom_temps)
+```
+
+
 
 ```{r}
 # # # Save VTS Bottom temperatures
-# write_csv(
-#   x = trawl_fvcom_temps, 
-#   file = here::here("data/point_location_temperatures", "NEFSCtrawl_location_fvcom_temps.csv"))
-# write_csv(
-#   x = vts_fvcom_temps, 
-#   file = here::here("data/point_location_temperatures", "VTS_location_fvcom_temps.csv"))
-# write_csv(
-#   x = menh_fvcom_temps, 
-#   file = here::here("data/point_location_temperatures", "MENH_trawl_fvcom_temps.csv"))
-# write_csv(
-#   x = mass_fvcom_temps, 
-#   file = here::here("data/point_location_temperatures", "MA_trawl_fvcom_temps.csv"))
-# write_csv(
-#   x = ri_fvcom_temps, 
-#   file = here::here("data/point_location_temperatures", "RI_trawl_fvcom_temps.csv"))
+
+# save to project path
+fvcom_processed_path <- cs_path("mills", "Projects/Lobster ECOL/FVCOM_processed/point_location_temperatures")
+
+write_csv(
+  x = remove_fvcom_meta(trawl_fvcom_temps),
+  file = str_c(fvcom_processed_path, "NEFSCtrawl_location_fvcom_temps.csv"))
+write_csv(
+  x = remove_fvcom_meta(vts_fvcom_temps),
+  file = str_c(fvcom_processed_path, "VTS_location_fvcom_temps.csv"))
+write_csv(
+  x = remove_fvcom_meta(menh_fvcom_temps),
+  file = str_c(fvcom_processed_path, "MENH_trawl_fvcom_temps.csv"))
+write_csv(
+  x = remove_fvcom_meta(mass_fvcom_temps),
+  file = str_c(fvcom_processed_path, "MA_trawl_fvcom_temps.csv"))
+write_csv(
+  x = remove_fvcom_meta(ri_fvcom_temps),
+  file = str_c(fvcom_processed_path, "RI_trawl_fvcom_temps.csv"))
 ```
 

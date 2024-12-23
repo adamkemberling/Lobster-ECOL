@@ -93,7 +93,6 @@ Regions of interest are looking at temperature dynamics over three regions of in
  3. Gulf of Maine
 
 
-
 ```{r}
 # Name and load the areas:
 area_paths <- list.files(poly_paths, full.names = T, pattern = ".shp", recursive = T)
@@ -211,7 +210,6 @@ lob_areas_trans <- map(
   lob_areas_filled, 
   ~st_transform(.x, crs = 6318) %>% st_make_valid())
 
-lob_areas_trans$`inshore SNE/OceanProductPoly_SNEinshore`
 
 
 # Map what is going on in the next steps
@@ -222,17 +220,36 @@ crop_t <- st_intersection(
 
 
 # Map what is happening:
+
 ggplot() +
+  geom_sf(data = new_england) +
   geom_sf(data = crop_t, aes(color = "FVCOM Mesh"), 
           alpha = 0.5) +
   geom_sf(data = lob_areas_trans$`inshore SNE/OceanProductPoly_SNEinshore`, 
           aes(color = "511 - Eastern Maine"), linewidth = 0.8,
           alpha = 0.5, fill = "transparent") +
+  # highlight one node:
+  geom_sf(data = crop_t[20,], color = "black", fill = "orange") +
+  geom_segment(
+    data = data.frame(
+      x = -74, xend = -73, y = 39, yend = 39),
+    aes(x, y, xend = xend, yend = yend)) +
+  geom_text(
+    data = data.frame(
+      x = -72.25, y = 39,
+      label = str_c("FVCOM Element: ", st_drop_geometry(crop_t[20,"elem"]))),
+    aes(x, y, label = label)) +
   scale_color_gmri() +
+  map_theme() +
+  # coord_sf(xlim = c(-74.4, -70), ylim = c(38.8, 41.75)) +
+  coord_sf(xlim = c(-71.5, -70.6), ylim = c(41.8, 41)) +
   labs(
     title = "Assigning node/elements and area-weights to regions",
     subtitle = "st_intersection(mesh, area_poly)",
        color = "Geometry Source")
+
+
+#
 ```
 
 
@@ -667,12 +684,15 @@ ggplot() +
 
 
 # Use crop to count the points within each one
+# Or use intersection?
 area_points <- map_dfr(
   .x = lob_areas_trans, 
   .f = possibly(function(strata_x){
-  n_nodes <- st_crop(x = gom3_mesh_nodes, y = strata_x) %>% 
+  n_nodes <- st_intersection(x = gom3_mesh_nodes, y = strata_x) %>% 
+  #n_nodes <- st_crop(x = gom3_mesh_nodes, y = strata_x) %>% 
       nrow()
-  n_centers <- st_crop(x = gom3_mesh_elems, y = strata_x) %>% 
+  n_centers <- st_intersection(x = gom3_mesh_elems, y = strata_x) %>% 
+  #n_centers <- st_crop(x = gom3_mesh_elems, y = strata_x) %>% 
       nrow()
   tibble(
     "n_nodes" = n_nodes,
@@ -706,7 +726,9 @@ bind_rows(lob_areas_trans, .id = "area_id") %>%
   left_join(area_resolution_data) %>% 
   mutate(avg_area_km2 = as.numeric(avg_area_km2)) %>% 
   ggplot() +
-  geom_sf(data = gom3_mesh_inside, color = "gray60", alpha = 0.2, linewidth = 0.1) +
+  geom_sf(
+    data = gom3_mesh_inside, 
+    color = "gray60", alpha = 0.2, linewidth = 0.1) +
   geom_sf(aes(fill = avg_area_km2), alpha = 0.3) +
   scale_fill_distiller(palette = "RdYlGn")
 
@@ -736,5 +758,125 @@ These tests determine the following:\
 regional_temperatures <- read_csv(
   str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/jkipp_regions_fvcom_temperatures_daily.csv"))
 
+```
+
+---
+
+# Prepare Gulf of Maine Area for Jeff
+
+Jeff would like the daily data for August-December for the Gulf of Maine, but at the daily resolution.
+
+It may make sense to send it to him as triangle averages, using their ID's, and a separate .geojson or .shp file that has the triangles themselves.
+
+
+
+### GOM Bottom Temperature Processing
+
+
+```{r}
+# We can see all the triangles that are at play this way
+regional_assignments %>% filter(area_id == "GOM/OceanProductPoly_GOM") %>% distinct(elem)
+
+
+```
+
+
+```{r}
+#| label: process bottom temperatures
+#| eval: false
+
+
+# Process Surface Temperature for all the regions:
+fvcom_var_name <- "bottom_t"
+
+
+
+# Time it
+Sys.time()
+all_element_bottom_temp <- fvcom_surfbot_files %>% 
+  map_dfr(
+    .x = ., 
+    function(nc_x){
+  
+  # 1. Open the netcdf:
+  yr_x_fvcom <- nc_open(nc_x)
+  
+  # 2. Get the average values for the triangles
+  # Run that for each of the years once
+  triangle_avgs <- regional_from_nodes(
+    fvcom_mesh_trios = regional_assignments %>% 
+      filter(area_id == "GOM/OceanProductPoly_GOM"), 
+    nc = yr_x_fvcom, 
+    nc_varname = fvcom_var_name)
+  
+  # Get the time dimension
+  fv_dates <- data.frame(
+    "time" = ncvar_get(yr_x_fvcom, "Times"))
+  
+  # Bind and filter the dates
+  triangle_avgs <- bind_cols(fv_dates, triangle_avgs) %>% 
+    filter(month(time) >= 8)
+  
+  # Close the netcdf connection
+  nc_close(yr_x_fvcom)
+  
+  # Return the regional averages
+  return(triangle_avgs)
+  
+})
+
+# time completion
+Sys.time()
+```
+
+
+```{r}
+# Plot a day
+day_test <- "2010-12-25"
+all_element_bottom_temp %>% #dim()
+  mutate(time = as.Date(time)) %>% 
+  filter(time == day_test) %>% 
+  pivot_longer(cols = -time, names_to = "elem", values_to = "bottom_t") %>% 
+  mutate(bottom_t = as.numeric(bottom_t)) %>% 
+  left_join(mutate(gom3_mesh, elem = as.character(elem))) %>% 
+  st_as_sf() %>% 
+  ggplot() +
+  geom_sf(aes(fill = bottom_t), color = "transparent") +
+  scale_fill_distiller(
+    palette = "RdBu"#,
+    #limits = c(0, 20)
+    ) +
+  theme_dark() +
+  labs(title = str_c("FVCOM Daily Bottom Temperature:"),
+       subtitle = str_c("Date: ", day_test))
+```
+
+
+```{r}
+#| eval: false
+# Save the pieces
+
+# This is the bottom temperature for those periods for that area
+jkipp_gom_bt <- all_element_bottom_temp %>% #dim()
+  mutate(time = as.Date(time)) %>% 
+  pivot_longer(
+    cols = -time, 
+    names_to = "elem", 
+    values_to = "bottom_t") %>% 
+  mutate(elem = as.character(elem),
+         bottom_t = as.numeric(bottom_t))
+
+# # This is the daily bottom temperature that Jeff wanted
+# write_csv(
+#   jkipp_gom_bt,
+#   here::here("local_data/dailyfvcomBT_OceanProductPoly_GOM_AugDec.csv")
+# )
+# 
+# 
+# # this is the shapefile information
+# sf::write_sf(gom3_mesh, here::here("local_data/FVCOM_gom3_mesh.geojson"))
+
+# mesh_test <- st_read(here::here("local_data/FVCOM_gom3_mesh.geojson"))
+# ggplot(mesh_test) +geom_sf()
 ```
 

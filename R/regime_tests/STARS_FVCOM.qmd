@@ -1,0 +1,466 @@
+---
+title: "RSTARS FVCOM"
+description: | 
+  Detailing common methods and preprocessing steps for regime shift detection methods
+date: "Updated on: `r Sys.Date()`"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    df-print: kable
+    self-contained: true
+execute: 
+  echo: true
+  warning: false
+  message: false
+  fig.align: "center"
+  comment: ""
+---
+
+```{r}
+library(here)
+library(tidyverse)
+library(rshift)
+library(gmRi)
+library(mgcv)
+library(EnvCpt)
+library(showtext)
+
+# Make sure lag is done correctly
+conflicted::conflict_prefer("lag", "stats")
+conflicted::conflict_prefer("filter", "dplyr")
+
+# Path to timeseries
+lob_ecol_path <- cs_path("mills", "Projects/Lobster ECOL")
+
+# Load and add inshore/offshore labels on the daily data
+lobecol_fvcom <- read_csv(
+  str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_temperatures_daily.csv")) %>% 
+  mutate(depth_type = if_else(area_id %in% c("GOM_GBK", "SNE"), "offshore", "nearshore"))
+
+theme_set(theme_minimal())
+
+```
+
+
+```{r}
+#| label: style-sheet
+#| results: asis
+
+# Use GMRI style for fonts
+use_gmri_style_rmd()
+
+```
+
+
+```{r}
+#| label: fonts-config
+#| echo: false
+
+# Path to the directory containing the font file (replace with your actual path)
+font_dir <- paste0(system.file("stylesheets", package = "gmRi"), "/GMRI_fonts/Avenir/")
+
+# Register the font
+font_add(
+  family = "Avenir",
+  file.path(font_dir, "LTe50342.ttf"),
+  bold = file.path(font_dir, "LTe50340.ttf"),
+  italic = file.path(font_dir, "LTe50343.ttf"),
+  bolditalic = file.path(font_dir, "LTe50347.ttf"))
+
+# Load the font
+showtext::showtext_auto()
+
+```
+
+
+# STARS Regime Shifts - LobECOL Areas
+
+# {rstars} Implementation
+
+The following results extend the detailed approach of Stirnimann et al. 2019's [{rstars}](https://github.com/LStirnimann/rstars) repository.
+
+
+```{r}
+# Stirnimann used these values in their paper:
+# l = 5,10,15,17.5 years, with monthly data
+# Huber = 1
+# Subsampling = (l + 1)/3
+
+
+# Load the function(s)
+source(here::here("rstars-master","rSTARS.R"))
+
+```
+
+# Data Pre-Processing
+
+
+For our results we've expanded on their approach with two additional pre-procesing steps recommended by Rodionov (pretty sure) & in the recent review by Lund et al. 2023's.
+
+These two additional steps include removing the seasonal cycle using a GAM and a cyclic cubic regression spline to model the seasonal cycle. 
+
+The other additional pre-processing step is the removal of the long-term trend. To illustrate these pre-processing steps, a daily bottome temperature timeseries for `Long Island Sound` will be used below:
+
+```{r}
+# Test timeseries
+test_area <- "Long Island Sound"
+tester <- filter(lobecol_fvcom, area_id == test_area)
+
+# Plot Surface and Bottom
+
+ggplot(tester, aes(time)) +
+  geom_line(aes(y = surface_t, color = "Surface Temperature"), alpha = 0.8) +
+  geom_line(aes(y = bottom_t, color = "Bottom Temperature"), alpha = 0.8) + 
+  scale_color_gmri() +
+  labs(y = "Temperature", title = "Long Island Sound FVCOM Temperatures")
+
+```
+
+
+### Removing The Seasonal Cycle
+
+As expected, ocean temperatures in Long Island Sound follow a prnonounced seasonal cycle. We can model this periodicity to get a sense of the average temperature based on the day of the year.
+
+
+```{r}
+# Make a day of year value to cycle over
+tester <- tester %>% mutate(yday = lubridate::yday(time))
+
+# Model a linear trend and the seasonal cycle
+season_only_gam <- gam(
+  bottom_t ~ s(yday, bs = "cc"), 
+  data = tester,
+  method = "REML")
+
+# Add the predictions and residuals
+season_test <- broom::augment(x = season_only_gam) %>% 
+  rename(seasonal_fit = .fitted,
+         seasonal_resid = .resid) %>% 
+  distinct(yday, seasonal_fit)
+```
+
+Seasonal temperatures are at their lowest during February-March, and they peak during July-August. Each individual year will vary, but the seasonal period is quite consistent.
+
+```{r}
+# Plot what that looke like on an annual time scale
+ggplot(tester, aes(x = yday)) +
+  geom_line(
+    aes(y = bottom_t, color = "Single Year Series", group = year(time)), 
+    linewidth = 0.5, alpha = 0.75) +
+  geom_line(
+    data = season_test,
+    aes(y = seasonal_fit, color = "Mean Seasonal Cycle"), 
+    alpha = 0.75, linewidth = 2) +
+  scale_color_grey() +
+  labs(color = "Data",
+       y = "Bottom Temperature",
+       x = "Day of Year",
+       title = "Long Island Sound Seasonality")
+```
+
+
+```{r}
+# # Plot them both?
+# tester %>% 
+#   left_join(season_test, by = join_by("yday")) %>% 
+#   ggplot(aes(x = time)) +
+#   geom_line(aes(y = bottom_t, color = "Daily Temperatures"), alpha = 0.5, linewidth = 1) +
+#   geom_line(aes(y = seasonal_fit, color = "Seasonal Means"), alpha = 0.5, linewidth = 0.5) +
+#   scale_color_gmri() +
+#   labs(y = "Bottom Temperature", color = "Data")
+
+
+tester %>%
+  left_join(season_test, by = join_by("yday")) %>% 
+  mutate(seasonal_resid = bottom_t - seasonal_fit)  %>% 
+  ggplot(aes(time, seasonal_resid)) +
+  geom_line( alpha = 0.75) +
+  geom_hline(yintercept = 0, aes(color = "Seasonal Mean Temeprature"), linewidth = 2, alpha = 0.75) +
+  labs(y = "Seasonal Temperature Anomaly",
+       title = "Removal of Seasonal Period")
+
+```
+
+
+
+### Long-term Trend Removal
+
+The RSTARS approach is a sequential evaluation of whether new data falls within a probable range of values based on the mean/variance of data from some starting "regime". For cases when there exists is a long-term trend, this approach can sometimes treat a gradual transition as regime shift, which we also don't want.
+
+De-trending can be done quickly with `lm`
+
+```{r}
+
+# linear model with time
+tester_trend_mod <- lm(bottom_t ~ time, tester)
+
+# residuals are the detrended timeseries
+# we can re-add global mean if we want it in original units
+trend_tester <- broom::augment(x = tester_trend_mod) %>% 
+  rename(trend_fit = .fitted,
+         trend_resid = .resid)
+
+# Plot detrended timeseries
+trend_tester %>%
+  ggplot() +
+  geom_line(aes(time, bottom_t, color = "Bottom Temperature")) +
+  geom_line(aes(time, trend_resid + coef(tester_trend_mod)[[1]], color = "Trend-Removed")) +
+  #geom_line(aes(time, trend_resid, color = "Trend Residuals")) +
+  labs(title = "Detrended Timeseries")
+
+
+```
+
+
+## Trend and Seasonality Removed
+
+We can easily implement the linear long-term trend and the seasonal periodicity using the GAM framework. Residuals from this model are what we will pass along to the RSTARS package with the recommended prewhitening routines applied.
+
+```{r}
+# Model a linear trend and the seasonal cycle
+season_trend_gam <- gam(
+  bottom_t ~ s(yday, bs = "cc") + time, 
+  data = tester,
+  method = "REML")
+
+# save the results
+season_trend_results <- broom::augment(x = season_trend_gam) %>% 
+  rename(seasonal_fit = .fitted,
+         seasonal_resid = .resid) 
+```
+
+This is what that seasonal cycle looks like with the long-term trend compared to 
+
+```{r}
+# Plot the fit of that process
+season_trend_results %>% 
+  ggplot(aes(x = time)) +
+  geom_line(aes(y = bottom_t, color = "Original Timeseries"), alpha = 0.75, linewidth = 1) +
+  geom_line(aes(y = seasonal_fit, color = "Seasonal Cycle + Trend"), alpha = 0.75, linewidth = 0.5) +
+  labs(color = "Data")
+```
+
+And this is the timeseries that would go into rstars for regime shift detection:
+
+```{r}
+season_trend_results %>% 
+  ggplot(aes(x = time)) +
+  geom_line(aes(y = seasonal_resid), alpha = 0.7) +
+  labs(color = "Data", y = "Temperature Anomaly", title =  "Long Island Sound - RSTARS Ready")
+```
+
+### Running STARS
+
+The last step is to run it through the RSTARS algorithm and specify a few more arguments for how to treat the timeseries.
+
+We need to set arguments for regime length, outlier weighting, and for our regime probability cutoff. There are also options for prewhitening methods which help address autocorrelation in the timeseries.
+
+
+
+```{r}
+# Run it with
+
+# Stirnimann used these values in their paper:
+# l = 5,10,15,17.5 years, with monthly data
+# Huber = 1
+# Subsampling = (l + 1)/3
+
+# He also recommended using prewhitening, and recommended MPK and IP4
+
+# Or do the prewhitening on the detrended data?
+lis_rstars <- rstars(
+  data.timeseries = as.data.frame(season_trend_results[,c("time", "seasonal_resid")]), 
+  l.cutoff = 365*7, 
+  pValue = 0.05, 
+  Huber = 1, 
+  Endfunction = T,    # Some behavior at the end of the timeseries
+  preWhitening = T,   # Apply prewhitening T/F
+  OLS = F,            # OLSprewhitening method T/F
+  MPK = T,            # Marriott-Pope + Kennedy prewhitening method T/F
+  IP4 = F,            # IP4 prewhitening method T/F
+  SubsampleSize = (365*7 + 1) / 3, # subsampling rate for hubers + prewhitening
+  returnResults = T) # Return the results as a dataframe
+
+  
+
+
+# Results now look like this:
+ggplot(lis_rstars) +
+  geom_line(
+    aes(time, seasonal_resid), 
+    linewidth = 0.5, alpha = 0.5) +
+  geom_line(aes(time, regime_mu), linewidth = 1) +
+  geom_vline(
+    data = filter(lis_rstars, RSI != 0),
+    aes(xintercept = time), color = "red", linewidth = 1) +
+  scale_y_continuous(limits = c(-0.35, 0.35)) +
+  labs(x = "", 
+       y = "Detrended Bottom Temp Anomaly",
+       title = "STARS Results - After full pre-processing steps",
+       subtitle = test_area)
+```
+
+
+
+## Running Each
+
+If we apply the above steps to each timeseries we can return the following results:
+
+```{r}
+#| eval: false
+#| label: bottom temperature processing
+
+# Run them all
+bot_temp_shifts <- lobecol_fvcom %>%
+  mutate(yday = lubridate::yday(time)) %>% 
+  split(.$area_id) %>%
+  map_dfr(function(.x){
+    
+    # Fit the model to detrend and remove seasons
+    # Model a linear trend and the seasonal cycle
+    season_trend_model <- gam(
+      bottom_t ~ s(yday, bs = "cc") + time, 
+      data = .x,
+      method = "REML")
+    
+    # save the results
+    preprocessed_results <- broom::augment(x = season_trend_model) %>% 
+      rename(
+        model_fit = .fitted,
+        model_resid = .resid) 
+    
+    
+    # Get the results from that
+    x_rstars <- rstars(
+      data.timeseries = as.data.frame(preprocessed_results[,c("time", "model_resid")]), 
+      l.cutoff = 365*7,
+      pValue = 0.05,
+      Huber = 1,
+      Endfunction = T,
+      preWhitening = T,
+      OLS = F,
+      MPK = T,
+      IP4 = F,
+      SubsampleSize = (365*7 + 1)/3,
+      returnResults = T)
+    
+    return(x_rstars)
+
+    }, .id = "area_id")
+
+
+# Save it
+write_csv(bot_temp_shifts, here::here("rstars_results/lobecol_btemp_shifts_detrended.csv"))
+```
+
+And if we did all of them for bottom temperature, we'd return a bunch of lines that look like this:
+
+```{r}
+#| eval: true
+
+# Load that data again
+bot_temp_shifts <- read_csv(here::here("rstars_results/lobecol_btemp_shifts_detrended.csv"))
+
+
+# Plot the RSI
+bot_temp_shifts %>% 
+ ggplot() +
+  geom_line(aes(time, RSI), linewidth = 0.5, alpha = 0.35) +
+  geom_hline(yintercept = 0) +
+  facet_grid() +
+  labs(
+    x = "Time",
+    y = "RSI",
+    title = "All Areas, Bottom Temperature RSI")
+
+```
+
+
+```{r}
+ggplot(preprocess_rstars) +
+  geom_line(aes(time, season_detrend_prewhitened), 
+            linewidth = 0.5, alpha = 0.5) +
+  geom_line(aes(time, regime_mu), linewidth = 1) +
+  geom_vline(
+    data = filter(preprocess_rstars, RSI != 0),
+    aes(xintercept = time), color = "red", linewidth = 1) +
+  scale_y_continuous(limits = c(-0.35, 0.35)) +
+  labs(x = "", 
+       y = "Detrended Bottom Temp Anomaly",
+       title = "STARS Results - After full pre-processing steps",
+       subtitle = test_area)
+```
+
+
+
+This is what surface temperatures return:
+
+```{r}
+#| eval: false
+#| label: bottom temperature processing
+
+# Run them all
+surf_temp_shifts <- lobecol_fvcom %>%
+  mutate(yday = lubridate::yday(time)) %>% 
+  split(.$area_id) %>%
+  map_dfr(function(.x){
+    
+    # Fit the model to detrend and remove seasons
+    # Model a linear trend and the seasonal cycle
+    season_trend_model <- gam(
+      surface_t ~ s(yday, bs = "cc") + time, 
+      data = .x,
+      method = "REML")
+    
+    # save the results
+    preprocessed_results <- broom::augment(x = season_trend_model) %>% 
+      rename(
+        model_fit = .fitted,
+        model_resid = .resid) 
+    
+    
+    # Get the results from that
+    x_rstars <- rstars(
+      data.timeseries = as.data.frame(preprocessed_results[,c("time", "model_resid")]), 
+      l.cutoff = 365*7,
+      pValue = 0.05,
+      Huber = 1,
+      Endfunction = T,
+      preWhitening = T,
+      OLS = F,
+      MPK = T,
+      IP4 = F,
+      SubsampleSize = (365*7 + 1)/3,
+      returnResults = T)
+    
+    return(x_rstars)
+
+    }, .id = "area_id")
+
+
+# Save it
+write_csv(surf_temp_shifts, here::here("rstars_results/lobecol_stemp_shifts_detrended.csv"))
+```
+
+
+
+```{r}
+#| eval: true
+
+# Load that data again
+bot_temp_shifts <- read_csv(here::here("rstars_results/lobecol_btemp_shifts_detrended.csv"))
+
+
+# Plot the RSI
+surf_temp_shifts %>% 
+ ggplot() +
+  geom_line(aes(time, RSI), linewidth = 0.5, alpha = 0.35) +
+  geom_hline(yintercept = 0) +
+  facet_grid() +
+  labs(
+    x = "Time",
+    y = "RSI",
+    title = "All Areas, Surface Temperature RSI")
+
+```

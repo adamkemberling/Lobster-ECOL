@@ -136,7 +136,8 @@ This is a methods exploration of various packages available for regime shifts an
 
 -   [{EnvCpt}]() has model forms that evaluate non-stationary trends
 
-The `echo: false` option disables the printing of code (only output is displayed).
+
+
 
 # STARS Implementation - Basic
 
@@ -395,8 +396,7 @@ Account for all potential features in the mean of a series. If in doubt, allow f
 > As an aside, we comment that model fitting is not about maximizing or mini-
 mizing p values, but rather making sure that all relevant statistical features are accounted for in a parsimonious model
 
-> PITFALL 5: APPLYING MEAN SHIFT MCPT TECHNIQUES TO SERIES WITH TRENDS OR
-SEASONALITY WITHOUT ACCOUNTING FOR THESE FEATURES. Similar to AMOC techniques in pitfall 2, applying a MCPT technique that neglects trends and seasonality can result in spurious changepoint declarations. For example, an increasing long-term trend will likely be estimated as a series of change-points acting as an increasing stairway. 
+> PITFALL 5: APPLYING MEAN SHIFT MCPT TECHNIQUES TO SERIES WITH TRENDS OR SEASONALITY WITHOUT ACCOUNTING FOR THESE FEATURES. Similar to AMOC techniques in pitfall 2, applying a MCPT technique that neglects trends and seasonality can result in spurious changepoint declarations. For example, an increasing long-term trend will likely be estimated as a series of change-points acting as an increasing stairway. 
 
 > In a multiple changepoint analysis of a daily series, methods may flag many spurious changepoints within a year in an attempt to track the seasonal mean cycle should it be ignored in the modeling cycle
 
