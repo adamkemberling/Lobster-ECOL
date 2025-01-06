@@ -77,9 +77,58 @@ theme_set(theme_bw() + map_theme(text = element_text(family = "Avenir")))
 
 # Lobster-ECOL
 
-This is the ecological data processing code for the Lobster ecology project. This project's scope ranges across spatial scales working outward from a nearshore area that is sampled with Maine's ventless trap survey (3nm), to an area that is further offshore but state managed (6nm), and ultimately to t shelf-scale area that is sampled by the Federal Government's fisheries independent surveys.
+This is the ecological data processing code for the Lobster ecology project. This project's scope ranges across spatial scales working outward from a nearshore area that is sampled with Maine's ventless trap survey (3nm), to an area that is further offshore but state managed (6nm), and ultimately to the shelf-scale area that is sampled by the Federal Government's fisheries independent surveys.
 
-At each of these spatial scales physical and ecological metrics have processed for further use in research.Code in this repository covers the acquisition and data processing of physical and ecological datasets at the following scales and from the following sources:
+At each of these spatial scales physical and ecological metrics have processed for further use in research. Code in this repository covers the acquisition and data processing of physical and ecological datasets at the following scales and from the following sources:
+
+
+```{r}
+#| label: environmental indicators table
+#| eval: true
+
+tribble(
+  ~"Area",     ~"Metric",         ~"Measurement Frequency",   ~"Data Source", 
+  "Nearshore", "Sea Surface Temperature",         "Daily",            "FVCOM",
+  "Nearshore", "Sea Bottom Temperature",          "Daily",            "FVCOM",
+  "Nearshore", "Sea Surface Salinity",            "Daily",            "FVCOM",
+  "Nearshore", "Sea Bottom Salinity",             "Daily",            "FVCOM",
+  "Nearshore", "Maine Coastal Current Continuity","Daily",            "FVCOM",
+  "Nearshore", "Days within 12-18C",              "Daily",            "FVCOM",
+  "Nearshore", "Days over 20C",                   "Daily",            "FVCOM",
+  "Offshore", "Sea Surface Temperature",         "Daily",            "FVCOM",
+  "Offshore", "Sea Bottom Temperature",          "Daily",            "FVCOM",
+  "Offshore", "Sea Surface Salinity",            "Daily",            "FVCOM",
+  "Offshore", "Sea Bottom Salinity",             "Daily",            "FVCOM",
+  "Offshore", "Days within 12-18C",              "Daily",            "FVCOM",
+  "Offshore", "Days over 20C",                   "Daily",            "FVCOM",
+  "Offshore", "Primary Productivity (ppd, ppd ratio)", "Seasonal",         "ecodata::chl_pp",
+  "Offshore", "Primary Productivity (Chl-A)",            "Seasonal",         "ecodata::chl_pp",
+  "Offshore", "Zooplankton Community Index",     "Annual",  "ecodata::zoo_abundance_anom",
+  "Offshore", "Lobster Predator Abundance",      "Seasonal",         "Trawl Surveys",
+  "Offshore", "Lobster Predator Size Spectra",   "Seasonal",         "Trawl Surveys",
+  "Shelf-Scale", "Gulf Stream Position Index",   "Annual or Monthly","ecodata::gsi",
+  "Shelf-Scale", "Northeast Channel Water Mass", "Annual",           "ecodata::slopewater") %>% 
+  left_join(
+    tibble(
+      `Area` = c("Nearshore", "Offshore", "Shelf-Scale"),
+      `Scale` = c("0-3 Nautical miles", "3-12 Nautical miles", "12+ Nautical miles"))) %>% 
+  unite(col = "Spatial Scale", Area, Scale, sep = ": ") %>% 
+  group_by(`Spatial Scale`) %>% 
+  gt::gt()
+
+
+
+# Slopewater ecodata::slopewater
+# GSI ecodata::gsi & ecodata::gsi_old
+# Calanus Stage? ecodata::plot_calanus_stage
+# Zooplankton: ecodata::zoo_diversity, ecodata::zoo_abundance_anom, ecodata::zoo_regime
+# Primary productivity ecodata::chl_pp
+
+```
+
+
+
+
 
 # A.) Nearshore Scale
 
@@ -97,33 +146,6 @@ ggplot() +
 
 ```
 
-#### Local Currents
-
- 1. Maine Coastal Current, Turnoff
- 
- 
-```{r}
-
-```
- 
- 
-> Source: FVCOM
-
-#### Sea Surface Temperature
-
- 1. SST Anomalies
- 2. Days over 20 C
- 3. Days within 12-18 C
-
- > Source: FVCOM
-
-#### Bottom Temperature
-
- 1. BT Anomalies
- 2. Days over 20 C
- 3. Days within 12-18 C
-
-> Source: FVCOM
 
 
 ---
@@ -145,75 +167,21 @@ ggplot() +
 ```
 
 
-#### Sea Surface Temperature
- 1. SST Anomalies   
- 2. Days over 20 C
- 3. Days within 12-18 C
- 
-> Source: FVCOM
-
-#### Bottom Temperature
- 1. BT Anomalies
- 2. Days over 20 C
- 3. Days within 12-18 C
- 
- > Source: FVCOM
-
-#### Primary Productivity
- 1. Annual PAR and photosynthetic efficiency 
-
-> Source: Ecodata
-
-#### Zooplankton
- 1. Annual abundance by taxa
-
-> Source: Ecodata
-
-#### Lobster Predator Indices
- 1. Predator abundance
- 2. Predator size spectra
-
-> Sources: NEFSC & ME/NH Survey
-
-#### Predator exploitation rate
- 1. Based on rate as calculated in the 2020 lobster stock assessment as the annual catch of lobster divided by the estimate of population abundance
-
- > Source: ASMFC 2020 lobster stock assesment
-
 ---
 
 
 # C.) Northeast US Shelf-wide Scale
 
+```{r}
 
+ggplot() +
+  geom_sf(data = st_union(bind_rows(offshore_areas)), aes(fill = "Shelf-Scale"), alpha = 0.4) +
+  geom_sf(data = ne_us) +
+  geom_sf(data = canada) +
+  coord_sf(xlim = c(-78, -66), ylim = c(35.5, 45)) +
+  labs(title = "Offshore Scale: > 12nm", fill = "")
+```
 
-#### Gulf Stream Position
- > Source: Ecodata
-
-
-#### Sea Surface Temperature
- 1. SST Anomalies
- 2. Days over 20 C
- 3. Days within 12-18 C
-
-> Source: FVCOM
-
-#### Bottom Temperature
- 1. BT Anomalies
- 2. Days over 20 C
- 3. Days within 12-18 C 
- 
-> Source: FVCOM
-
-#### Salinity
-
-> Only if requested
-> Source: FVCOM
-
-#### Currents
-1. Relative inflow of GS vs. Scotian Shelf water at NE Channel 
-
-> Source: ecodata::slopewater
 
 
 # Lobster-ECOL Quarto Docs Directory

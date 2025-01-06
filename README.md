@@ -7,40 +7,450 @@ This is the ecological data processing code for the Lobster ecology
 project. This project’s scope ranges across spatial scales working
 outward from a nearshore area that is sampled with Maine’s ventless trap
 survey (3nm), to an area that is further offshore but state managed
-(6nm), and ultimately to t shelf-scale area that is sampled by the
+(6nm), and ultimately to the shelf-scale area that is sampled by the
 Federal Government’s fisheries independent surveys.
 
 At each of these spatial scales physical and ecological metrics have
-processed for further use in research.Code in this repository covers the
-acquisition and data processing of physical and ecological datasets at
-the following scales and from the following sources:
+processed for further use in research. Code in this repository covers
+the acquisition and data processing of physical and ecological datasets
+at the following scales and from the following sources:
+
+<div id="cpafozqmfu" style="padding-left:0px;padding-right:0px;padding-top:10px;padding-bottom:10px;overflow-x:auto;overflow-y:auto;width:auto;height:auto;">
+<style>#cpafozqmfu table {
+  font-family: system-ui, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+&#10;#cpafozqmfu thead, #cpafozqmfu tbody, #cpafozqmfu tfoot, #cpafozqmfu tr, #cpafozqmfu td, #cpafozqmfu th {
+  border-style: none;
+}
+&#10;#cpafozqmfu p {
+  margin: 0;
+  padding: 0;
+}
+&#10;#cpafozqmfu .gt_table {
+  display: table;
+  border-collapse: collapse;
+  line-height: normal;
+  margin-left: auto;
+  margin-right: auto;
+  color: #333333;
+  font-size: 16px;
+  font-weight: normal;
+  font-style: normal;
+  background-color: #FFFFFF;
+  width: auto;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #A8A8A8;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #A8A8A8;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+}
+&#10;#cpafozqmfu .gt_caption {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+&#10;#cpafozqmfu .gt_title {
+  color: #333333;
+  font-size: 125%;
+  font-weight: initial;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-bottom-color: #FFFFFF;
+  border-bottom-width: 0;
+}
+&#10;#cpafozqmfu .gt_subtitle {
+  color: #333333;
+  font-size: 85%;
+  font-weight: initial;
+  padding-top: 3px;
+  padding-bottom: 5px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-top-color: #FFFFFF;
+  border-top-width: 0;
+}
+&#10;#cpafozqmfu .gt_heading {
+  background-color: #FFFFFF;
+  text-align: center;
+  border-bottom-color: #FFFFFF;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+}
+&#10;#cpafozqmfu .gt_bottom_border {
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+&#10;#cpafozqmfu .gt_col_headings {
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+}
+&#10;#cpafozqmfu .gt_col_heading {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: normal;
+  text-transform: inherit;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: bottom;
+  padding-top: 5px;
+  padding-bottom: 6px;
+  padding-left: 5px;
+  padding-right: 5px;
+  overflow-x: hidden;
+}
+&#10;#cpafozqmfu .gt_column_spanner_outer {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: normal;
+  text-transform: inherit;
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+&#10;#cpafozqmfu .gt_column_spanner_outer:first-child {
+  padding-left: 0;
+}
+&#10;#cpafozqmfu .gt_column_spanner_outer:last-child {
+  padding-right: 0;
+}
+&#10;#cpafozqmfu .gt_column_spanner {
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  vertical-align: bottom;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  overflow-x: hidden;
+  display: inline-block;
+  width: 100%;
+}
+&#10;#cpafozqmfu .gt_spanner_row {
+  border-bottom-style: hidden;
+}
+&#10;#cpafozqmfu .gt_group_heading {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: middle;
+  text-align: left;
+}
+&#10;#cpafozqmfu .gt_empty_group_heading {
+  padding: 0.5px;
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  vertical-align: middle;
+}
+&#10;#cpafozqmfu .gt_from_md > :first-child {
+  margin-top: 0;
+}
+&#10;#cpafozqmfu .gt_from_md > :last-child {
+  margin-bottom: 0;
+}
+&#10;#cpafozqmfu .gt_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  margin: 10px;
+  border-top-style: solid;
+  border-top-width: 1px;
+  border-top-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: middle;
+  overflow-x: hidden;
+}
+&#10;#cpafozqmfu .gt_stub {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-right-style: solid;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+&#10;#cpafozqmfu .gt_stub_row_group {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-right-style: solid;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  padding-left: 5px;
+  padding-right: 5px;
+  vertical-align: top;
+}
+&#10;#cpafozqmfu .gt_row_group_first td {
+  border-top-width: 2px;
+}
+&#10;#cpafozqmfu .gt_row_group_first th {
+  border-top-width: 2px;
+}
+&#10;#cpafozqmfu .gt_summary_row {
+  color: #333333;
+  background-color: #FFFFFF;
+  text-transform: inherit;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+&#10;#cpafozqmfu .gt_first_summary_row {
+  border-top-style: solid;
+  border-top-color: #D3D3D3;
+}
+&#10;#cpafozqmfu .gt_first_summary_row.thick {
+  border-top-width: 2px;
+}
+&#10;#cpafozqmfu .gt_last_summary_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+&#10;#cpafozqmfu .gt_grand_summary_row {
+  color: #333333;
+  background-color: #FFFFFF;
+  text-transform: inherit;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+&#10;#cpafozqmfu .gt_first_grand_summary_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-top-style: double;
+  border-top-width: 6px;
+  border-top-color: #D3D3D3;
+}
+&#10;#cpafozqmfu .gt_last_grand_summary_row_top {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-bottom-style: double;
+  border-bottom-width: 6px;
+  border-bottom-color: #D3D3D3;
+}
+&#10;#cpafozqmfu .gt_striped {
+  background-color: rgba(128, 128, 128, 0.05);
+}
+&#10;#cpafozqmfu .gt_table_body {
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+&#10;#cpafozqmfu .gt_footnotes {
+  color: #333333;
+  background-color: #FFFFFF;
+  border-bottom-style: none;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+}
+&#10;#cpafozqmfu .gt_footnote {
+  margin: 0px;
+  font-size: 90%;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+&#10;#cpafozqmfu .gt_sourcenotes {
+  color: #333333;
+  background-color: #FFFFFF;
+  border-bottom-style: none;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+}
+&#10;#cpafozqmfu .gt_sourcenote {
+  font-size: 90%;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+&#10;#cpafozqmfu .gt_left {
+  text-align: left;
+}
+&#10;#cpafozqmfu .gt_center {
+  text-align: center;
+}
+&#10;#cpafozqmfu .gt_right {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+&#10;#cpafozqmfu .gt_font_normal {
+  font-weight: normal;
+}
+&#10;#cpafozqmfu .gt_font_bold {
+  font-weight: bold;
+}
+&#10;#cpafozqmfu .gt_font_italic {
+  font-style: italic;
+}
+&#10;#cpafozqmfu .gt_super {
+  font-size: 65%;
+}
+&#10;#cpafozqmfu .gt_footnote_marks {
+  font-size: 75%;
+  vertical-align: 0.4em;
+  position: initial;
+}
+&#10;#cpafozqmfu .gt_asterisk {
+  font-size: 100%;
+  vertical-align: 0;
+}
+&#10;#cpafozqmfu .gt_indent_1 {
+  text-indent: 5px;
+}
+&#10;#cpafozqmfu .gt_indent_2 {
+  text-indent: 10px;
+}
+&#10;#cpafozqmfu .gt_indent_3 {
+  text-indent: 15px;
+}
+&#10;#cpafozqmfu .gt_indent_4 {
+  text-indent: 20px;
+}
+&#10;#cpafozqmfu .gt_indent_5 {
+  text-indent: 25px;
+}
+&#10;#cpafozqmfu .katex-display {
+  display: inline-flex !important;
+  margin-bottom: 0.75em !important;
+}
+&#10;#cpafozqmfu div.Reactable > div.rt-table > div.rt-thead > div.rt-tr.rt-tr-group-header > div.rt-th-group:after {
+  height: 0px !important;
+}
+</style>
+
+| Metric | Measurement Frequency | Data Source |
+|----|----|----|
+| Nearshore: 0-3 Nautical miles |  |  |
+| Sea Surface Temperature | Daily | FVCOM |
+| Sea Bottom Temperature | Daily | FVCOM |
+| Sea Surface Salinity | Daily | FVCOM |
+| Sea Bottom Salinity | Daily | FVCOM |
+| Maine Coastal Current Continuity | Daily | FVCOM |
+| Days within 12-18C | Daily | FVCOM |
+| Days over 20C | Daily | FVCOM |
+| Offshore: 3-12 Nautical miles |  |  |
+| Sea Surface Temperature | Daily | FVCOM |
+| Sea Bottom Temperature | Daily | FVCOM |
+| Sea Surface Salinity | Daily | FVCOM |
+| Sea Bottom Salinity | Daily | FVCOM |
+| Days within 12-18C | Daily | FVCOM |
+| Days over 20C | Daily | FVCOM |
+| Primary Productivity (ppd, ppd ratio) | Seasonal | ecodata::chl_pp |
+| Primary Productivity (Chl-A) | Seasonal | ecodata::chl_pp |
+| Zooplankton Community Index | Annual | ecodata::zoo_abundance_anom |
+| Lobster Predator Abundance | Seasonal | Trawl Surveys |
+| Lobster Predator Size Spectra | Seasonal | Trawl Surveys |
+| Shelf-Scale: 12+ Nautical miles |  |  |
+| Gulf Stream Position Index | Annual or Monthly | ecodata::gsi |
+| Northeast Channel Water Mass | Annual | ecodata::slopewater |
+
+</div>
 
 # A.) Nearshore Scale
+
+<div id="fig-nearshore-scale-map">
 
 <img src="README_files/figure-commonmark/fig-nearshore-scale-map-1.png"
 id="fig-nearshore-scale-map" />
 
-#### Local Currents
 
-1.  Maine Coastal Current, Turnoff
+Figure 1
 
-> Source: FVCOM
-
-#### Sea Surface Temperature
-
-1.  SST Anomalies
-2.  Days over 20 C
-3.  Days within 12-18 C
-
-> Source: FVCOM
-
-#### Bottom Temperature
-
-1.  BT Anomalies
-2.  Days over 20 C
-3.  Days within 12-18 C
-
-> Source: FVCOM
+</div>
 
 ------------------------------------------------------------------------
 
@@ -49,85 +459,21 @@ id="fig-nearshore-scale-map" />
 1.  Gulf of Maine & Georges Bank
 2.  Southern New England
 
+<div id="fig-offshore-scale-map">
+
 <img src="README_files/figure-commonmark/fig-offshore-scale-map-1.png"
 id="fig-offshore-scale-map" />
 
-#### Sea Surface Temperature
 
-1.  SST Anomalies  
-2.  Days over 20 C
-3.  Days within 12-18 C
+Figure 2
 
-> Source: FVCOM
-
-#### Bottom Temperature
-
-1.  BT Anomalies
-2.  Days over 20 C
-3.  Days within 12-18 C
-
-> Source: FVCOM
-
-#### Primary Productivity
-
-1.  Annual PAR and photosynthetic efficiency
-
-> Source: Ecodata
-
-#### Zooplankton
-
-1.  Annual abundance by taxa
-
-> Source: Ecodata
-
-#### Lobster Predator Indices
-
-1.  Predator abundance
-2.  Predator size spectra
-
-> Sources: NEFSC & ME/NH Survey
-
-#### Predator exploitation rate
-
-1.  Based on rate as calculated in the 2020 lobster stock assessment as
-    the annual catch of lobster divided by the estimate of population
-    abundance
-
-> Source: ASMFC 2020 lobster stock assesment
+</div>
 
 ------------------------------------------------------------------------
 
 # C.) Northeast US Shelf-wide Scale
 
-#### Gulf Stream Position
-
-> Source: Ecodata
-
-#### Sea Surface Temperature
-
-1.  SST Anomalies
-2.  Days over 20 C
-3.  Days within 12-18 C
-
-> Source: FVCOM
-
-#### Bottom Temperature
-
-1.  BT Anomalies
-2.  Days over 20 C
-3.  Days within 12-18 C
-
-> Source: FVCOM
-
-#### Salinity
-
-> Only if requested Source: FVCOM
-
-#### Currents
-
-1.  Relative inflow of GS vs. Scotian Shelf water at NE Channel
-
-> Source: ecodata::slopewater
+![](README_files/figure-commonmark/unnamed-chunk-6-1.png)
 
 # Lobster-ECOL Quarto Docs Directory
 
