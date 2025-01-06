@@ -186,8 +186,14 @@ ggplot() +
 
 # Lobster-ECOL Quarto Docs Directory
 
-[Area Subsetting in R with {FVCOM}](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/FVCOM_Area_Subsetting_Demo.html)
+[Area Subsetting in R with {FVCOM}](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/fvcom_general_methods/FVCOM_Area_Subsetting_Demo.html)
 
-[Exploring Monthly File Contents and Structures](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/FVCOM_GMRI-Monthly-Inventory-Check.html)
+[Exploring Monthly File Contents and Structures](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/gmri_inventory_exploration/FVCOM_GMRI-Monthly-Inventory-Check.html)
 
-[Maine Coastal Current Processing](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/FVCOM_MaineCoastalCurrent.html)
+[Interpolating Point Values](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/Survey_Locations_FVCOMTemp_Interpolation.html)
+
+[Timeseries for Areas of Interest](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/FVCOM_Regional_Temperature_Timeseries.html)
+
+[Maine Coastal Current Processing](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/FVCOM_MaineCoastalCurrent_PCA.html)
+
+[FVCOM Temperature Regime Shifts with STARS](https://adamkemberling.github.io/Lobster-ECOL/R/regime_tests/STARS_FVCOM.html)
