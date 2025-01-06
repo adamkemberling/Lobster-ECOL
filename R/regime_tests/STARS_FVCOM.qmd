@@ -380,19 +380,19 @@ bot_temp_shifts %>%
 
 
 ```{r}
-ggplot(bot_temp_shifts) +
-  geom_line(aes(time, regime_mu_pw), 
-            linewidth = 0.5, alpha = 0.5) +
-  geom_line(aes(time, regime_mu), linewidth = 1) +
-  geom_vline(
-    data = filter(bot_temp_shifts, RSI != 0),
-    aes(xintercept = time), color = "red", linewidth = 1) +
-  scale_y_continuous(limits = c(-0.35, 0.35)) +
-  labs(x = "", 
-       y = "Detrended Bottom Temp Anomaly",
-       title = "Daily BT STARS Results",
-       caption = "Full prewhitening+detrending routine",
-       subtitle = test_area)
+# ggplot(bot_temp_shifts) +
+#   geom_line(aes(time, regime_mu_pw), 
+#             linewidth = 0.5, alpha = 0.5) +
+#   geom_line(aes(time, regime_mu), linewidth = 1) +
+#   geom_vline(
+#     data = filter(bot_temp_shifts, RSI != 0),
+#     aes(xintercept = time), color = "red", linewidth = 1) +
+#   scale_y_continuous(limits = c(-0.35, 0.35)) +
+#   labs(x = "", 
+#        y = "Detrended Bottom Temp Anomaly",
+#        title = "Daily BT STARS Results",
+#        caption = "Full prewhitening+detrending routine",
+#        subtitle = test_area)
 ```
 
 ### Daily Surface Temperature RSI
@@ -471,19 +471,19 @@ surf_temp_shifts %>%
 
 
 ```{r}
-ggplot(surf_temp_shifts) +
-  geom_line(aes(time, regime_mu_pw), 
-            linewidth = 0.5, alpha = 0.5) +
-  geom_line(aes(time, regime_mu), linewidth = 1) +
-  geom_vline(
-    data = filter(surf_temp_shifts, RSI != 0),
-    aes(xintercept = time), color = "red", linewidth = 1) +
-  scale_y_continuous(limits = c(-0.35, 0.35)) +
-  labs(x = "", 
-       y = "Detrended Bottom Temp Anomaly",
-       title = "Daily SST STARS Results",
-       caption = "Full prewhitening+detrending routine",
-       subtitle = test_area)
+# ggplot(surf_temp_shifts) +
+#   geom_line(aes(time, regime_mu_pw), 
+#             linewidth = 0.5, alpha = 0.5) +
+#   geom_line(aes(time, regime_mu), linewidth = 1) +
+#   geom_vline(
+#     data = filter(surf_temp_shifts, RSI != 0),
+#     aes(xintercept = time), color = "red", linewidth = 1) +
+#   scale_y_continuous(limits = c(-0.35, 0.35)) +
+#   labs(x = "", 
+#        y = "Detrended Bottom Temp Anomaly",
+#        title = "Daily SST STARS Results",
+#        caption = "Full prewhitening+detrending routine",
+#        subtitle = test_area)
 ```
 
 
