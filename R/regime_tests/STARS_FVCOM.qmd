@@ -490,7 +490,7 @@ surf_temp_shifts %>%
 
 ```{r}
 #| label: plotting the daily shifts in line by area
-surf_temp_shifts %>% 
+p1 <- surf_temp_shifts %>% 
   mutate(RSI = if_else(RSI == 0, NA, RSI),
          RSI_col = if_else(RSI>0, "orange", "royalblue")) %>% 
   ggplot(aes(x = time, y = area_id)) +
@@ -498,16 +498,14 @@ surf_temp_shifts %>%
   labs(title = "Daily Surface Temperature RSI")
 
 
-bot_temp_shifts %>% 
+p2 <- bot_temp_shifts %>% 
   mutate(RSI = if_else(RSI == 0, NA, RSI),
          RSI_col = if_else(RSI>0, "orange", "royalblue")) %>% 
   ggplot(aes(x = time, y = area_id)) +
   geom_point(aes(size = abs(RSI), color = I(RSI_col)))  +
-  theme(axis.text.y = element_blank(),
-        legend.position = "none") +
   labs(title = "Daily Bottom Temperature RSI")
 
-
+p1 / p2
 ```
 
 
@@ -713,7 +711,7 @@ bot_temp_monthly_shifts %>%
 
 ```{r}
 #| label: plotting the shifts in line by area
-surf_temp_monthly_shifts %>% 
+p1 <- surf_temp_monthly_shifts %>% 
   mutate(RSI = if_else(RSI == 0, NA, RSI),
          RSI_col = if_else(RSI>0, "orange", "royalblue")) %>% 
   ggplot(aes(x = time, y = area_id)) +
@@ -721,14 +719,244 @@ surf_temp_monthly_shifts %>%
   labs(title = "Monthly Surface Temperature RSI")
 
 
-bot_temp_monthly_shifts %>% 
+p2 <- bot_temp_monthly_shifts %>% 
   mutate(RSI = if_else(RSI == 0, NA, RSI),
          RSI_col = if_else(RSI>0, "orange", "royalblue")) %>% 
   ggplot(aes(x = time, y = area_id)) +
   geom_point(aes(size = abs(RSI), color = I(RSI_col)))  +
-  theme(axis.text.y = element_blank(),
-        legend.position = "none") +
   labs(title = "Monthly Bottom Temperature RSI")
+
+
+
+p1/p2
+
+```
+
+### Recap
+
+```{r}
+# Start cold regimes
+surf_temp_monthly_shifts %>% filter(RSI<0)
+bot_temp_monthly_shifts %>% filter(RSI<0)
+
+
+# Start positive regimes
+surf_temp_monthly_shifts %>% filter(RSI>0)
+bot_temp_monthly_shifts %>% filter(RSI>0)
+```
+
+```{r}
+areas_northsouth <- c(
+  "Eastern Maine",  
+  "Western Maine",  
+  "Central Maine",  
+  "Eastern Mass",
+  "W South Channel",
+  "Nantucket Shoals",  
+  "Off No Mans Land",  
+  "Southern Mass",  
+  "Rhode Island Shore",
+  "Long Island Sound", 
+  "Cholera Bank",
+  "Off Long Island",   
+  "New Jersey Shore",  
+  "Barnegat Ridge",  
+  "Five Fathom Bank",  
+  "Virginia Shore",
+  "GOM_GBK",         
+  "SNE")
+
+area_subset <- c(
+  "Eastern Maine",
+  "Central Maine",
+  "Western Maine",
+  "Eastern Mass",
+  "Southern Mass",
+  "W South Channel",
+  "Nantucket Shoals",
+  "Off No Mans Land"#,
+  #"GOM_GBK",
+  #"SNE"
+
+)
+
+# Summarise them and put them together
+dst <- surf_temp_shifts %>% filter(RSI != 0) %>% 
+  mutate(
+    shift_direction = if_else(RSI>0, "Shift to Warm", "Shift to Cool"),   
+    var = "daily surface temperature") %>% 
+  dplyr::select(area_id, time, RSI, shift_direction, var)
+dbt <- surf_temp_shifts %>% filter(RSI != 0) %>% 
+  mutate(
+    shift_direction = if_else(RSI>0, "Shift to Warm", "Shift to Cool"),   
+    var = "daily bottom temperature") %>% 
+  dplyr::select(area_id, time, RSI, shift_direction, var)
+mst <- surf_temp_monthly_shifts %>% filter(RSI != 0) %>% 
+  mutate(
+    shift_direction = if_else(RSI>0, "Shift to Warm", "Shift to Cool"),   
+    var = "monthly surface temperature") %>% 
+  dplyr::select(area_id, time, RSI, shift_direction, var)
+mbt <- bot_temp_monthly_shifts %>% filter(RSI != 0) %>% 
+  mutate(
+    shift_direction = if_else(RSI>0, "Shift to Warm", "Shift to Cool"),   
+    var = "monthly bottom temperature") %>% 
+  dplyr::select(area_id, time, RSI, shift_direction, var)
+
+
+# Combine and plot
+stars_results_summ <- bind_rows(list(dst, dbt, mst, mbt)) %>% 
+  mutate(area_id = factor(area_id, levels = areas_northsouth),
+         year = year(time))
+
+stars_results_summ %>% 
+  filter(area_id %in% area_subset) %>% 
+  ggplot(aes(year, fct_rev(area_id))) +
+  geom_point(
+    aes(size = "STARS Regime Shift", color = shift_direction)) +
+  scale_color_gmri() +
+  scale_x_continuous(breaks = seq(1980,2020, 5)) +
+  facet_wrap(~var, ncol = 2) +
+  labs(size = "",
+       y = "Area of Interest",
+       title = "STARS Regime Shifts from FVCOM Temperatures")
+
+
+```
+
+```{r}
+
+# Get Monthly temperatures
+temps_monthly <- lobecol_fvcom %>%
+  mutate(
+    year = lubridate::year(time),
+    month = lubridate::month(time)) %>% 
+  group_by(area_id, year, month) %>% 
+  summarise(
+    surface_t = mean(surface_t, na.rm = T),
+    bottom_t = mean(bottom_t, na.rm = T),
+    .groups = "drop") %>% 
+  mutate(
+    area_id = factor(area_id, levels = areas_northsouth),
+    time = as.Date(
+      str_c(
+        year,
+        str_pad(month, side = "left", pad = "0", width = 2),
+        "15", sep = "-"
+      )
+    )) %>% 
+  rename(
+    `monthly surface temperature` = surface_t,
+    `monthly bottom temperature` = bottom_t) %>% 
+  pivot_longer(
+    names_to = "var", 
+    values_to = "temperature", cols = ends_with("temperature"))
+
+# Pivot daily
+temps_daily <- lobecol_fvcom %>% 
+  rename(
+    `daily surface temperature` = surface_t,
+    `daily bottom temperature` = bottom_t) %>% 
+  pivot_longer(
+    names_to = "var", 
+    values_to = "temperature", 
+    cols = ends_with("temperature")) %>% 
+  mutate(area_id = factor(area_id, levels = areas_northsouth))
+
+
+
+# Plot the breaks over the
+ggplot() +
+  geom_line(
+    data = temps_daily,
+    aes(time, temperature),
+    linewidth = 0.2, alpha = 0.5) +
+  geom_line(
+    data = temps_monthly,
+    aes(time, temperature),
+    linewidth = 0.2, alpha = 0.5) +
+  geom_vline(
+    data = stars_results_summ,
+    aes(
+      xintercept = time,
+      color = shift_direction),
+    linewidth = 1.5) +
+  scale_color_gmri() +
+  facet_grid(area_id~var, labeller = label_wrap_gen()) +
+  theme(strip.text.y = element_text(angle = 0)) + 
+  labs(color = "",
+       y = "Temperature",
+       title = "STARS Regime Shifts from FVCOM Temperatures")
+
+```
+
+## Do Annual?
+
+
+## Days In/Out Temperature Preferences
+
+Things we were thinking about
+
+days over 20 is too high for
+12 degrees is the magic number for larvae
+
+Metabolism/Stress at 18C
+
+
+```{r}
+thresh_low <- 55
+thresh_up  <- 93.9
+
+# The degday functions were built with the ability to model daily cycles
+# the sine and triangle methods accomodate this
+# since we only have daily data the simple average is probably the way to do it
+library(degday)
+thresh_low <- 10
+thresh_up  <- 18
+lobecol_dd <- lobecol_fvcom %>%
+  group_by(area_id) %>% 
+  mutate(
+    opt_btemp_dd = dd_calc(
+      daily_min = bottom_t, 
+      daily_max = bottom_t, 
+      thresh_low = thresh_low, 
+      thresh_up = thresh_up, 
+      method = "simp_avg"),
+    opt_btemp  = if_else(between(bottom_t, 10,18), 1, 0),
+    stress_btemp  = if_else(bottom_t > 18, 1, NA),
+    cold_btemp  = if_else(bottom_t < 10, 1, NA))
+
+
+lobecol_dd %>% 
+  mutate(year = lubridate::year(time)) %>% 
+  group_by(area_id, year) %>% 
+  summarise(
+    across(
+      ends_with("temp"), 
+      ~sum(.x, na.rm = T)),
+    .groups = "drop") %>% 
+  pivot_longer(
+    cols = ends_with("temp"), 
+    names_to = "var", 
+    values_to = "totals") %>% 
+  filter(area_id %in% area_subset) %>% 
+  mutate(area_id = factor(area_id, levels = areas_northsouth),
+         var = case_when(
+           var == "opt_btemp" ~ "Preferred Bottom Temperatures 10-18C", 
+           var == "stress_btemp" ~ "Heat Stress Conditions >18C",
+           var == "cold_btemp" ~ "Below Preferred Conditions <10C")) %>% 
+  ggplot() +
+  geom_col(aes(year, y = totals, fill = var), 
+           color = "white", width = 1, linewidth = 0.1) + 
+  #geom_hline(yintercept = 366/2, color = "gray20", linetype = 3) +
+  facet_grid(area_id~.) +
+  scale_x_continuous(expand = expansion(add = c(0.15,0.15))) +
+  scale_fill_manual(values = c("lightblue",  "#ea4f12", "#057872")) +
+  theme(strip.text.y = element_text(angle = 0),
+      legend.position = "bottom") +
+  labs(y = "Days in Range",
+       fill = "", color = "",
+       title = "FVCOM Bottom Temperature Suitability")
+
 
 
 ```
@@ -739,5 +967,17 @@ bot_temp_monthly_shifts %>%
 # Other Environmental Features
 
 In addition to temperature, we have the additional environmental covariates as well.
+
+
+
+```{r}
+#| eval: false
+
+
+list(
+  "PPD" = ecodata::chl_pp,
+  "Z" = ecodata::chl_pp,
+)
+```
 
 

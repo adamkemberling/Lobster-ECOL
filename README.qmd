@@ -87,7 +87,7 @@ At each of these spatial scales physical and ecological metrics have processed f
 #| eval: true
 
 tribble(
-  ~"Area",     ~"Metric",         ~"Measurement Frequency",   ~"Data Source", 
+  ~"Area",     ~"Metric",                        ~"Frequency",   ~"Data Source", 
   "Nearshore", "Sea Surface Temperature",         "Daily",            "FVCOM",
   "Nearshore", "Sea Bottom Temperature",          "Daily",            "FVCOM",
   "Nearshore", "Sea Surface Salinity",            "Daily",            "FVCOM",
@@ -106,15 +106,14 @@ tribble(
   "Offshore", "Zooplankton Community Index",     "Annual",  "ecodata::zoo_abundance_anom",
   "Offshore", "Lobster Predator Abundance",      "Seasonal",         "Trawl Surveys",
   "Offshore", "Lobster Predator Size Spectra",   "Seasonal",         "Trawl Surveys",
-  "Shelf-Scale", "Gulf Stream Position Index",   "Annual or Monthly","ecodata::gsi",
+  "Shelf-Scale", "Gulf Stream Position Index",   "Annual/Monthly","ecodata::gsi",
   "Shelf-Scale", "Northeast Channel Water Mass", "Annual",           "ecodata::slopewater") %>% 
-  left_join(
-    tibble(
-      `Area` = c("Nearshore", "Offshore", "Shelf-Scale"),
-      `Scale` = c("0-3 Nautical miles", "3-12 Nautical miles", "12+ Nautical miles"))) %>% 
-  unite(col = "Spatial Scale", Area, Scale, sep = ": ") %>% 
-  group_by(`Spatial Scale`) %>% 
-  gt::gt()
+  #dplyr::select(-Area) %>% 
+  knitr::kable() #%>% 
+  # kableExtra::pack_rows(group_label = "Inshore Areas: 0-3 Nautical miles", 1, 7) %>% 
+  # kableExtra::pack_rows(group_label = "Offshore Regions: 12+ Nautical miles", 8, 18) %>% 
+  # kableExtra::pack_rows(group_label = "Shelf-Scale Processes", 19, 20) 
+
 
 
 
@@ -188,7 +187,7 @@ ggplot() +
 
 [Area Subsetting in R with {FVCOM}](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/fvcom_general_methods/FVCOM_Area_Subsetting_Demo.html)
 
-[Exploring Monthly File Contents and Structures](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/gmri_inventory_exploration/FVCOM_GMRI-Monthly-Inventory-Check.html)
+[Exploring Monthly File Contents and Structures](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/gmri_inventory_exploration/FVCOM-GMRI-Monthly-Inventory-Check.html)
 
 [Interpolating Point Values](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/Survey_Locations_FVCOMTemp_Interpolation.html)
 
@@ -197,3 +196,4 @@ ggplot() +
 [Maine Coastal Current Processing](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/FVCOM_MaineCoastalCurrent_PCA.html)
 
 [FVCOM Temperature Regime Shifts with STARS](https://adamkemberling.github.io/Lobster-ECOL/R/regime_tests/STARS_FVCOM.html)
+
