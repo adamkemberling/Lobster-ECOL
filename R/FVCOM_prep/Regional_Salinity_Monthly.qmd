@@ -1,0 +1,514 @@
+---
+title: "Monthly Salinity Download and Regional Processing"
+description: | 
+  Processing Regional Timeseries of Surface and Bottom Salinity
+date: "Updated on: `r Sys.Date()`"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    df-print: kable
+    self-contained: true
+execute: 
+  echo: true
+  warning: false
+  message: false
+  fig.align: "center"
+  comment: ""
+---
+
+```{r}
+
+####. packages. ####
+library(gmRi)
+library(tidyverse)
+library(sf)
+library(rnaturalearth)
+library(fvcom)
+library(ncdf4)
+library(patchwork)
+
+# Set the theme
+theme_set(theme_bw() + map_theme())
+
+# Project paths
+lob_ecol_path <- cs_path("mills", "Projects/Lobster ECOL")
+fvcom_path <- cs_path("res", "FVCOM/Lobster-ECOL")
+poly_paths <- cs_path("mills", "Projects/Lobster ECOL/Spatial_Defs")
+
+# Shapefiles
+new_england <- ne_states("united states of america", returnclass = "sf") %>% 
+  filter(postal %in% c("VT", "ME", "RI", "MA", "CT", "NH", "NY", "MD", "VA", "NJ", "DE", "NC", "PA", "WV"))
+canada <- ne_states("canada", returnclass = "sf")
+
+# Load inshore
+inshore_areas <- map(
+  setNames(
+    list.files(str_c(poly_paths, "inshore_areas"), full.names = T),
+    str_remove(list.files(str_c(poly_paths, "inshore_areas")), ".geojson")),
+  function(x){read_sf(x)})
+
+# Load offshore
+offshore_areas <- map(
+  setNames(
+    list.files(str_c(poly_paths, "offshore_areas"), full.names = T),
+    str_remove(list.files(str_c(poly_paths, "offshore_areas")), ".geojson")),
+  function(x){read_sf(x)})
+
+
+```
+
+# About: Processing Timeseries of Surface/Bottom Salinity
+
+This document steps through the approach to getting mean surface and bottom salinity for our areas of interest.
+
+The areas of interest for this project are a combination of nearshore areas (12nm buffers from shore intersections with lobster management strata) and offshore regions (Gulf of Maine, Georges Bank, EPUS).
+
+Surface and Bottom Salinity was not pre-processed with the SST/BT data. We can revisit downloading it on the fly, or we could just download them from the monthly hindcast.
+
+An issue with doing this ourselves, is we'll need to download and regrid 2017-2020 since they are on the gom4 & gom5 grids.
+
+## The Approach:
+
+This document will mirror the regional surface temperature processing doc, but will use monthly mean data from thredds. For each of these data endpoints we will do the following things:
+
+-   Open one file to access the mesh, identify which nodes are within each region of interest
+
+```{r}
+
+# Base URL path to work off THREDDs: 
+# To visually see them check here:
+# http://www.smast.umassd.edu:8080/thredds/catalog/models/fvcom/NECOFS/Archive/Seaplan_33_Hindcast_v1/monthly_mean/catalog.html
+
+# To download/open them via a link, this is the way
+monthly_hindcast_base <- "http://www.smast.umassd.edu:8080/thredds/dodsC/models/fvcom/NECOFS/Archive/Seaplan_33_Hindcast_v1/monthly_mean/"
+
+# year/month details
+test_yr   <- 1980
+test_mnth <- "01"
+test_url  <- str_c(monthly_hindcast_base, "gom3_monthly_mean_", test_yr, test_mnth, ".nc")
+
+
+# GMRI Inventory of monthly hindcast means
+box_fvcom <- cs_path("res", "FVCOM/monthly_means/gom3_mon_means")
+
+# Build the full path
+test_url <- str_c(box_fvcom, "gom3_monthly_mean_", test_yr, test_mnth, ".nc")
+
+# ----- open with either ------
+
+# Open Connection
+gom3_x <- nc_open(test_url)
+ncvar_get(gom3_x, "Times")
+# ncvar_get(gom3_x, "siglay")[,45] # Bottom Layer
+# ncvar_get(gom3_x, "siglev")[,46] # Bottom Level
+
+# Get the mesh itself as a simple feature collection
+gom3_mesh <- get_mesh_geometry(gom3_x, what = 'lonlat')
+
+
+```
+
+-   get the areas of all triangles and partial triangles for weighting
+
+```{r}
+#| eval: false
+#| label: perform intersections of mesh and regions
+
+# Run them all and save tables in- case we need to operate in python
+inshore_intersections <- map_dfr(inshore_trans, function(x){
+  # Run intersection
+  mesh_clip <- st_intersection(gom3_mesh, x) 
+  
+  # Get areas
+  # Pull necessary information out
+  mesh_clip_df <- mesh_clip %>% 
+    mutate(rel_area = st_area(mesh_clip)) %>% 
+    select(SHORT_NAME, Id_1, FULL_NAME, elem, p1, p2, p3, rel_area) %>% 
+    st_drop_geometry()
+  
+  # Return
+  return(mesh_clip_df)
+  
+})
+
+# Run them all and save tables in- case we need to operate in python
+offshore_intersections <- map_dfr(offshore_trans, function(x){
+  
+  # Run intersection
+  mesh_clip <- st_intersection(gom3_mesh, x) 
+  
+  # Get areas
+  # Pull necessary information out
+  mesh_clip_df <- mesh_clip %>% 
+    mutate(rel_area = st_area(mesh_clip)) %>% 
+    select(Region, elem, p1, p2, p3, rel_area) %>% 
+    st_drop_geometry()
+  
+  # Return
+  return(mesh_clip_df)
+  
+})
+
+
+# # Save these out for lookup tables
+# write_csv(inshore_intersections, here::here("local_data/inshore_areas_mesh_weights.csv"))
+# write_csv(offshore_intersections, here::here("local_data/offshore_areas_mesh_weights.csv"))
+
+```
+
+
+
+After we perform the `st_intersection` we are left with all the mesh areas within the area of interest. From that intersection we can store in lookup tables the triangle id, the node index numbers, and the area (and partial area) of each traingle from the intersection.
+
+```{r}
+
+# We already did the intersections for SST/BT so we don't need to repeat it
+inshore_zones <- read_csv(here::here("local_data/inshore_areas_mesh_weights.csv"))
+offshore_zones <- read_csv(here::here("local_data/offshore_areas_mesh_weights.csv"))
+
+
+# Put the inshore and offshore together as one big table
+regional_assignments <- bind_rows(
+    dplyr::select(inshore_zones, area_id = SHORT_NAME, elem, p1, p2, p3, rel_area),
+    dplyr::select(offshore_zones, area_id = Region, elem, p1, p2, p3, rel_area)) %>% 
+  mutate(rel_area = as.numeric(rel_area))
+
+
+```
+
+-   Pull the surface and bottom \`siglay\` values of salinity, for every node matching a trangle that falls within a region.
+
+
+Using that lookup table, we can pull the variable were interested in for all relevant locations+depths and index them out using the node indices. This step can be sped up by limiting the use of `ncvar_get` and pulling all locations instead of repeating it for each location.
+
+#### Function: Average from Nodes
+
+
+```{r}
+####################
+
+#' @Title FVCOM Element Average from Vertices
+#' 
+#' 
+#' @description Get the average value from the relevant vertices, along  
+#' the time dimension for FVCOM mesh triangles.
+#'
+#' @param fvcom_mesh_trios
+#' @param nc
+#' @param nc_varname 
+#' @param siglay index number for depth layer
+#'
+#' @return
+#' @export
+#'
+#' @examples
+average_from_nodes <- function(
+    fvcom_mesh_trios, 
+    nc, 
+    nc_varname = "surface_t", 
+    time_count = -1, 
+    siglay = 1){
+  
+  # Reduce any redundancies/repeats
+  fvcom_mesh_trios <- distinct(fvcom_mesh_trios, elem, p1, p2, p3)
+  
+  
+  # Pull the full slice of the variable for a single depth
+  # Salinity coordinates are: node, siglay, time
+  # Grab the trio that matches the triangle
+  var_slice <- ncvar_get(
+      nc, 
+      varid = nc_varname, 
+      start = c(1, siglay, 1), 
+      count = c(-1, 1, time_count))
+  
+  # Compute mean time series for each trio using purrr::map
+  triangular_element_means <- pmap(fvcom_mesh_trios, function(elem, p1, p2, p3) {
+    p1_ts = var_slice[p1]
+    p2_ts = var_slice[p2]
+    p3_ts = var_slice[p3]
+    trio_time_series <- (p1_ts + p2_ts + p3_ts) / 3
+  })
+  triangular_element_means <- setNames(triangular_element_means, fvcom_mesh_trios$elem)
+  
+  
+  return(triangular_element_means)
+  
+}
+```
+
+#### Test: Area Average from Nodes
+
+
+```{r}
+#| label: test average_from_nodes
+
+
+# Time it out, Muuuch faster
+Sys.time()
+test_timestep_surfsal <-  average_from_nodes(
+  fvcom_mesh_trios = regional_assignments,
+  nc = gom3_x,
+  nc_varname = "salinity",
+  siglay = 1)
+Sys.time()
+
+
+
+# test if bottom salinity works too
+test_timestep_botsal <- average_from_nodes(
+  fvcom_mesh_trios = regional_assignments,
+  nc = gom3_x,
+  nc_varname = "salinity",
+  siglay = 45)
+
+
+# Are they different? yes! cool.
+test_surfbot <- bind_cols(
+  map_dfr(test_timestep_botsal, ~data.frame("bottom" = .x), .id = "elem"),
+  map_dfr(test_timestep_surfsal, ~data.frame("surface" = .x))) %>%
+  mutate(sal_diff = surface - bottom) 
+
+test_surfbot %>%
+  pull(sal_diff) %>% range()
+
+ggplot(test_surfbot, aes(as.numeric(elem))) +
+  geom_point(aes(y = surface, color = "Surface"), size = 0.2, alpha = 0.6) +
+  geom_point(aes(y = bottom, color = "Bottom"), size = 0.2, alpha = 0.6) +
+  labs(y = "Salinity")
+
+```
+
+-   Get the area-mean using the average salinity of each triangular section, weighting each by their area.
+
+
+#### Function: Average Over Area-of-Interest
+
+```{r}
+
+
+
+#' @title Regional Averages from FVCOM-Polygon Intersection
+#' 
+#' @description
+#'
+#' @param mesh_poly_intersection 
+#' @param regional_means 
+#' @param nc 
+#'
+#' @return
+#' @export
+#'
+#' @examples
+average_over_aoi <- function(mesh_poly_intersection, regional_means, nc){
+  
+  
+  # Weight each timeseries by area, then sum them all
+  # Get the timeseries that go with the triangles
+  # multiply the relevant relative areas
+  poly_wtd_ts <- purrr::pmap(
+    mesh_poly_intersection,
+    .f = function(elem, rel_area, ...){
+      wtd_vals <- regional_means[[as.character(elem)]] * rel_area
+      return(wtd_vals)}) %>%
+    reduce(.x = ., .f = `+`)
+  
+  # Divide by total area of all mesh triangles in the area
+  poly_tot_area <- sum(as.numeric(mesh_poly_intersection$rel_area))
+  regional_mu <- poly_wtd_ts / poly_tot_area
+  
+  # Add the time dimension and return as dataframe
+  poly_regional <- data.frame(
+    "time"        = as.Date(ncvar_get(nc, varid = "Times")),
+    "regional_mu" = regional_mu)
+  
+  return(poly_regional)
+  
+}
+
+
+```
+
+
+
+
+#### Test: Average Over Area-of-Interest
+
+```{r}
+#| label: test averaging over large areas
+#| eval: false
+
+# Using that same test nc file
+# Loop over the different area ids to test getting the average for all the regions for the file
+# If succesful, we'll do this to each netcdf file
+Sys.time()
+test_area_avg_surface <-  map_dfr(
+  .x = regional_assignments %>% split(.$area_id),
+  .f = ~average_over_aoi(
+    mesh_poly_intersection = .x,
+    regional_means = test_timestep_surfsal, 
+    nc = gom3_x),
+  .id = "area_id"
+)
+Sys.time()
+
+
+# Repeat for bottom temperatures
+test_area_avg_bottom <-  map_dfr(
+  .x = regional_assignments %>% split(.$area_id),
+  .f = ~average_over_aoi(
+    mesh_poly_intersection = .x,
+    regional_means = test_timestep_botsal, 
+    nc = gom3_x),
+  .id = "area_id"
+)
+
+
+
+# Plot them as areas? - need to sort out string split
+lp <- left_join(
+  x = test_area_avg_surface, 
+  y = bind_rows(inshore_areas) %>% 
+    separate(area_id, into = c("stat_num", "area_id"), sep = "-") %>% 
+    mutate(area_id = str_replace_all(area_id, "_", " ")),
+    join_by(area_id)) %>% 
+  st_as_sf() %>% 
+  ggplot() +
+  geom_sf(aes(fill = regional_mu)) +
+  scale_fill_viridis_c(limits = c(28,34)) +
+  labs(title = "Area Surface Salinity: 1978 Test")
+
+rp <- left_join(
+  x = test_area_avg_bottom, 
+  y = bind_rows(inshore_areas) %>% 
+    separate(area_id, into = c("stat_num", "area_id"), sep = "-") %>% 
+    mutate(area_id = str_replace_all(area_id, "_", " ")),
+    join_by(area_id)) %>% 
+  st_as_sf() %>% 
+  ggplot() +
+  geom_sf(aes(fill = regional_mu)) +
+  scale_fill_viridis_c(limits = c(28,34)) +
+  labs(title = "Area Bottom Salinity: 1978 Test")
+
+
+(lp | rp ) + plot_layout(guides = "collect")
+```
+
+The other difference in this approach, is we will need to regrid to the gom3 grid for the years 2017-2020. This will utilize the interpolation methods that we use when interpolating point values.
+
+To adapt the workflow around the different meshes, we can either interpolate node locations of the gom3 mesh using values from the gom4 & gom5 mesh. So for years 2017-2020 we would need to add a step to interpolate, so that we can swap in values as if they were GOM3 mesh nodes to begin with that correspond to the triangles.
+
+Or, we can repeat the intersection step and the weighting to suite the new meshes.
+
+### Process Monthly Salinity for Each Region
+
+```{r}
+
+
+# Make vector of all the year-month combinations (for file names)
+yrmonths <- map(
+  .x = as.character(1978:2016), 
+  ~str_c(.x, str_pad(c(1:12),width = 2, side = "left", pad = "0" ))
+) %>% unlist()
+
+# From that, make a named list of all the filenames
+monthly_file_list <- map(
+  .x = setNames(yrmonths, yrmonths),
+  function(x){
+    str_c(box_fvcom, "gom3_monthly_mean_", x, ".nc")
+  })
+
+```
+
+
+
+```{r}
+# Finish times
+"Finished with 197801 : 2025-01-09 20:27:52.532449"
+"Finished with 197802 : 2025-01-09 22:31:13.544868"
+"Finished with 197803 : 2025-01-10 04:39:52.582735"
+"Finished with 197804 : 2025-01-10 07:09:10.745503"
+"Finished with 197805 : 2025-01-10 07:12:41.953362"
+
+
+# Time it
+Sys.time()
+all_region_salinity <- imap_dfr(
+  .x = monthly_file_list[1:5], 
+  .f = function(nc_x, nc_date){
+
+    # 1. Open the netcdf:
+    yr_x_fvcom <- nc_open(nc_x)
+    
+ 
+    # 2. Get Surface Salinity
+    area_surface_salinity <- average_from_nodes(
+      fvcom_mesh_trios = regional_assignments, 
+      nc = yr_x_fvcom, 
+      nc_varname = "salinity", 
+      siglay = 1)
+    
+    # 3. Pull Bottom Salinity
+    area_bottom_salinity <- average_from_nodes(
+      fvcom_mesh_trios = regional_assignments, 
+      nc = yr_x_fvcom, 
+      nc_varname = "salinity", 
+      siglay = 45) 
+    
+    # 3.  Process the Average Within Each Region
+    # Surface Salinity
+    surface_mean_x <- regional_assignments %>%
+      split(.$area_id) %>%
+      map_dfr(
+      .x = .,
+      .f = ~average_over_aoi(
+        mesh_poly_intersection = .x,
+        regional_means = area_surface_salinity,
+        nc = yr_x_fvcom),
+      .id = "area_id") %>% 
+      rename(surface_salinity = regional_mu)
+    
+    # Bottom Salinity
+    bottom_mean_x <- regional_assignments %>%
+      split(.$area_id) %>%
+      map_dfr(
+      .x = .,
+      .f = ~average_over_aoi(
+        mesh_poly_intersection = .x,
+        regional_means = area_surface_salinity,
+        nc = yr_x_fvcom),
+      .id = "area_id") %>% 
+      rename(bottom_salinity = regional_mu)
+    
+    # Join Surface and Bottom into one table
+    poly_avgs_x <- left_join(
+      surface_mean_x,
+      bottom_mean_x,
+      by = join_by("area_id","time"))
+    
+    # Close the netcdf connection
+    nc_close(yr_x_fvcom)
+  
+    # Return the regional averages
+    print(str_c("Finished with ", nc_date, " : ", Sys.time()))
+    return(poly_avgs_x)
+
+})
+
+# time completion
+Sys.time()
+```
+
+#### Review Results
+
+
+```{r}
+#| label: plot salinity results
+
+all_region_salinity %>% 
+  pivot_longer(cols = -c(area_id, time), names_to = "var", values_to = "vals") %>% 
+  ggplot(aes(time, vals, color = area_id)) +
+  geom_line() +
+  facet_wrap(~var)
+```

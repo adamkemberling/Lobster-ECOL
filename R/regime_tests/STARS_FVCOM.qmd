@@ -39,8 +39,44 @@ lobecol_fvcom <- read_csv(
   str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_temperatures_daily.csv")) %>% 
   mutate(depth_type = if_else(area_id %in% c("GOM_GBK", "SNE"), "offshore", "nearshore"))
 
+# Plot theme
 theme_set(theme_gmri())
 
+
+# Factor Levels
+areas_northsouth <- c(
+  "Eastern Maine",  
+  "Western Maine",  
+  "Central Maine",  
+  "Eastern Mass",
+  "W South Channel",
+  "Nantucket Shoals",  
+  "Off No Mans Land",  
+  "Southern Mass",  
+  "Rhode Island Shore",
+  "Long Island Sound", 
+  "Cholera Bank",
+  "Off Long Island",   
+  "New Jersey Shore",  
+  "Barnegat Ridge",  
+  "Five Fathom Bank",  
+  "Virginia Shore",
+  "GOM_GBK",         
+  "SNE")
+
+area_subset <- c(
+  "Eastern Maine",
+  "Central Maine",
+  "Western Maine",
+  "Eastern Mass",
+  "Southern Mass",
+  "W South Channel",
+  "Nantucket Shoals",
+  "Off No Mans Land",
+  "GOM_GBK",
+  "SNE"
+
+)
 ```
 
 
@@ -94,8 +130,7 @@ source(here::here("rstars-master","rSTARS.R"))
 
 ```
 
-# Data Pre-Processing Routines
-
+# Pre-Processing Steps
 
 For our results we've expanded on their approach with two additional pre-procesing steps recommended by Rodionov (pretty sure) & in the recent review by Lund et al. 2023's.
 
@@ -106,6 +141,7 @@ The other additional pre-processing step is the removal of the long-term trend. 
 ```{r}
 # Test timeseries
 test_area <- "Long Island Sound"
+test_area <- "Southern Mass"
 tester <- filter(lobecol_fvcom, area_id == test_area)
 
 # Plot Surface and Bottom
@@ -114,19 +150,22 @@ ggplot(tester, aes(time)) +
   geom_line(aes(y = surface_t, color = "Surface Temperature"), alpha = 0.8) +
   geom_line(aes(y = bottom_t, color = "Bottom Temperature"), alpha = 0.8) + 
   scale_color_gmri() +
-  labs(y = "Temperature", title = "Long Island Sound FVCOM Temperatures")
+  labs(y = "Temperature", title = str_c(test_area, " FVCOM Temperatures"))
 
 ```
 
 
 ### Removing Seasonalilty
 
-As expected, ocean temperatures in Long Island Sound follow a prnonounced seasonal cycle. We can model this periodicity to get a sense of the average temperature based on the day of the year.
+As expected, ocean temperatures in Southern Mass. follow a prnonounced seasonal cycle. We can model this periodicity to get a sense of the average temperature based on the day of the year.
 
 
 ```{r}
 # Make a day of year value to cycle over
-tester <- tester %>% mutate(yday = lubridate::yday(time))
+tester <- tester %>% 
+  mutate(yday = lubridate::yday(time),
+         year = year(time),
+         month = factor(month.abb[month(time)], levels = month.abb))
 
 # Model a linear trend and the seasonal cycle
 season_only_gam <- gam(
@@ -145,7 +184,7 @@ Seasonal temperatures are at their lowest during February-March, and they peak d
 
 ```{r}
 # Plot what that looke like on an annual time scale
-ggplot(tester, aes(x = yday)) +
+p1 <- ggplot(tester, aes(x = yday)) +
   geom_line(
     aes(y = bottom_t, color = "Single Year Series", group = year(time)), 
     linewidth = 0.5, alpha = 0.75) +
@@ -154,23 +193,30 @@ ggplot(tester, aes(x = yday)) +
     aes(y = seasonal_fit, color = "Mean Seasonal Cycle"), 
     alpha = 0.75, linewidth = 2) +
   scale_color_grey() +
+  theme(legend.position = "bottom") +
   labs(color = "Data",
        y = "Bottom Temperature",
        x = "Day of Year",
-       title = "Long Island Sound Seasonality")
+       title = str_c(test_area, " Daily Seasonality"))
+
+p2 <- tester  %>% 
+  ggplot(aes(month, bottom_t)) +
+  geom_point(
+    position = position_jitter(height = 0, width = 0.1), 
+    alpha = 0.35, color = "gray") +
+  geom_point(
+    data = tester %>% group_by(month) %>% summarise(bottom_t = mean(bottom_t)),
+    shape = "-", size = 20, color = "gray30") +
+  labs(color = "Data",
+       y = "Bottom Temperature",
+       x = "Day of Year",
+       title = str_c(test_area, " Monthly Seasonality"))
+
+p1/p2
 ```
 
 
 ```{r}
-# # Plot them both?
-# tester %>% 
-#   left_join(season_test, by = join_by("yday")) %>% 
-#   ggplot(aes(x = time)) +
-#   geom_line(aes(y = bottom_t, color = "Daily Temperatures"), alpha = 0.5, linewidth = 1) +
-#   geom_line(aes(y = seasonal_fit, color = "Seasonal Means"), alpha = 0.5, linewidth = 0.5) +
-#   scale_color_gmri() +
-#   labs(y = "Bottom Temperature", color = "Data")
-
 
 tester %>%
   left_join(season_test, by = join_by("yday")) %>% 
@@ -181,6 +227,26 @@ tester %>%
   labs(y = "Seasonal Temperature Anomaly",
        title = "Removal of Seasonal Period")
 
+# Monthly version
+tester %>% 
+  mutate(month = factor(month.abb[month(time)], levels = month.abb)) %>% 
+  group_by(month) %>% 
+  summarise(bot_temp_mean = mean(bottom_t, na.rm = T)) %>% 
+  left_join(
+    mutate(tester, month = factor(month.abb[month(time)], levels = month.abb)) %>% 
+      group_by(year = year(time), month) %>% 
+    summarise(bottom_t = mean(bottom_t, na.rm = T))) %>% 
+  mutate(seasonal_resid = bottom_t - bot_temp_mean,
+         time = as.Date(str_c(
+           year,
+           str_pad(as.numeric(month), side = "left", width = 2, pad = "0"),
+           "15", sep = "-"))) %>% 
+  ggplot(aes(time, seasonal_resid)) +
+  geom_line(alpha = 0.75) +
+  geom_hline(yintercept = 0, aes(color = "Seasonal Mean Temeprature"), linewidth = 2, alpha = 0.75) +
+  labs(
+    y = "Seasonal Temperature Anomaly",
+    title = "Removal of Long-Term Monthly Mean")
 ```
 
 
@@ -205,16 +271,22 @@ trend_tester <- broom::augment(x = tester_trend_mod) %>%
 # Plot detrended timeseries
 trend_tester %>%
   ggplot() +
-  geom_line(aes(time, bottom_t, color = "Bottom Temperature")) +
-  geom_line(aes(time, trend_resid + coef(tester_trend_mod)[[1]], color = "Trend-Removed")) +
-  #geom_line(aes(time, trend_resid, color = "Trend Residuals")) +
-  labs(title = "Detrended Timeseries")
+  geom_line(aes(time, bottom_t, color = "Bottom Temperature"), alpha = 0.5) +
+  geom_smooth(
+    aes(time, bottom_t, color = "Bottom Temperature"),
+    method = "lm", se = F) +
+  geom_line(
+    aes(time, trend_resid + coef(tester_trend_mod)[[1]], color = "Trend-Removed"), alpha = 0.5) +
+  geom_smooth(
+    method = "lm", se = F,
+    aes(time, trend_resid + coef(tester_trend_mod)[[1]], color = "Trend-Removed")) +
+  labs(title = "Detrended Daily Timeseries", color = "Data")
 
 
 ```
 
 
-## Removing Trends and Seasonality
+## Removing Both Trends and Seasonality 
 
 We can easily implement the linear long-term trend and the seasonal periodicity using the GAM framework. Residuals from this model are what we will pass along to the RSTARS package with the recommended prewhitening routines applied.
 
@@ -248,7 +320,7 @@ And this is the timeseries that would go into rstars for regime shift detection:
 season_trend_results %>% 
   ggplot(aes(x = time)) +
   geom_line(aes(y = seasonal_resid), alpha = 0.7) +
-  labs(color = "Data", y = "Temperature Anomaly", title =  "Long Island Sound - RSTARS Ready")
+  labs(color = "Data", y = "Temperature Anomaly", title =  str_c(test_area, " - RSTARS Ready"))
 ```
 
 
@@ -694,6 +766,16 @@ surf_temp_monthly_shifts %>%
 
 bot_temp_monthly_shifts <- read_csv(here::here("rstars_results/lobecol_btemp_monthly_shifts_detrended.csv"))
 
+# Plot one area's results
+bot_temp_monthly_shifts %>% 
+  filter(area_id == test_area) %>% 
+  ggplot() +
+  geom_line(aes(time, model_resid_pw), color = "gray35") +
+  geom_line(aes(time, regime_mu_pw), color = "red", linewidth = 1) +
+  labs(y = "Detrended Temperature", x = "Date",
+       title = str_c("STARS Monthly Demo:\n", test_area),
+       subtitle = "Preprocessed BT, with STARS Regime Means")
+  
 
 
 # Plot the RSI for both
@@ -746,39 +828,7 @@ bot_temp_monthly_shifts %>% filter(RSI>0)
 ```
 
 ```{r}
-areas_northsouth <- c(
-  "Eastern Maine",  
-  "Western Maine",  
-  "Central Maine",  
-  "Eastern Mass",
-  "W South Channel",
-  "Nantucket Shoals",  
-  "Off No Mans Land",  
-  "Southern Mass",  
-  "Rhode Island Shore",
-  "Long Island Sound", 
-  "Cholera Bank",
-  "Off Long Island",   
-  "New Jersey Shore",  
-  "Barnegat Ridge",  
-  "Five Fathom Bank",  
-  "Virginia Shore",
-  "GOM_GBK",         
-  "SNE")
 
-area_subset <- c(
-  "Eastern Maine",
-  "Central Maine",
-  "Western Maine",
-  "Eastern Mass",
-  "Southern Mass",
-  "W South Channel",
-  "Nantucket Shoals",
-  "Off No Mans Land"#,
-  #"GOM_GBK",
-  #"SNE"
-
-)
 
 # Summarise them and put them together
 dst <- surf_temp_shifts %>% filter(RSI != 0) %>% 
@@ -803,24 +853,16 @@ mbt <- bot_temp_monthly_shifts %>% filter(RSI != 0) %>%
   dplyr::select(area_id, time, RSI, shift_direction, var)
 
 
-# Combine and plot
+# Combine results for plotting
 stars_results_summ <- bind_rows(list(dst, dbt, mst, mbt)) %>% 
   mutate(area_id = factor(area_id, levels = areas_northsouth),
          year = year(time))
 
-stars_results_summ %>% 
-  filter(area_id %in% area_subset) %>% 
-  ggplot(aes(year, fct_rev(area_id))) +
-  geom_point(
-    aes(size = "STARS Regime Shift", color = shift_direction)) +
-  scale_color_gmri() +
-  scale_x_continuous(breaks = seq(1980,2020, 5)) +
-  facet_wrap(~var, ncol = 2) +
-  labs(size = "",
-       y = "Area of Interest",
-       title = "STARS Regime Shifts from FVCOM Temperatures")
 
-
+# Cold Regimes, Monthly
+stars_results_summ %>% filter(RSI<0, str_detect(var, "monthly")) %>% count(year(time))
+# Warm Regimes, Monthly
+stars_results_summ %>% filter(RSI>0, str_detect(var, "monthly")) %>% count(year(time))
 ```
 
 ```{r}
@@ -841,9 +883,7 @@ temps_monthly <- lobecol_fvcom %>%
       str_c(
         year,
         str_pad(month, side = "left", pad = "0", width = 2),
-        "15", sep = "-"
-      )
-    )) %>% 
+        "15", sep = "-"))) %>% 
   rename(
     `monthly surface temperature` = surface_t,
     `monthly bottom temperature` = bottom_t) %>% 
@@ -865,31 +905,51 @@ temps_daily <- lobecol_fvcom %>%
 
 
 # Plot the breaks over the
+deg_c <- "\u00b0C"
 ggplot() +
-  geom_line(
-    data = temps_daily,
-    aes(time, temperature),
-    linewidth = 0.2, alpha = 0.5) +
+  # geom_line(
+  #   data = temps_daily,
+  #   aes(time, temperature),
+  #   linewidth = 0.2, alpha = 0.5) +
   geom_line(
     data = temps_monthly,
+    # data = filter(temps_monthly, area_id %in% area_subset),
     aes(time, temperature),
     linewidth = 0.2, alpha = 0.5) +
   geom_vline(
-    data = stars_results_summ,
+    data = filter(stars_results_summ, str_detect(var, "monthly")),
+    # data = filter(stars_results_summ,
+    #               area_id %in% area_subset,
+    #               str_detect(var, "monthly")),
     aes(
       xintercept = time,
       color = shift_direction),
     linewidth = 1.5) +
   scale_color_gmri() +
+  scale_y_continuous(labels = scales::label_number(suffix = deg_c)) +
   facet_grid(area_id~var, labeller = label_wrap_gen()) +
-  theme(strip.text.y = element_text(angle = 0)) + 
+  theme(
+    legend.position = "bottom",
+    strip.text.y = element_text(angle = 0)) + 
   labs(color = "",
        y = "Temperature",
        title = "STARS Regime Shifts from FVCOM Temperatures")
 
 ```
 
+
+```{r}
+ecodata::plot_nao()
+ecodata::plot_gsi()
+```
+
+
 ## Do Annual?
+
+```{r}
+lobecol_fvcom
+```
+
 
 
 ## Days In/Out Temperature Preferences
@@ -903,8 +963,7 @@ Metabolism/Stress at 18C
 
 
 ```{r}
-thresh_low <- 55
-thresh_up  <- 93.9
+
 
 # The degday functions were built with the ability to model daily cycles
 # the sine and triangle methods accomodate this
@@ -953,8 +1012,12 @@ lobecol_dd %>%
   scale_fill_manual(values = c("lightblue",  "#ea4f12", "#057872")) +
   theme(strip.text.y = element_text(angle = 0),
       legend.position = "bottom") +
+  guides(fill = guide_legend(
+    nrow = 2, 
+    title.position = "top",
+    title.hjust = 0.5))+
   labs(y = "Days in Range",
-       fill = "", color = "",
+       fill = "Daily Temperature Conditions", color = "",
        title = "FVCOM Bottom Temperature Suitability")
 
 

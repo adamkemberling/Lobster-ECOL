@@ -17,13 +17,14 @@ execute:
   comment: ""
 ---
 
-# About: Processing Timeseries of Surface/Bottom Temeprature
+# About: Processing Timeseries of Surface/Bottom Temperature+Salinity
 
 For this project we need to use FVCOM for point-value interpolations (what was the temperature at this location, at this time), and for regional summaries (what was the average temperature over time for this area).
 
 This document steps through the approach to getting regional sumaries for our areas of interest. The areas of interest for this project are a combination of nearshore areas (12nm buffers from shore intersections with lobster management strata) and offshore regions (Gulf of Maine, Georges Bank, EPUS). 
 
 ```{r}
+
 ####. packages. ####
 library(gmRi)
 library(tidyverse)
@@ -206,6 +207,8 @@ ggplot() +
 
 # Perform Intersections on All Polygons
 
+For each area of interest we need to identify the FVCOM node/element indices that fall within each of them. This only needs to be done once, the indexing will apply correctly at each timestep.
+
 ```{r}
 #| eval: false
 #| label: step 1 polygon overlay
@@ -358,6 +361,8 @@ regional_from_nodes <- function(fvcom_mesh_trios, nc, nc_varname = "surface_t"){
 }
 ```
 
+
+
 ```{r}
 #| label: test regional_from_nodes
 #| eval: false
@@ -426,6 +431,8 @@ fvcom_regional_averages <- function(mesh_poly_intersection, regional_means, nc){
   return(poly_regional)
   
 }
+
+
 ```
 
 ```{r}
@@ -436,11 +443,11 @@ fvcom_regional_averages <- function(mesh_poly_intersection, regional_means, nc){
 
 # Why is this not working...
 # Works great on one table at a time
-
-fvcom_regional_averages(
-      mesh_poly_intersection = filter(regional_assignments, area_id == "Eastern Maine"),
-      regional_means = triangle_avg_1978, 
-      nc = fvcom_yrx)
+# 
+# fvcom_regional_averages(
+#       mesh_poly_intersection = filter(regional_assignments, area_id == "Eastern Maine"),
+#       regional_means = triangle_avg_1978, 
+#       nc = fvcom_yrx)
 
 
 
@@ -617,6 +624,9 @@ all_region_bottom_temp %>%
   geom_line(aes(time, regional_mu, color = area_id),
             linewidth = 0.4, alpha = 0.4)
 ```
+
+
+
 
 ### Running 2012/2017-2019 
 

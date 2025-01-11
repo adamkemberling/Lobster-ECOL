@@ -833,6 +833,7 @@ Sys.time()
 ```{r}
 # Plot a day
 day_test <- "2010-12-25"
+day_test <- "2010-08-25"
 all_element_bottom_temp %>% #dim()
   mutate(time = as.Date(time)) %>% 
   filter(time == day_test) %>% 
@@ -841,13 +842,15 @@ all_element_bottom_temp %>% #dim()
   left_join(mutate(gom3_mesh, elem = as.character(elem))) %>% 
   st_as_sf() %>% 
   ggplot() +
+  #geom_sf(data = new_england, color = "gray30") +
   geom_sf(aes(fill = bottom_t), color = "transparent") +
   scale_fill_distiller(
-    palette = "RdBu"#,
-    #limits = c(0, 20)
-    ) +
+    palette = "RdBu") +
   theme_dark() +
+  theme(legend.position = "bottom", legend.title.position = "top", legend.title = element_text(hjust = 0.5)) +
+  coord_sf(expand = F) +
   labs(title = str_c("FVCOM Daily Bottom Temperature:"),
+       fill = "Bottom Temperature",
        subtitle = str_c("Date: ", day_test))
 ```
 
