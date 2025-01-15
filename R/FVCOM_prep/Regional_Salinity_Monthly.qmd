@@ -243,6 +243,7 @@ average_from_nodes <- function(
 
 ```{r}
 #| label: test average_from_nodes
+#| eval: false
 
 
 # Time it out, Muuuch faster
@@ -273,10 +274,10 @@ test_surfbot <- bind_cols(
 test_surfbot %>%
   pull(sal_diff) %>% range()
 
-ggplot(test_surfbot, aes(as.numeric(elem))) +
-  geom_point(aes(y = surface, color = "Surface"), size = 0.2, alpha = 0.6) +
-  geom_point(aes(y = bottom, color = "Bottom"), size = 0.2, alpha = 0.6) +
-  labs(y = "Salinity")
+# ggplot(test_surfbot, aes(as.numeric(elem))) +
+#   geom_point(aes(y = surface, color = "Surface"), size = 0.2, alpha = 0.6) +
+#   geom_point(aes(y = bottom, color = "Bottom"), size = 0.2, alpha = 0.6) +
+#   labs(y = "Salinity")
 
 ```
 
@@ -286,8 +287,6 @@ ggplot(test_surfbot, aes(as.numeric(elem))) +
 #### Function: Average Over Area-of-Interest
 
 ```{r}
-
-
 
 #' @title Regional Averages from FVCOM-Polygon Intersection
 #' 
@@ -435,29 +434,24 @@ monthly_file_list <- map(
 # Time it
 Sys.time()
 all_region_salinity <- imap_dfr(
-  .x = monthly_file_list[1:5], 
+  # .x = monthly_file_list[1:5], 
+  .x = monthly_file_list, 
   .f = function(nc_x, nc_date){
 
     # 1. Open the netcdf:
     yr_x_fvcom <- nc_open(nc_x)
     
  
-    # 2. Get Surface Salinity
+    # 2. Get Surface Salinity Averages
     area_surface_salinity <- average_from_nodes(
       fvcom_mesh_trios = regional_assignments, 
       nc = yr_x_fvcom, 
       nc_varname = "salinity", 
       siglay = 1)
     
-    # 3. Pull Bottom Salinity
-    area_bottom_salinity <- average_from_nodes(
-      fvcom_mesh_trios = regional_assignments, 
-      nc = yr_x_fvcom, 
-      nc_varname = "salinity", 
-      siglay = 45) 
     
-    # 3.  Process the Average Within Each Region
-    # Surface Salinity
+    # 2.  Process the Average Within Each Region
+    # Surface Salinity Averages for Areas of Interest
     surface_mean_x <- regional_assignments %>%
       split(.$area_id) %>%
       map_dfr(
@@ -469,19 +463,29 @@ all_region_salinity <- imap_dfr(
       .id = "area_id") %>% 
       rename(surface_salinity = regional_mu)
     
-    # Bottom Salinity
+    
+    
+    # 3. Get Bottom Salinity Area-Averages
+    area_bottom_salinity <- average_from_nodes(
+      fvcom_mesh_trios = regional_assignments, 
+      nc = yr_x_fvcom, 
+      nc_varname = "salinity", 
+      siglay = 45) 
+    
+    # Process Bottom Salinity Averages for Areas of Interest
     bottom_mean_x <- regional_assignments %>%
       split(.$area_id) %>%
       map_dfr(
       .x = .,
       .f = ~average_over_aoi(
         mesh_poly_intersection = .x,
-        regional_means = area_surface_salinity,
+        regional_means = area_bottom_salinity,
         nc = yr_x_fvcom),
       .id = "area_id") %>% 
       rename(bottom_salinity = regional_mu)
     
-    # Join Surface and Bottom into one table
+    
+    # 4. Join Surface and Bottom into one table
     poly_avgs_x <- left_join(
       surface_mean_x,
       bottom_mean_x,
@@ -498,17 +502,64 @@ all_region_salinity <- imap_dfr(
 
 # time completion
 Sys.time()
+
 ```
+
 
 #### Review Results
 
 
 ```{r}
-#| label: plot salinity results
+#| label: plot gom3 salinity results
 
 all_region_salinity %>% 
   pivot_longer(cols = -c(area_id, time), names_to = "var", values_to = "vals") %>% 
   ggplot(aes(time, vals, color = area_id)) +
   geom_line() +
   facet_wrap(~var)
+
 ```
+
+
+```{r}
+#| label: export monthly
+
+# # # Exporting
+# write_csv(
+#   all_region_salinity,
+#   str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_salinity_monthly_gom3.csv"))
+
+test_load <- read_csv(
+  str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_salinity_monthly_gom3.csv"))
+
+
+```
+
+
+## Check Gom4
+
+I had forgotten this, but the pre-processed files contain a limited suite of variables.
+
+
+```{r}
+# Make a named list of all the filenames
+gom4_list <- list.files(
+  path = cs_path("res", "FVCOM/monthly_means/gom4_mon_means"), 
+  pattern = "nc", 
+  full.names = T)
+gom4_list <- setNames(
+  gom4_list, 
+  list.files(
+    path = cs_path("res", "FVCOM/monthly_means/gom4_mon_means"), 
+    pattern = "nc") %>% 
+      str_remove("gom4_monthly_mean_temp_") %>% 
+      str_remove(".nc")
+)
+
+# Open and take a peak, x,y,lon,lat,h, & temp are only variables
+gom4_test <- nc_open(gom4_list[[1]] )
+gom4_test
+
+```
+
+

@@ -18,14 +18,18 @@ execute:
 ---
 
 ```{r}
-library(here)
-library(tidyverse)
-library(rshift)
-library(gmRi)
-library(mgcv)
-library(EnvCpt)
-library(showtext)
-library(patchwork)
+# Packages
+{
+  library(here)
+  library(tidyverse)
+  library(rshift)
+  library(gmRi)
+  library(mgcv)
+  library(EnvCpt)
+  library(showtext)
+  library(patchwork)
+  library(degday)
+}
 
 # Make sure lag is done correctly
 conflicted::conflict_prefer("lag", "stats")
@@ -34,10 +38,6 @@ conflicted::conflict_prefer("filter", "dplyr")
 # Path to timeseries
 lob_ecol_path <- cs_path("mills", "Projects/Lobster ECOL")
 
-# Load and add inshore/offshore labels on the daily data
-lobecol_fvcom <- read_csv(
-  str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_temperatures_daily.csv")) %>% 
-  mutate(depth_type = if_else(area_id %in% c("GOM_GBK", "SNE"), "offshore", "nearshore"))
 
 # Plot theme
 theme_set(theme_gmri())
@@ -111,6 +111,27 @@ showtext::showtext_auto()
 ```
 
 
+```{r}
+#| label: load timeseries
+
+
+# Load and add inshore/offshore labels on the daily data:
+
+# daily temperatures
+daily_fvcom_temps <- read_csv(
+  str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_temperatures_daily.csv")) %>% 
+  mutate(depth_type = if_else(area_id %in% c("GOM_GBK", "SNE"), "offshore", "nearshore"))
+
+# monthly salinities
+monthly_fvcom_sal <- read_csv(
+  str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_salinity_monthly_gom3.csv"))
+
+
+
+```
+
+
+
 # STARS Regime Shifts - LobECOL Areas
 
 # {rstars} Implementation
@@ -130,19 +151,26 @@ source(here::here("rstars-master","rSTARS.R"))
 
 ```
 
-# Pre-Processing Steps
+# Data Pre-Processing
 
 For our results we've expanded on their approach with two additional pre-procesing steps recommended by Rodionov (pretty sure) & in the recent review by Lund et al. 2023's.
 
 These two additional steps include removing the seasonal cycle using a GAM and a cyclic cubic regression spline to model the seasonal cycle. 
 
-The other additional pre-processing step is the removal of the long-term trend. To illustrate these pre-processing steps, a daily bottome temperature timeseries for `Long Island Sound` will be used below:
+The other additional pre-processing step is the removal of the long-term trend. To illustrate these pre-processing steps, a daily bottome temperature timeseries for `Southern Massachusetts` will be used below:
 
 ```{r}
 # Test timeseries
-test_area <- "Long Island Sound"
-test_area <- "Southern Mass"
-tester <- filter(lobecol_fvcom, area_id == test_area)
+#test_area <- "Southern Mass"
+test_area <- "GOM_GBK"
+tester <- filter(daily_fvcom_temps, area_id == test_area) 
+# Make a day of year value to cycle over
+tester <- tester %>% 
+  mutate(yday = lubridate::yday(time),
+         year = year(time),
+         month = factor(month.abb[month(time)], levels = month.abb))
+test_sal <- filter(monthly_fvcom_sal, area_id == test_area) %>% 
+  mutate(month = factor(month.abb[month(time)], levels = month.abb))
 
 # Plot Surface and Bottom
 
@@ -151,21 +179,30 @@ ggplot(tester, aes(time)) +
   geom_line(aes(y = bottom_t, color = "Bottom Temperature"), alpha = 0.8) + 
   scale_color_gmri() +
   labs(y = "Temperature", title = str_c(test_area, " FVCOM Temperatures"))
+```
+
+As expected, ocean temperatures in Southern Mass. follow a pronounced seasonal cycle.
+
+```{r}
+ggplot(test_sal, aes(time)) +
+  geom_line(aes(y = surface_salinity, color = "Surface Salinity"), alpha = 0.8) +
+  geom_line(aes(y = bottom_salinity, color = "Bottom Salinity"), alpha = 0.8) + 
+  scale_color_gmri() +
+  labs(y = "Salinity", title = str_c(test_area, " FVCOM Salinity"))
 
 ```
 
 
+For other variables like salinity, the seasonality can be less obvious.
+
+
+
 ### Removing Seasonalilty
 
-As expected, ocean temperatures in Southern Mass. follow a prnonounced seasonal cycle. We can model this periodicity to get a sense of the average temperature based on the day of the year.
+ We can model this periodicity to get a sense of the average temperature based on the day of the year.
 
 
 ```{r}
-# Make a day of year value to cycle over
-tester <- tester %>% 
-  mutate(yday = lubridate::yday(time),
-         year = year(time),
-         month = factor(month.abb[month(time)], levels = month.abb))
 
 # Model a linear trend and the seasonal cycle
 season_only_gam <- gam(
@@ -197,7 +234,7 @@ p1 <- ggplot(tester, aes(x = yday)) +
   labs(color = "Data",
        y = "Bottom Temperature",
        x = "Day of Year",
-       title = str_c(test_area, " Daily Seasonality"))
+       title = str_c(test_area, " Daily SST Seasonality"))
 
 p2 <- tester  %>% 
   ggplot(aes(month, bottom_t)) +
@@ -210,14 +247,15 @@ p2 <- tester  %>%
   labs(color = "Data",
        y = "Bottom Temperature",
        x = "Day of Year",
-       title = str_c(test_area, " Monthly Seasonality"))
+       title = str_c(test_area, " Monthly SST Seasonality"))
 
 p1/p2
 ```
 
+Removal of seasonal (monthly) means results in timeseries that look like this:
 
 ```{r}
-
+# Remove the Daily Seasonality
 tester %>%
   left_join(season_test, by = join_by("yday")) %>% 
   mutate(seasonal_resid = bottom_t - seasonal_fit)  %>% 
@@ -228,7 +266,7 @@ tester %>%
        title = "Removal of Seasonal Period")
 
 # Monthly version
-tester %>% 
+ tester %>% 
   mutate(month = factor(month.abb[month(time)], levels = month.abb)) %>% 
   group_by(month) %>% 
   summarise(bot_temp_mean = mean(bottom_t, na.rm = T)) %>% 
@@ -246,7 +284,29 @@ tester %>%
   geom_hline(yintercept = 0, aes(color = "Seasonal Mean Temeprature"), linewidth = 2, alpha = 0.75) +
   labs(
     y = "Seasonal Temperature Anomaly",
-    title = "Removal of Long-Term Monthly Mean")
+    title = "Removal of Long-Term Monthly Mean SST")
+
+
+
+
+# Remove mean monthly salinity too
+test_sal %>% 
+  group_by(month) %>% 
+  summarise(surf_sal_mean = mean(surface_salinity),
+            bot_sal_mean = mean(bottom_salinity),
+            .groups = "drop") %>% 
+  right_join(test_sal, join_by(month)) %>% 
+  mutate(
+    surface_resid = surface_salinity - surf_sal_mean,
+    bottom_resid = bottom_salinity - bot_sal_mean) %>% 
+  ggplot() +
+  geom_line(aes(time, surface_resid, color = "Surface"), alpha = 0.75) +
+  geom_line(aes(time, bottom_resid, color = "Bottom"), alpha = 0.75) +
+  geom_hline(yintercept = 0, linewidth = 2, alpha = 0.75) +
+  scale_color_gmri() +
+  labs(
+    y = "Seasonal Salinity Anomaly",
+    title = "Removal of Long-Term Monthly Mean Salinity")
 ```
 
 
@@ -387,7 +447,7 @@ If we apply the above steps to each daily bottom temperature timeseries we can r
 #| label: bottom temperature processing
 
 # # Run them all
-# bot_temp_shifts <- lobecol_fvcom %>%
+# bot_temp_shifts <- daily_fvcom_temps %>%
 #   mutate(yday = lubridate::yday(time)) %>% 
 #   split(.$area_id) %>%
 #   map_dfr(function(.x){
@@ -476,7 +536,7 @@ Repeating the process for daily sea surface temperatures gives us these RSI resu
 #| label: surface temperature processing
 
 # # Run them all
-# surf_temp_shifts <- lobecol_fvcom %>%
+# surf_temp_shifts <- daily_fvcom_temps %>%
 #   mutate(yday = lubridate::yday(time)) %>% 
 #   split(.$area_id) %>%
 #   map_dfr(function(.x){
@@ -560,27 +620,6 @@ surf_temp_shifts %>%
 
 
 
-```{r}
-#| label: plotting the daily shifts in line by area
-p1 <- surf_temp_shifts %>% 
-  mutate(RSI = if_else(RSI == 0, NA, RSI),
-         RSI_col = if_else(RSI>0, "orange", "royalblue")) %>% 
-  ggplot(aes(x = time, y = area_id)) +
-  geom_point(aes(size = abs(RSI), color = I(RSI_col))) +
-  labs(title = "Daily Surface Temperature RSI")
-
-
-p2 <- bot_temp_shifts %>% 
-  mutate(RSI = if_else(RSI == 0, NA, RSI),
-         RSI_col = if_else(RSI>0, "orange", "royalblue")) %>% 
-  ggplot(aes(x = time, y = area_id)) +
-  geom_point(aes(size = abs(RSI), color = I(RSI_col)))  +
-  labs(title = "Daily Bottom Temperature RSI")
-
-p1 / p2
-```
-
-
 
 
 # Processing Monthly Means
@@ -607,7 +646,7 @@ For these reasons and for consistency with the other environmental drivers, I wi
 # Run the monthly versions
 
 # # Run them all
-# surf_temp_monthly_shifts <- lobecol_fvcom %>%
+# surf_temp_monthly_shifts <- daily_fvcom_temps %>%
 #   mutate(
 #     year = lubridate::year(time),
 #     month = lubridate::month(time)) %>%
@@ -668,7 +707,7 @@ For these reasons and for consistency with the other environmental drivers, I wi
 # 
 # 
 # #Bottom temperature
-# bot_temp_monthly_shifts <- lobecol_fvcom %>%
+# bot_temp_monthly_shifts <- daily_fvcom_temps %>%
 #   mutate(
 #     year = lubridate::year(time),
 #     month = lubridate::month(time)) %>%
@@ -859,16 +898,16 @@ stars_results_summ <- bind_rows(list(dst, dbt, mst, mbt)) %>%
          year = year(time))
 
 
-# Cold Regimes, Monthly
-stars_results_summ %>% filter(RSI<0, str_detect(var, "monthly")) %>% count(year(time))
-# Warm Regimes, Monthly
-stars_results_summ %>% filter(RSI>0, str_detect(var, "monthly")) %>% count(year(time))
+# # Cold Regimes, Monthly
+# stars_results_summ %>% filter(RSI<0, str_detect(var, "monthly")) %>% count(year(time))
+# # Warm Regimes, Monthly
+# stars_results_summ %>% filter(RSI>0, str_detect(var, "monthly")) %>% count(year(time))
 ```
 
 ```{r}
 
 # Get Monthly temperatures
-temps_monthly <- lobecol_fvcom %>%
+temps_monthly <- daily_fvcom_temps %>%
   mutate(
     year = lubridate::year(time),
     month = lubridate::month(time)) %>% 
@@ -892,7 +931,7 @@ temps_monthly <- lobecol_fvcom %>%
     values_to = "temperature", cols = ends_with("temperature"))
 
 # Pivot daily
-temps_daily <- lobecol_fvcom %>% 
+temps_daily <- daily_fvcom_temps %>% 
   rename(
     `daily surface temperature` = surface_t,
     `daily bottom temperature` = bottom_t) %>% 
@@ -938,18 +977,6 @@ ggplot() +
 ```
 
 
-```{r}
-ecodata::plot_nao()
-ecodata::plot_gsi()
-```
-
-
-## Do Annual?
-
-```{r}
-lobecol_fvcom
-```
-
 
 
 ## Days In/Out Temperature Preferences
@@ -968,10 +995,9 @@ Metabolism/Stress at 18C
 # The degday functions were built with the ability to model daily cycles
 # the sine and triangle methods accomodate this
 # since we only have daily data the simple average is probably the way to do it
-library(degday)
 thresh_low <- 10
 thresh_up  <- 18
-lobecol_dd <- lobecol_fvcom %>%
+lobecol_dd <- daily_fvcom_temps %>%
   group_by(area_id) %>% 
   mutate(
     opt_btemp_dd = dd_calc(
@@ -1027,6 +1053,214 @@ lobecol_dd %>%
 
 
 
+
+
+## Monthly Salinity
+
+
+
+```{r}
+#| label: process monthly salinity regimes
+
+# Take the input data,
+# Get monthly averages
+# remove trend and long-term monthly means
+# run STARS routine again
+
+
+# Run the monthly versions
+
+# # Run them all
+# surf_sal_monthly_shifts <- monthly_fvcom_sal %>%
+#   mutate(
+#     year = lubridate::year(time),
+#     month = lubridate::month(time)) %>%
+#   split(.$area_id) %>%
+#   map_dfr(function(.x){
+# 
+#     # Make it monthly
+#     .x_monthly <- .x %>%
+#       group_by(year, month) %>%
+#       summarise(
+#         surface_salinity = mean(surface_salinity, na.rm = T),
+#         bottom_salinity  = mean(bottom_salinity, na.rm = T),
+#         .groups = "drop") %>%
+#       mutate(month = factor(month),
+#              yr_num = as.numeric(as.character(year)))
+# 
+# 
+#     # Fit the model to detrend and remove seasons
+#     # Model a linear trend and the seasonal cycle
+#     season_trend_model <- gam(
+#       surface_salinity ~ month + yr_num,
+#       data = .x_monthly,
+#       method = "REML")
+# 
+#     # save the results
+#     preprocessed_results <- broom::augment(x = season_trend_model) %>%
+#       rename(
+#         model_fit = .fitted,
+#         model_resid = .resid) %>%
+#       # Rebuild a "date" column to pass to the function
+#       mutate(time = as.Date(
+#         str_c(
+#           yr_num,
+#           str_pad(month, side = "left", pad = "0", width = 2),
+#           "15", sep = "-")))
+#     #return(preprocessed_results) #check
+# 
+# 
+#     # Get the results from that
+#     x_rstars <- rstars(
+#       data.timeseries = as.data.frame(
+#         preprocessed_results[,c("time", "model_resid")]),
+#       l.cutoff = 12*7,
+#       pValue = 0.05,
+#       Huber = 1,
+#       Endfunction = T,
+#       preWhitening = T,
+#       OLS = F,
+#       MPK = T,
+#       IP4 = F,
+#       SubsampleSize = (12*7 + 1)/3,
+#       returnResults = T)
+# 
+#     return(x_rstars)
+# 
+#     }, .id = "area_id")
+# 
+# 
+# 
+# #Bottom temperature
+# bot_sal_monthly_shifts <- monthly_fvcom_sal %>%
+#   mutate(
+#     year = lubridate::year(time),
+#     month = lubridate::month(time)) %>%
+#   split(.$area_id) %>%
+#   map_dfr(function(.x){
+# 
+#     # Make it monthly
+#     .x_monthly <- .x %>%
+#       group_by(year, month) %>%
+#       summarise(
+#         surface_salinity = mean(surface_salinity, na.rm = T),
+#         bottom_salinity  = mean(bottom_salinity, na.rm = T),
+#         .groups = "drop") %>%
+#       mutate(month = factor(month),
+#              yr_num = as.numeric(as.character(year)))
+# 
+# 
+#     # Fit the model to detrend and remove seasons
+#     # Model a linear trend and the seasonal cycle
+#     season_trend_model <- gam(
+#       bottom_salinity ~ month + yr_num,
+#       data = .x_monthly,
+#       method = "REML")
+# 
+#     # save the results
+#     preprocessed_results <- broom::augment(x = season_trend_model) %>%
+#       rename(
+#         model_fit = .fitted,
+#         model_resid = .resid) %>%
+#       
+#       # Rebuild a "date" column to pass to the function
+#       mutate(time = as.Date(
+#         str_c(
+#           yr_num,
+#           str_pad(month, side = "left", pad = "0", width = 2),
+#           "15", sep = "-")))
+#     #return(preprocessed_results) #check
+# 
+# 
+#     # Get the results from that
+#     x_rstars <- rstars(
+#       data.timeseries = as.data.frame(
+#         preprocessed_results[,c("time", "model_resid")]),
+#       l.cutoff = 12*7,
+#       pValue = 0.05,
+#       Huber = 1,
+#       Endfunction = T,
+#       preWhitening = T,
+#       OLS = F,
+#       MPK = T,
+#       IP4 = F,
+#       SubsampleSize = (12*7 + 1)/3,
+#       returnResults = T)
+# 
+#     return(x_rstars)
+# 
+#     }, .id = "area_id")
+# 
+# 
+# 
+# 
+# 
+# # Save them
+# write_csv(surf_sal_monthly_shifts, here::here("rstars_results/lobecol_ssal_monthly_shifts_detrended.csv"))
+# write_csv(bot_sal_monthly_shifts, here::here("rstars_results/lobecol_bsal_monthly_shifts_detrended.csv"))
+
+```
+
+
+
+### Plotting Salinity Breaks
+
+```{r}
+mss <- surf_sal_monthly_shifts %>% 
+  filter(RSI != 0) %>% 
+  mutate(
+    shift_direction = if_else(RSI>0, "Shift to Salt", "Shift to Fresh"),   
+    var = "surface salinity") %>% 
+  dplyr::select(area_id, time, RSI, shift_direction, var)
+
+mbs <- bot_sal_monthly_shifts %>% 
+  filter(RSI != 0) %>% 
+  mutate(
+    shift_direction = if_else(
+      RSI > 0, "Shift to Salt", "Shift to Fresh"),   
+    var = "bottom salinity") %>% 
+  dplyr::select(area_id, time, RSI, shift_direction, var)
+
+
+# Combine results for plotting
+sal_results_summ <- bind_rows(list(mss, mbs)) %>% 
+  mutate(area_id = factor(area_id, levels = areas_northsouth),
+         year = year(time))
+
+
+
+
+
+# Plot the breaks over the
+monthly_fvcom_sal %>% 
+  pivot_longer(
+    cols = ends_with("salinity"), 
+    names_to = "var", values_to = "salinity") %>% 
+  mutate(var = str_replace_all(var, "_", " "),
+         area_id = factor(area_id, levels = areas_northsouth)) %>% 
+  ggplot() +
+  geom_line(
+    aes(time, salinity),
+    linewidth = 0.2, alpha = 0.5) +
+  geom_vline(
+    data = sal_results_summ,
+    aes(
+      xintercept = time,
+      color = shift_direction),
+    linewidth = 1.5) +
+  scale_color_gmri() +
+  facet_grid(area_id~var, labeller = label_wrap_gen(), scales = "free") +
+  theme(
+    panel.grid.major = element_blank(),
+    legend.position = "bottom",
+    strip.text.y = element_text(angle = 0)) + 
+  labs(color = "",
+       y = "Salinity",
+       title = "STARS Regime Shifts from FVCOM Salinity")
+```
+
+
+
 # Other Environmental Features
 
 In addition to temperature, we have the additional environmental covariates as well.
@@ -1043,4 +1277,10 @@ list(
 )
 ```
 
+
+
+```{r}
+ecodata::plot_nao()
+ecodata::plot_gsi()
+```
 

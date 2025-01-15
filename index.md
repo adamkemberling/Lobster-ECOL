@@ -41,3 +41,11 @@
 # Regime Shift Evaluation
 
 [Regime Shift Common Methods](https://adamkemberling.github.io/Lobster-ECOL/R/regime_tests/regime_shift_methods.html)
+
+[FVCOM Temperature + Salinity Regime Shifts](https://adamkemberling.github.io/Lobster-ECOL/R/regime_tests/STARS_FVCOM.html)
+
+[GLORYs Temperature + Salinity Regime Shifts](https://adamkemberling.github.io/Lobster-ECOL/R/regime_tests/STARS_GLORYS.html)
+
+
+
+

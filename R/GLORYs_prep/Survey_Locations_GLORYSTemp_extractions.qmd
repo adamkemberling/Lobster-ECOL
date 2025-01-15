@@ -42,6 +42,7 @@ conflicted::conflict_prefer("select", "dplyr")
 conflicted::conflict_prefer("filter", "dplyr")
 proj_path <- cs_path("mills", "Projects/Lobster ECOL")
 glorys_path <- "~/Documents/Repositories/glorys_northeast/GlORYS_surfbot_temps/"
+glorys_path <- cs_path("res", "GLORYS/Globecol_surfbot_timeseries")
 glorys_base_fname <- "CMEMS_Northeast_TempSal_SurfaceBottomTemps_"
 
 source(here::here("R/FVCOM_Support.R"))

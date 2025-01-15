@@ -1,0 +1,566 @@
+---
+title: "GLORYS STARS Regime Shifts"
+description: | 
+  STARS Regime Shift Testing of GLORYS data
+date: "Updated on: `r Sys.Date()`"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    df-print: kable
+    self-contained: true
+execute: 
+  echo: true
+  warning: false
+  message: false
+  fig.align: "center"
+  comment: ""
+
+---
+
+```{r}
+
+# Packages
+{
+  library(here)
+  library(tidyverse)
+  library(rshift)
+  library(gmRi)
+  library(mgcv)
+  library(EnvCpt)
+  library(showtext)
+  library(patchwork)
+  library(degday)
+}
+
+# Make sure lag is done correctly
+conflicted::conflict_prefer("lag", "stats")
+conflicted::conflict_prefer("filter", "dplyr")
+
+# Path to timeseries
+lob_ecol_path <- cs_path("mills", "Projects/Lobster ECOL")
+
+
+# Plot theme
+theme_set(theme_gmri())
+
+
+# Factor Levels
+areas_northsouth <- c(
+  "Eastern Maine",  
+  "Western Maine",  
+  "Central Maine",  
+  "Eastern Mass",
+  "W South Channel",
+  "Nantucket Shoals",  
+  "Off No Mans Land",  
+  "Southern Mass",  
+  "Rhode Island Shore",
+  "Long Island Sound", 
+  "Cholera Bank",
+  "Off Long Island",   
+  "New Jersey Shore",  
+  "Barnegat Ridge",  
+  "Five Fathom Bank",  
+  "Virginia Shore",
+  "GOM_GBK",         
+  "SNE")
+
+area_subset <- c(
+  "Eastern Maine",
+  "Central Maine",
+  "Western Maine",
+  "Eastern Mass",
+  "Southern Mass",
+  "W South Channel",
+  "Nantucket Shoals",
+  "Off No Mans Land",
+  "GOM_GBK",
+  "SNE"
+
+)
+
+```
+
+
+```{r}
+#| label: style-sheet
+#| results: asis
+
+# Use GMRI style for fonts
+use_gmri_style_rmd()
+
+```
+
+
+```{r}
+#| label: fonts-config
+#| echo: false
+
+# Path to the directory containing the font file (replace with your actual path)
+font_dir <- paste0(system.file("stylesheets", package = "gmRi"), "/GMRI_fonts/Avenir/")
+
+# Register the font
+font_add(
+  family = "Avenir",
+  file.path(font_dir, "LTe50342.ttf"),
+  bold = file.path(font_dir, "LTe50340.ttf"),
+  italic = file.path(font_dir, "LTe50343.ttf"),
+  bolditalic = file.path(font_dir, "LTe50347.ttf"))
+
+# Load the font
+showtext::showtext_auto()
+
+```
+
+
+```{r}
+#| label: load timeseries
+
+
+# Load and add inshore/offshore labels on the daily data:
+glorys_path <- cs_path("res", "GLORYS/lobecol_surfbot_timeseries")
+
+# daily glorys timeseries
+area_ids <- list.files(glorys_path, pattern = ".csv") %>% 
+  str_remove_all(".csv") %>% str_remove_all("GLORYs_surfbottempsal_")
+
+# Load and append
+daily_glorys <- list.files(glorys_path, pattern = ".csv", full.names = T) %>% 
+  setNames(area_ids) %>% 
+  map_dfr(read_csv, .id = "area_id") %>% 
+  mutate(depth_type = if_else(area_id %in% c("GOM_GBK", "SNE"), "offshore", "nearshore"))
+
+
+```
+
+
+# STARS Regime Shifts - LobECOL Areas
+
+# {rstars} Implementation
+
+The following results extend the detailed approach of Stirnimann et al. 2019's [{rstars}](https://github.com/LStirnimann/rstars) repository.
+
+
+```{r}
+# Stirnimann used these values in their paper:
+# l = 5,10,15,17.5 years, with monthly data
+# Huber = 1
+# Subsampling = (l + 1)/3
+
+
+# Load the function(s)
+source(here::here("rstars-master","rSTARS.R"))
+
+```
+
+
+
+# Processing Monthly Means
+
+Other than temperature we have very few daily environmental timeseries. We also are less interested in the time within a year that changes ocurred, and more interested in the general year/month that changes are ocurring in. 
+
+For these reasons and for consistency with the other environmental drivers, I will repeat these steps using monthly mean SSt & BT.
+
+
+
+## Monthly Temperature RSI
+
+
+
+```{r}
+#| label: process surface temperature
+#| eval: false
+
+
+# Take the input data,
+# Get monthly averages
+# remove trend and long-term monthly means
+# run STARS routine again
+
+
+# Run the monthly versions
+
+# # Run them all
+# surf_temp_monthly_shifts <- daily_glorys %>%
+#   mutate(
+#     year = lubridate::year(time),
+#     month = lubridate::month(time)) %>%
+#   split(.$area_id) %>%
+#   map_dfr(function(.x){
+# 
+#     # Make it monthly
+#     .x_monthly <- .x %>%
+#       group_by(year, month) %>%
+#       summarise(
+#         surface_t = mean(surface_temp, na.rm = T),
+#         .groups = "drop") %>%
+#       mutate(month = factor(month),
+#              yr_num = as.numeric(as.character(year)))
+# 
+# 
+#     # Fit the model to detrend and remove seasons
+#     # Model a linear trend and the seasonal cycle
+#     season_trend_model <- gam(
+#       surface_t ~ month + yr_num,
+#       data = .x_monthly,
+#       method = "REML")
+# 
+#     # save the results
+#     preprocessed_results <- broom::augment(x = season_trend_model) %>%
+#       rename(
+#         model_fit = .fitted,
+#         model_resid = .resid) %>%
+#       # Rebuild a "date" column to pass to the function
+#       mutate(time = as.Date(
+#         str_c(
+#           yr_num,
+#           str_pad(month, side = "left", pad = "0", width = 2),
+#           "15", sep = "-")))
+#     #return(preprocessed_results) #check
+# 
+# 
+#     # Get the results from that
+#     x_rstars <- rstars(
+#       data.timeseries = as.data.frame(
+#         preprocessed_results[,c("time", "model_resid")]),
+#       l.cutoff = 12*7,
+#       pValue = 0.05,
+#       Huber = 1,
+#       Endfunction = T,
+#       preWhitening = T,
+#       OLS = F,
+#       MPK = T,
+#       IP4 = F,
+#       SubsampleSize = (12*7 + 1)/3,
+#       returnResults = T)
+# 
+#     return(x_rstars)
+# 
+#     }, .id = "area_id")
+
+```
+
+
+```{r}
+#| label: process bottom temperature
+#| eval: false
+
+
+# #Bottom temperature
+# bot_temp_monthly_shifts <- daily_glorys %>%
+#   mutate(
+#     year = lubridate::year(time),
+#     month = lubridate::month(time)) %>%
+#   split(.$area_id) %>%
+#   map_dfr(function(.x){
+# 
+#     # Make it monthly
+#     .x_monthly <- .x %>%
+#       group_by(year, month) %>%
+#       summarise(
+#         bottom_t  = mean(bottom_temp, na.rm = T),
+#         .groups = "drop") %>%
+#       mutate(month = factor(month),
+#              yr_num = as.numeric(as.character(year)))
+# 
+# 
+#     # Fit the model to detrend and remove seasons
+#     # Model a linear trend and the seasonal cycle
+#     season_trend_model <- gam(
+#       bottom_t ~ month + yr_num,
+#       data = .x_monthly,
+#       method = "REML")
+# 
+#     # save the results
+#     preprocessed_results <- broom::augment(x = season_trend_model) %>%
+#       rename(
+#         model_fit = .fitted,
+#         model_resid = .resid) %>%
+#       # Rebuild a "date" column to pass to the function
+#       mutate(time = as.Date(
+#         str_c(
+#           yr_num,
+#           str_pad(month, side = "left", pad = "0", width = 2),
+#           "15", sep = "-")))
+#     #return(preprocessed_results) #check
+# 
+# 
+#     # Get the results from that
+#     x_rstars <- rstars(
+#       data.timeseries = as.data.frame(
+#         preprocessed_results[,c("time", "model_resid")]),
+#       l.cutoff = 12*7,
+#       pValue = 0.05,
+#       Huber = 1,
+#       Endfunction = T,
+#       preWhitening = T,
+#       OLS = F,
+#       MPK = T,
+#       IP4 = F,
+#       SubsampleSize = (12*7 + 1)/3,
+#       returnResults = T)
+# 
+#     return(x_rstars)
+# 
+#     }, .id = "area_id")
+
+
+```
+
+
+```{r}
+#| label: process surface salinity
+#| eval: false
+
+
+# # Surface Salinity
+# surface_sal_monthly_shifts <- daily_glorys %>%
+#   mutate(
+#     year = lubridate::year(time),
+#     month = lubridate::month(time)) %>%
+#   split(.$area_id) %>%
+#   map_dfr(function(.x){
+# 
+#     # Make it monthly
+#     .x_monthly <- .x %>%
+#       group_by(year, month) %>%
+#       summarise(
+#         surface_sal  = mean(surface_sal, na.rm = T),
+#         .groups = "drop") %>%
+#       mutate(month = factor(month),
+#              yr_num = as.numeric(as.character(year)))
+# 
+# 
+#     # Fit the model to detrend and remove seasons
+#     # Model a linear trend and the seasonal cycle
+#     season_trend_model <- gam(
+#       surface_sal ~ month + yr_num,
+#       data = .x_monthly,
+#       method = "REML")
+# 
+#     # save the results
+#     preprocessed_results <- broom::augment(x = season_trend_model) %>%
+#       rename(
+#         model_fit = .fitted,
+#         model_resid = .resid) %>%
+#       # Rebuild a "date" column to pass to the function
+#       mutate(time = as.Date(
+#         str_c(
+#           yr_num,
+#           str_pad(month, side = "left", pad = "0", width = 2),
+#           "15", sep = "-")))
+#     #return(preprocessed_results) #check
+# 
+# 
+#     # Get the results from that
+#     x_rstars <- rstars(
+#       data.timeseries = as.data.frame(
+#         preprocessed_results[,c("time", "model_resid")]),
+#       l.cutoff = 12*7,
+#       pValue = 0.05,
+#       Huber = 1,
+#       Endfunction = T,
+#       preWhitening = T,
+#       OLS = F,
+#       MPK = T,
+#       IP4 = F,
+#       SubsampleSize = (12*7 + 1)/3,
+#       returnResults = T)
+# 
+#     return(x_rstars)
+# 
+#     }, .id = "area_id")
+
+
+```
+
+```{r}
+#| label: process bottom salinity
+#| eval: false
+
+# # Bottom Salinity
+# bottom_sal_monthly_shifts <- daily_glorys %>%
+#   mutate(
+#     year = lubridate::year(time),
+#     month = lubridate::month(time)) %>%
+#   split(.$area_id) %>%
+#   map_dfr(function(.x){
+# 
+#     # Make it monthly
+#     .x_monthly <- .x %>%
+#       group_by(year, month) %>%
+#       summarise(
+#         bottom_sal  = mean(bottom_sal, na.rm = T),
+#         .groups = "drop") %>%
+#       mutate(month = factor(month),
+#              yr_num = as.numeric(as.character(year)))
+# 
+# 
+#     # Fit the model to detrend and remove seasons
+#     # Model a linear trend and the seasonal cycle
+#     season_trend_model <- gam(
+#       bottom_sal ~ month + yr_num,
+#       data = .x_monthly,
+#       method = "REML")
+# 
+#     # save the results
+#     preprocessed_results <- broom::augment(x = season_trend_model) %>%
+#       rename(
+#         model_fit = .fitted,
+#         model_resid = .resid) %>%
+#       # Rebuild a "date" column to pass to the function
+#       mutate(time = as.Date(
+#         str_c(
+#           yr_num,
+#           str_pad(month, side = "left", pad = "0", width = 2),
+#           "15", sep = "-")))
+#     #return(preprocessed_results) #check
+# 
+# 
+#     # Get the results from that
+#     x_rstars <- rstars(
+#       data.timeseries = as.data.frame(
+#         preprocessed_results[,c("time", "model_resid")]),
+#       l.cutoff = 12*7,
+#       pValue = 0.05,
+#       Huber = 1,
+#       Endfunction = T,
+#       preWhitening = T,
+#       OLS = F,
+#       MPK = T,
+#       IP4 = F,
+#       SubsampleSize = (12*7 + 1)/3,
+#       returnResults = T)
+# 
+#     return(x_rstars)
+# 
+#     }, .id = "area_id")
+
+```
+
+
+```{r}
+#| eval: false
+
+# # Save them
+# glorys_results <- bind_rows(
+#   list(
+#     "surface_temperature" = surf_temp_monthly_shifts,
+#     "surface_salinity" = surface_sal_monthly_shifts,
+#     "bottom_temperature" = bot_temp_monthly_shifts,
+#     "bottom_salinity" = bottom_sal_monthly_shifts
+#   ), .id = "var"
+# )
+
+
+# # Save it
+# write_csv(glorys_results,
+#           here::here("rstars_results/glorys_stemp_monthly_shifts.csv"))
+
+
+```
+
+
+
+```{r}
+#| eval: true
+#| label: plot surface temp monthly RSI
+
+# Load that data again
+glorys_monthly_shifts <- read_csv(here::here("rstars_results/glorys_stemp_monthly_shifts.csv")) %>% 
+  mutate(
+    depth = if_else(str_detect(var, "bottom"), "Bottom", "Surface"),
+    var = str_remove(var, "surface_|bottom_"), shift_direction = if_else(RSI>0, "Shift Up", "Shift Down")) 
+
+
+# Plot the RSI for both
+glorys_monthly_shifts %>% 
+ ggplot() +
+  geom_line(aes(time, RSI), linewidth = 0.5, alpha = 0.35) +
+  geom_hline(yintercept = 0) +
+  facet_grid(var~depth) +
+  labs(
+    x = "Time",
+    y = "RSI",
+    title = "Monthly Surface Temperature RSI")
+```
+
+
+
+### Summary Plot
+
+```{r}
+#| fig-height: 10
+
+
+# Summarise the breakpoint locations
+results_summ <- glorys_monthly_shifts %>% 
+  filter(RSI != 0) %>% 
+  dplyr::select(area_id, time,  var, depth, RSI, shift_direction)
+
+
+
+# Make monthly data
+glorys_monthly <- daily_glorys %>% 
+  group_by(
+    area_id,
+    year = year(time),
+    month = month(time)) %>% 
+  summarise(
+    surface_temp = mean(surface_temp, na.rm = T),
+    surface_sal = mean(surface_sal, na.rm = T),
+    bottom_temp = mean(bottom_temp, na.rm = T),
+    bottom_sal = mean(bottom_sal, na.rm = T),
+    .groups = "drop") %>% 
+  mutate(
+    #area_id = factor(area_id, levels = areas_northsouth),
+    time = as.Date(
+      str_c(
+        year,
+        str_pad(month, side = "left", pad = "0", width = 2),
+        "15", sep = "-"))) %>% 
+  rename(
+    `monthly surface temperature` = surface_temp,
+    `monthly bottom temperature` = bottom_temp,
+    `monthly surface salinity` = surface_sal,
+    `monthly bottom salinity` = bottom_sal) %>% 
+  pivot_longer(
+    names_to = "label", 
+    values_to = "val", cols = starts_with("monthly")) %>% 
+  mutate(
+    var = if_else(str_detect(label, "temperature"), "temperature", "salinity"),
+    depth = if_else(str_detect(label, "surface"), "Surface", "Bottom"),
+  )
+
+
+
+# Plot the breaks over the monthly data
+deg_c <- "\u00b0C"
+ggplot() +
+  geom_line(
+    data = glorys_monthly,
+     aes(time, val),
+    linewidth = 0.2, alpha = 0.5) +
+  geom_vline(
+    data = results_summ,
+    aes(
+      xintercept = time,
+      color = shift_direction),
+    linewidth = 1.5) +
+  scale_color_gmri() +
+  #scale_y_continuous(labels = scales::label_number(suffix = deg_c)) +
+  facet_grid(area_id ~ depth*var, labeller = label_wrap_gen()) +
+  theme(
+    legend.position = "bottom",
+    strip.text.y = element_text(angle = 0)) + 
+  labs(color = "",
+       y = "Measurement",
+       title = "STARS Regime Shifts, Monthly GLORYS Data")
+
+```
+
+
+
+
+
