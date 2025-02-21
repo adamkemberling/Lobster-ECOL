@@ -70,7 +70,7 @@ An issue with doing this ourselves, is we'll need to download and regrid 2017-20
 
 ## The Approach:
 
-This document will mirror the regional surface temperature processing doc, but will use monthly mean data from thredds. For each of these data endpoints we will do the following things:
+This document will mirror the regional surface temperature processing doc, but will use monthly mean data downloaded from thredds. For each of these data endpoints we will do the following things:
 
 -   Open one file to access the mesh, identify which nodes are within each region of interest
 
@@ -103,60 +103,13 @@ ncvar_get(gom3_x, "Times")
 # ncvar_get(gom3_x, "siglay")[,45] # Bottom Layer
 # ncvar_get(gom3_x, "siglev")[,46] # Bottom Level
 
-# Get the mesh itself as a simple feature collection
-gom3_mesh <- get_mesh_geometry(gom3_x, what = 'lonlat')
+# # Get the mesh itself as a simple feature collection
+# gom3_mesh <- get_mesh_geometry(gom3_x, what = 'lonlat')
 
 
 ```
 
 -   get the areas of all triangles and partial triangles for weighting
-
-```{r}
-#| eval: false
-#| label: perform intersections of mesh and regions
-
-# Run them all and save tables in- case we need to operate in python
-inshore_intersections <- map_dfr(inshore_trans, function(x){
-  # Run intersection
-  mesh_clip <- st_intersection(gom3_mesh, x) 
-  
-  # Get areas
-  # Pull necessary information out
-  mesh_clip_df <- mesh_clip %>% 
-    mutate(rel_area = st_area(mesh_clip)) %>% 
-    select(SHORT_NAME, Id_1, FULL_NAME, elem, p1, p2, p3, rel_area) %>% 
-    st_drop_geometry()
-  
-  # Return
-  return(mesh_clip_df)
-  
-})
-
-# Run them all and save tables in- case we need to operate in python
-offshore_intersections <- map_dfr(offshore_trans, function(x){
-  
-  # Run intersection
-  mesh_clip <- st_intersection(gom3_mesh, x) 
-  
-  # Get areas
-  # Pull necessary information out
-  mesh_clip_df <- mesh_clip %>% 
-    mutate(rel_area = st_area(mesh_clip)) %>% 
-    select(Region, elem, p1, p2, p3, rel_area) %>% 
-    st_drop_geometry()
-  
-  # Return
-  return(mesh_clip_df)
-  
-})
-
-
-# # Save these out for lookup tables
-# write_csv(inshore_intersections, here::here("local_data/inshore_areas_mesh_weights.csv"))
-# write_csv(offshore_intersections, here::here("local_data/offshore_areas_mesh_weights.csv"))
-
-```
-
 
 
 After we perform the `st_intersection` we are left with all the mesh areas within the area of interest. From that intersection we can store in lookup tables the triangle id, the node index numbers, and the area (and partial area) of each traingle from the intersection.
@@ -224,11 +177,13 @@ average_from_nodes <- function(
       count = c(-1, 1, time_count))
   
   # Compute mean time series for each trio using purrr::map
-  triangular_element_means <- pmap(fvcom_mesh_trios, function(elem, p1, p2, p3) {
-    p1_ts = var_slice[p1]
-    p2_ts = var_slice[p2]
-    p3_ts = var_slice[p3]
-    trio_time_series <- (p1_ts + p2_ts + p3_ts) / 3
+  triangular_element_means <- pmap(
+    .l = fvcom_mesh_trios, 
+    .f = function(elem, p1, p2, p3) {
+      p1_ts = var_slice[p1]
+      p2_ts = var_slice[p2]
+      p3_ts = var_slice[p3]
+      trio_time_series <- (p1_ts + p2_ts + p3_ts) / 3
   })
   triangular_element_means <- setNames(triangular_element_means, fvcom_mesh_trios$elem)
   

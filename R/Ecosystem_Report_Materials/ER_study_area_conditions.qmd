@@ -1,0 +1,436 @@
+---
+title: "Ecosystem Report FVCOM"
+description: | 
+  Extracting Surface and Bottom FVCOM Conditions for the CBASS Survey
+date: "Updated on: `r Sys.Date()`"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    df-print: kable
+    self-contained: true
+execute: 
+  echo: true
+  warning: false
+  message: false
+  fig.align: "center"
+  comment: ""
+---
+
+```{r}
+
+####. packages. ####
+library(gmRi)
+library(tidyverse)
+library(sf)
+library(rnaturalearth)
+library(fvcom)
+library(ncdf4)
+library(patchwork)
+
+# Set the theme
+theme_set(theme_bw() + map_theme())
+
+# Project paths
+lob_ecol_path <- cs_path("mills", "Projects/Lobster ECOL")
+fvcom_path <- cs_path("res", "FVCOM/Lobster-ECOL")
+poly_paths <- cs_path("mills", "Projects/Lobster ECOL/Spatial_Defs")
+
+# Shapefiles
+maine <- ne_states(
+  country = "united states of america", 
+  returnclass = "sf") %>%
+  filter(postal %in% c("ME"))
+
+# Medium shoreline
+shore <- st_read(str_c(
+  cs_path("res", "Shapefiles/us_medium_shoreline"),
+  "us_medium_shoreline.shp"
+))
+
+
+theme_set(
+  theme_bw() +
+  map_theme(
+    legend.position = "bottom", 
+    legend.title.position = "top") +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "bottom",
+    legend.title.position = "top",
+    text = element_text(family = "Avenir"),
+    plot.title = element_text(face = "bold"), 
+    legend.title = element_text(face = "bold"))
+)
+
+
+
+# These can be plotted
+# Make a box to use when cropping based on an xlim and ylim pair
+make_cropbox <- function(xlims, ylims){
+  sfc <- st_sfc(st_polygon(list(
+    rbind(c(xlims[[1]], ylims[[1]]),  
+          c(xlims[[1]], ylims[[2]]), 
+          c(xlims[[2]], ylims[[2]]), 
+          c(xlims[[2]], ylims[[1]]), 
+          c(xlims[[1]], ylims[[1]])))))
+  sfc <- st_as_sf(sfc)
+  return(sfc)
+}
+
+
+# Make Bounding Boxes
+casco_bay <- make_cropbox(
+  xlims = c(-70.30, -70.18), 
+  ylims = c(43.56, 43.73)) %>% 
+  st_set_crs(st_crs(4326))
+
+
+qbc <- make_cropbox(
+  xlims = c(-70.03, -69.90), 
+  ylims = c(43.71, 43.85)) %>% 
+  st_set_crs(st_crs(4326))
+
+
+```
+
+
+```{r}
+#| label: style-sheet
+#| results: asis
+
+# Use GMRI style
+use_gmri_style_rmd()
+
+```
+
+
+
+
+```{r}
+#| label: fonts-config
+#| echo: false
+
+
+library(showtext)
+
+# Path to the directory containing the font file (replace with your actual path)
+font_dir <- paste0(system.file("stylesheets", package = "gmRi"), "/GMRI_fonts/Avenir/")
+
+# Register the font
+font_add(
+  family = "Avenir",
+  file.path(font_dir, "LTe50342.ttf"),
+  bold = file.path(font_dir, "LTe50340.ttf"),
+  italic = file.path(font_dir, "LTe50343.ttf"),
+  bolditalic = file.path(font_dir, "LTe50347.ttf"))
+
+# Load the font
+showtext::showtext_auto()
+
+```
+
+
+
+## FVCOM Conditions for CBASS+QBC Area
+
+There are a couple physical features that FVCOM may provide context for with regards to the areas sampled by the CBASS program.
+
+This doc will look at the monthly temperature and salinity profiles for the two study areas, and try to make some content relevant for the purpose.
+
+The second physical feature that may be of interest is the Gulf Stream Position, for which we may revisit the gulfstream package ben had begun work on.
+
+```{r}
+#| label: study area map
+
+
+ggplot() +
+  #geom_sf(data = maine) +
+  geom_sf(data = shore, color = "gray30", linewidth = 0.4, alpha = 0.8) +
+  geom_sf(data = casco_bay, 
+          aes(color = "GMRI Casco Bay Study Area"), fill = NA, linewidth = 1.2) +
+  geom_sf(data = qbc, 
+          aes(color = "Quahog Bay Conservancy Study Area"), fill = NA, linewidth = 1.2) +
+  scale_color_gmri() +
+  # coord_sf(
+  #   xlim = c(-70.7, -69.3), 
+  #   ylim = c(43.2, 44.1)) +
+  coord_sf(
+    xlim = c(-70.6, -69.3), 
+    ylim = c(43.3, 44.0)) +
+  labs(title = "CBASS Study Areas", 
+       color = "Study Sites")
+
+```
+
+## The Approach:
+
+This document mirrors the salinity processing doc which uses monthly mean data downloaded from thredds.
+
+For each of these data endpoints we will do the following things:
+
+-   Open one file to access the mesh, identify which nodes are within each region of interest
+
+```{r}
+
+
+# GMRI Inventory of monthly hindcast means - no/broken coordinates
+
+# Here are the files we have, loop over them later
+fvcom_surfbot_files <- setNames(
+  list.files(fvcom_path, full.names = T, pattern = ".nc"),
+  str_remove(list.files(fvcom_path, full.names = F, pattern = ".nc"), ".nc"))
+
+
+# Test File: GOM3 1978
+# Load some daily FVCOM that we downloaded and averaged
+gom3_x <- nc_open(fvcom_surfbot_files["gom3_1978"])
+
+
+# Get the mesh itself as a simple feature collection
+gom3_mesh <- get_mesh_geometry(gom3_x, what = 'lonlat')
+
+
+```
+
+### Subset to Areas of Interest 
+
+get the areas of all triangles and partial triangles for weighting an area average, and for making a map of the coverage:
+
+```{r}
+#| eval: false
+#| label: perform intersections of mesh and regions
+
+# Transform the two areas to right CRS
+# Put them in a list for convenience
+cbass_areas <- list(
+  "Quahog Bay Conservancy" = mutate(qbc, area_id = "Quahog Bay Conservancy"),
+  "GMBRI CBASS Survey Area" = mutate(casco_bay, area_id = "Quahog Bay Conservancy"))
+ 
+
+# Transform
+cbass_trans <- map(cbass_areas, ~st_transform(st_make_valid(.x), st_crs(gom3_mesh)))
+
+
+# Run them all and save tables in- case we need to operate in python
+sf_use_s2(use_s2 = F)
+area_intersections <- map_dfr(cbass_trans, function(x){
+  
+  # Run intersection
+  mesh_clip <- st_intersection(gom3_mesh, st_make_valid(x)) 
+  
+  # Get areas
+  # Pull necessary information out
+  mesh_clip_df <- mesh_clip %>% 
+    mutate(rel_area = st_area(mesh_clip)) %>% 
+    st_drop_geometry()
+  
+  # Return
+  return(mesh_clip_df)
+  
+})
+
+
+```
+
+### GOM3 Coverage
+
+```{r}
+# Maps
+ggplot() +
+  geom_sf(data = gom3_mesh, linewidth = 0.2, fill = NA) +
+  geom_sf(
+    data = st_intersection(gom3_mesh, cbass_trans$`GMBRI CBASS Survey Area`), 
+    aes(color = "GMRI CBASS Survey Area"), fill = NA) +
+  geom_sf(
+    data = st_intersection(gom3_mesh, cbass_trans$`Quahog Bay Conservancy`), 
+    aes(color = "Quahog Bay Conservancy"), fill = NA) +
+  geom_sf(
+    data = casco_bay, 
+    aes(color = "GMRI CBASS Survey Area"), fill = NA, linewidth = 1) +
+  geom_sf(data = qbc, 
+          aes(color = "Quahog Bay Conservancy"), fill = NA, linewidth = 1) +
+  scale_color_gmri() +
+  coord_sf(
+    xlim = c(-70.4, -69.8), 
+    ylim = c(43.5, 43.9)) +
+  labs(title = "FVCOM Coverage of CBASS Study Areas")
+```
+
+### GOM4 & GOM5 Meshes
+
+
+```{r}
+# # Base URL path
+# seaplan_hcast <- "http://www.smast.umassd.edu:8080//thredds/fileServer/models/fvcom/NECOFS/Archive/Seaplan_33_Hindcast_v1/monthly_mean/"
+# gom4_base <- "gom4_monthly_mean_temp_"
+# gom5_base <- "gom5_monthly_mean_temp_"
+# 
+# # year/month details
+# gom4_yr   <- 2017
+# gom4_mnth <- "01"
+# gom4_url  <- str_c(seaplan_hcast, gom4_base, gom4_yr, gom4_mnth, ".nc")
+# 
+# 
+# # # Open Connection
+# gom4_x <- nc_open(gom4_url)
+# gom4_mesh <-  get_mesh_geometry(gom4_yrx, what = 'lonlat')
+# nc_close(gom4_x)
+
+
+# Or Just use what I downloaded....
+gom4_path <- cs_path("res", "FVCOM/monthly_means/gom4_mon_means")
+gom4_base <- "gom4_monthly_mean_temp_"
+gom4_file <- str_c(gom4_path, gom4_base, "201808.nc")
+gom4_x <- nc_open(gom5_file)
+
+
+gom5_path <- cs_path("res", "FVCOM/monthly_means/gom5_mon_means")
+gom5_base <- "gom5_monthly_mean_temp_"
+gom5_file <- str_c(gom5_path, gom5_base, "201708.nc")
+gom5_x <- nc_open(gom5_file)
+
+
+
+# the FVCOm package doesn't like how the CRS is stored in the file attributes and breaks
+# We can use some functions but not the mesh ones
+gom3_nodes <- fvcom_nodes(gom3_x)
+gom4_nodes <- fvcom_nodes(gom4_x)
+gom5_nodes <- fvcom_nodes(gom5_x)
+
+gom3_map <- ggplot() +
+  geom_sf(
+    data = casco_bay, 
+    aes(color = "GMRI CBASS Survey Area"), 
+    fill = NA, linewidth = 1, show.legend = F) +
+  geom_sf(data = qbc, 
+          aes(color = "Quahog Bay Conservancy"), 
+          fill = NA, linewidth = 1, show.legend = F) +
+  geom_point(
+    data = gom3_nodes,
+    aes(lon, lat, shape = "GOM3 Mesh"), 
+    size = 0.2, alpha = 0.5, color = "gray20") +
+  scale_color_gmri() +
+  coord_sf(
+    xlim = c(-70.4, -69.8), 
+    ylim = c(43.5, 43.9)) +
+  labs(title = "GOM3 Coverage",
+       x = "", y = "",
+       subtitle = "1978-2016")
+
+
+
+gom4_map <- ggplot() +
+  geom_sf(
+    data = casco_bay, 
+    aes(color = "GMRI CBASS Survey Area"), 
+    fill = NA, linewidth = 1, show.legend = F) +
+  geom_sf(data = qbc, 
+          aes(color = "Quahog Bay Conservancy"), 
+          fill = NA, linewidth = 1, show.legend = F) +
+  geom_point(
+    data = gom4_nodes,
+    aes(lon, lat, shape = "GOM4 Mesh"), 
+    size = 0.2, alpha = 0.5, color = "gray20") +
+  scale_color_gmri() +
+  coord_sf(
+    xlim = c(-70.4, -69.8), 
+    ylim = c(43.5, 43.9)) +
+  labs(title = "GOM4 Coverage", shape = "",
+       x = "", y = "",
+       subtitle = "2018, 2019, 2020")
+
+
+gom5_map <- ggplot() +
+  geom_sf(
+    data = casco_bay, 
+    aes(color = "GMRI CBASS Survey Area"), 
+    fill = NA, linewidth = 1, show.legend = F) +
+  geom_sf(data = qbc, 
+          aes(color = "Quahog Bay Conservancy"), 
+          fill = NA, linewidth = 1, show.legend = F) +
+  geom_point(
+    data = gom5_nodes,
+    aes(lon, lat, shape = "GOM5 Mesh"), 
+    size = 0.2, alpha = 0.5, color = "gray20") +
+  scale_color_gmri() +
+  coord_sf(
+    xlim = c(-70.4, -69.8), 
+    ylim = c(43.5, 43.9)) +
+  labs(title = "GOM5 Coverage", shape = "",
+       x = "", y = "",
+       subtitle = "2017")
+
+
+(gom3_map | gom4_map | gom5_map) + 
+  plot_layout(guides = "collect")
+
+
+
+```
+
+
+
+```{r}
+#| eval: false
+#| label: debugging gom4 and gom5
+
+gom4_x
+gom4_x
+gom4_node_mesh <- get_node_mesh_geometry(x = gom4_x, what = "lonlat")
+gom4_node_mesh <- get_node_mesh_geometry(x = gom5_x, what = "lonlat")
+
+```
+
+
+
+#### Rivers
+
+USGS has some river information for the royal river
+
+```{r}
+# https://waterdata.usgs.gov/blog/dataretrieval/
+# install.packages("dataRetrieval")
+library(dataRetrieval)
+
+# Parameter Codes
+pcode <- readNWISpCode("all")
+pcode %>% glimpse()
+
+# Sites
+royal_river <- "01060000"
+sheepscot <- "01038000"
+
+# Get site info
+readNWISsite(siteNumbers = royal_river) %>% glimpse()
+readNWISsite(siteNumbers = sheepscot) %>% glimpse()
+
+
+# User-friendly retrieval
+# type of data
+# usgs site number
+# parameter code(s)
+# time frame
+rr_data <- readNWISmeas(
+  siteNumbers = royal_river,  
+  startDate = as.Date("1968-01-01"), 
+  endDate = as.Date("2024-12-31"))
+glimpse(rr_data)
+range(rr_data$measurement_dateTime)
+
+
+ggplot(rr_data, aes(measurement_dateTime, discharge_va)) +
+  geom_line() +
+  labs(title = "Royal River discharge_va")
+
+
+# Daily temperature in Maine
+dataTemp <- readNWISdata(
+  stateCd = "ME", 
+  parameterCd = "00010", # temperature
+  service = "dv" # daily values
+)
+# Doesn't pull royal river, might jsut have discharge
+dataTemp %>% filter(site_no == royal_river)
+```
+

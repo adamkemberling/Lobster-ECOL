@@ -1,0 +1,1207 @@
+---
+title: "Seasonal Mean Interpolations"
+description: | 
+  Linear Interpolation of Seasonal Mean Surface + Bottom Temperatures for Trawl+VTS Survey Locations
+date: "Updated on: `r Sys.Date()`"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    df-print: kable
+    self-contained: true
+execute: =
+  echo: true
+  warning: false
+  message: false
+  fig.align: "center"
+  comment: ""
+---
+
+
+```{r}
+
+# Packages
+{
+library(raster)        # netcdf data as raster
+library(sf)            # vector spatial mapping/operations
+library(fvcom)         # fvcom mesh and variable extractions
+library(ncdf4)         # netcdf support
+library(tidyverse)     # data wrangling and plotting
+library(gmRi)          # color schemes and cloud storage paths
+library(patchwork)     # plot arrangement
+library(rnaturalearth) # coastlines and state polygons
+library(geometry)      # bathycentric coordinates
+library(Matrix)        # matrix algebra
+library(sysfonts)      # font support
+}
+
+
+# Paths + conflicts
+conflicted::conflict_prefer("select", "dplyr")
+conflicted::conflict_prefer("filter", "dplyr")
+# proj_path <- cs_path("mills", "Projects/Lobster ECOL")
+# Path to project folder
+proj_path <- cs_path("mills", "Projects/Lobster ECOL/lobster_data")
+
+# # Path(s) to state trawl survey data
+state_surveys <- str_c(proj_path, "state_trawl/")
+
+
+source(here::here("R/FVCOM_Support.R"))
+theme_set(theme_bw() + map_theme())
+
+# Shapefiles
+new_england <- ne_states("united states of america", returnclass = "sf") %>% 
+  filter(postal %in% c("VT", "ME", "RI", "MA", "CT", "NH", "NY", "MD", "VA", "NJ", "DE", "NC", "PA", "WV"))
+canada <- ne_states("canada", returnclass = "sf")
+
+
+# Gom EPU to clip
+res_shapes <- cs_path("res", "Shapefiles")
+epu_path <- str_c(res_shapes, "EPU/")
+gom_poly <- read_sf(str_c(epu_path, "individual_epus/GOM.geojson"))
+
+```
+
+
+
+
+```{r}
+#| label: style-sheet
+#| results: asis
+
+# Use GMRI style
+use_gmri_style_rmd()
+
+```
+
+
+
+```{r}
+#| label: fonts-config
+#| echo: false
+
+# Path to the directory containing the font file (replace with your actual path)
+font_dir <- paste0(system.file("stylesheets", package = "gmRi"), "/GMRI_fonts/Avenir/")
+
+# Register the font
+font_add(
+  family = "Avenir",
+  file.path(font_dir, "LTe50342.ttf"),
+  bold = file.path(font_dir, "LTe50340.ttf"),
+  italic = file.path(font_dir, "LTe50343.ttf"),
+  bolditalic = file.path(font_dir, "LTe50347.ttf"))
+
+# Load the font
+showtext::showtext_auto()
+
+```
+
+# About: Seasonal FVCOM for Survey Data
+
+This quarto steps through the data prep for attaching the appropriate seasonal mean surface and bottom conditions using FVCOM data from the nearest three mesh nodes.
+
+Survey coordinates from both state and federal trawl and trap surveys will be prepared this way, with sampling seasons adjusted for the survey seasons.
+
+
+## Seasonal Mean Temperature and Salinity for State+Federal Lobster Survey Locations
+
+Before Claire left, I wrote down these notes:
+ - Resolve the join issue that was leading to survey locations with missing FVCOM data (could be a data filtering thing during survdat prep, or a lat/lon rounding thing)
+ - For the trawl locations we want the average conditions over 3-month periods, not the day-of conditions
+ - For VTS survey data this will be the July & August 2-month average
+ 
+ 
+ 
+ 
+### Load Surveys
+
+
+For loading in the station info, we want to standardize the columns and keep with us the bare minimum we need to join back to the catch data.
+
+This should include the survey program, some unique tow ID, season, date, latitude, and longitude. For cases where "ID" is not an explicit column already, it will be constructed to create a unique identifier. The unique identifier will be used to join the FVCOM data back to the survey data. This should perform better than coordinate fields which may mis-match along the way if there are is any rounding that occurs.
+
+Starting latitude and longitude will be used for the positioning. These will be renamed to `lon` & `lat` for laziness.
+
+
+Lastly a new column `program` will be created to identify the sampling program that the data came from.
+
+#### 1. Federal trawl survey
+
+For the federal trawl survey data, the unique ID column will be a concatenation of `svvessel`,`cruise6`, `station`, `stratum`, & `tow`. 
+ 
+```{r}
+#| label: load federal survey data
+
+### Load NEFSC Trawl Data
+
+# Load the trawl data
+fed_trawl_path <- cs_path("res", "nmfs_trawl/SURVDAT_current")
+# tidy it a little - drops inshore strata
+fed_trawl_dat <- read_rds(str_c(fed_trawl_path, "survdat_lw.rds")) %>% 
+  pluck("survdat") %>% 
+  janitor::clean_names()
+
+# Get distinct time/date/tow/locations
+fed_trawl_stations <- fed_trawl_dat %>% 
+  mutate(
+    station_id = str_c(svvessel, cruise6, station, stratum, tow, sep = "-"),
+    date = as.Date(est_towdate),
+    program = "NMFS Trawl Survey"
+  ) %>% 
+  distinct(program, station_id, season, date, lat, lon)
+
+gt::gt(head(fed_trawl_stations))
+```
+ 
+#### 2. Maine & New Hampshire Trawl Survey
+
+For Maine and New Hampshire the `id` column will be a concatenation of `survey`, `year`, `region`, `depth_stratum`, & `tow_number`.
+ 
+
+```{r}
+#| label: menh trawl data
+
+# Maine NH Trawl Survey - ID
+menh_path <- str_c(state_surveys, "ME_trawldata/")
+menh_trawl <- read_csv(str_c(menh_path, "MaineDMR_Trawl_Survey_Tow_Data_2024-05-17.csv"))  %>% 
+  janitor::clean_names()
+menh_trawl_stations <- menh_trawl  %>% 
+  mutate(
+   station_id = str_c(survey, year, region, depth_stratum, tow_number),
+   date = as.Date(start_date),
+   program = "MENH Trawl Survey") %>% 
+  distinct(program, station_id, season, date, lat = start_latitude, lon = start_longitude)
+
+gt::gt(head(menh_trawl_stations))
+```
+
+
+#### 3. Massachusetts Trawl Survey
+
+The `id` for the MA state trawl survey will be a concatenation of `vessel`, `cruise6`, `stratum`, & `station`.
+
+
+```{r}
+#| label: mass trawl data
+
+# Mass Trawl
+mass_path  <- cs_path("res", "MA_Trawl/Pull_20240716/Manipulated")
+mass_trawl <- read_csv(str_c(mass_path, "MADMF_SVSTA_SW_2024.csv"))  %>% 
+  janitor::clean_names()
+mass_trawl_stations <- mass_trawl %>% 
+  mutate(
+    date = as.Date(
+      str_c(
+        year, 
+        str_pad(month, side = "left", pad = "0", width = 2), 
+        str_pad(day, side = "left", pad = "0", width = 2),
+        sep = "-")),
+    station_id = str_c(vessel, cruise6, station, sep = "-"),
+    program = "MA Trawl Survey") %>% 
+  distinct(program, station_id, season, date, lat = start_lat, lon = start_lon)
+
+gt::gt(head(mass_trawl_stations))
+```
+
+#### 4. Rhode Island Trawl
+
+Rhode Island state survey has a `trawl_identity` field. Some of these stations lack lat/lon info so there will be fewer records than this identifier.
+
+RI's new `station_id` will use `season` and `trawl_identity` to make sure the field reads as a string anywhere in the future.
+
+
+```{r}
+#| label: RI trawl Data
+
+# Rhode Island
+load(str_c(state_surveys, "RI_LOBSTER_TRAWL_012324.Rdata"))
+# Loads RI_Stations & RI_Lengths
+ri_trawl <- RI_Stations %>% 
+  janitor:: clean_names() 
+
+ri_trawl_stations <- ri_trawl %>% 
+  drop_na(lat, lon) %>% 
+  mutate(
+    date = as.Date(
+      str_c(year, 
+        str_pad(month, side = "left", pad = "0", width = 2), 
+        str_pad(day, side = "left", pad = "0", width = 2),
+      sep = "-")),
+    station_id = str_c(season, trawl_identity, sep = "-"),
+    program = "RI Trawl Survey") %>% 
+  distinct(program, station_id, season, date, lat, lon)
+
+gt::gt(head(ri_trawl_stations))
+
+```
+
+For the NEAMAP data, there is an ID column already, so we can use that. We can make a date column from ymd info, and then pull the coordinates.
+
+```{r}
+#| label: Neamap trawl data
+
+# NEAMAP
+load(str_c(state_surveys, "NEAMAP Trawl.Rdata"))
+
+# Loads these two objects
+# glimpse(Stations) # Details on where stations happened
+# glimpse(Lengths)  # Details on the catch
+
+# Tidy it up
+neamap_stations <- Stations %>% 
+  janitor::clean_names() %>% 
+  mutate(
+    station_id = id,
+    date = as.Date(
+    str_c(
+      year, 
+      str_pad(month, side = "left", pad = "0", width = 2), 
+      str_pad(day, side = "left", pad = "0", width = 2),
+      sep = "-")),
+    program = "NEAMAP Survey") %>% 
+  distinct(program, station_id, season, date, lon = longitude, lat = latitude)
+
+gt::gt(head(neamap_stations))
+
+```
+
+
+For the New Jersey data the start and end coordinates need to be changed to something. I will first see if NAD1983-UTM18 is a good projected coordinate system, that or the state plane crs.
+
+
+
+```{r}
+#| label: NJ trawl data
+
+# New Jersey
+nj_trawl <- readxl::read_xlsx(str_c(state_surveys, "NJ AM LOBSTER TRAWL SURVEY_RAW DATA_2023 TERMINAL.xlsx")) %>% 
+  janitor::clean_names() 
+
+# Pull Stations
+nj_stations <- nj_trawl %>% 
+  mutate(
+    station_id = str_c(vessel, id, sep = "-"),
+    yrmoda = as.character(yrmoda),
+    date = as.Date(yrmoda, format = "%Y%m%d"),
+    program = "NJ Trawl Survey") %>% #glimpse()
+  distinct(program, station_id, date, lat = slat, lon = slong) %>% 
+  drop_na(lon, lat)
+
+# Change coordinates to degrees
+# UTM Zone 18N — Covers New Jersey and the surrounding offshore waters.
+# EPSG: 32618 (WGS84) or 26918 (NAD83).
+# New Jersey State Plane (NAD83)
+# EPSG: 3424 (US Feet) or 6527 (Meters)
+nj_stations %>% 
+  # st_as_sf(coords = c("lon", "lat"), crs = st_crs(32618), remove = F) %>% # Nope
+  # st_as_sf(coords = c("lon", "lat"), crs = st_crs(26918), remove = F) %>% # Nope
+  # st_as_sf(coords = c("lon", "lat"), crs = st_crs(6527), remove = F) %>% # Nope
+  st_as_sf(coords = c("lon", "lat"), crs = st_crs(3424), remove = F) %>% # Nope
+  ggplot() + 
+  geom_sf() +
+  geom_sf(data = new_england) +
+  coord_sf(xlim = c(-78, -65), ylim = c(35, 42), crs = 4326)
+
+
+# When are the seasons?
+nj_stations %>% 
+  mutate(month = month.abb[lubridate::month(date)],
+         month = factor(month, levels = month.abb)) %>% 
+  count(month)
+```
+
+
+
+```{r}
+#| label: load VTS points
+
+# Path to resources
+vts_path <- cs_path("mills", "Projects/Lobster/VTS_fromASMFC")
+
+# Maine
+load(str_c(vts_path, "VTS_data.Rdata"))
+
+# Mass
+load(str_c(vts_path, "VTS_MA_Proc_240201 all data for standardized index.Rdata"))
+
+# Trips_MA # Date/time details for trawl
+# Trawls_MA # Trawl details
+# Sites_MA # Site Locations
+# Traps_MA # trap details ventless/vented
+# Lobsters_MA # Individual lobsters from survey
+
+
+# Need to join Trips (for date) and Trawls for the location details
+
+# # We have cases where the same trip is given a different stock
+# Trawls %>% filter(TripId == Trips[319,]$TripId)
+# Trips %>% filter(TripId == Trawls[25969,]$TripId)
+
+# There are six cases where a trawlID has different lat/lon values across different records
+
+vts_trips <- bind_rows(
+  list(
+    "MA VTS Survey" = inner_join(
+      x = Trips_MA, y = Trawls_MA, 
+      by = join_by(TripId)) %>% 
+      mutate(Fisher = as.character(Fisher)),
+    "ME VTS Survey" = inner_join(
+      Trips, Trawls, 
+      join_by(TripId), 
+      relationship = "many-to-many")),
+  .id = "program") %>% 
+  distinct(program, TrawlId, date = Date, lon = Longitude, lat = Latitude) %>% 
+  drop_na(lon, lat)
+ 
+# # Can join them this way too, weird
+# vts_trips <- full_join(
+#     x = bind_rows(Trips, mutate(Trips_MA, Fisher = as.character(Fisher))),
+#     y = bind_rows(Trawls, Trawls_MA), 
+#     by = join_by(TripId), 
+#   relationship = "many-to-many") %>% 
+#   mutate(program = "Ventless Trap Survey") %>% 
+#   distinct(program, TrawlId, SiteId, date = Date, lon = Longitude, lat = Latitude) 
+
+
+
+# # Mass Lobster Stations?
+# load(str_c(state_surveys, "MassDMF_Lobster_StationsNLengths_1979_2023_230718.Rdata"))
+# Stations # year, season, coords, ID
+# Lengths # ID, sex, length, NumCal
+
+```
+
+
+
+```{r}
+# Plot them all
+all_trawl <- bind_rows(
+  list(mass_trawl_stations, menh_trawl_stations, neamap_stations, fed_trawl_stations, ri_trawl_stations)
+)
+
+
+ggplot() + 
+  geom_point(
+    data = all_trawl, aes(lon, lat, color = program), 
+    shape = 3, size = 0.5, alpha = 0.2) +
+  geom_point(
+    data = vts_trips, 
+    aes(lon, lat, color = "Ventless Trap Survey"), 
+    shape = 3, size = 0.5, alpha = 0.2) +
+  geom_sf(data = new_england) +
+  coord_sf(xlim = c(-75.75, -67), ylim = c(35, 44.75)) +
+  guides(color = guide_legend(override.aes = list(alpha = 1, shape = 15, size = 2))) +
+  #scale_color_gmri() +
+  facet_wrap(~program) +
+  scale_color_gmri() +
+  #rcartocolor::scale_color_carto_d(palette = "Prism") +
+  labs(x = "Longitude", y = "Latitude", color = "Survey Program")
+
+
+
+```
+
+
+### Load FVCOM Inventory
+
+```{r}
+# Surface and Bottom only, from Dr. Li
+fvcom_path <- cs_path("res", "FVCOM/Lobster-ECOL")
+
+
+# Here are the files we have, loop over them later
+fvcom_surfbot_files <- setNames(
+  list.files(fvcom_path, full.names = T, pattern = ".nc"),
+  str_remove(list.files(fvcom_path, full.names = F, pattern = ".nc"), ".nc"))
+
+
+# Test File: GOM3 1978
+# Load some daily FVCOM that we downloaded and averaged
+fvcom_yrx <- nc_open(fvcom_surfbot_files["gom3_1978"])
+
+# Get the mesh itself as a simple feature collection
+gom3_mesh <- get_mesh_geometry(fvcom_yrx, what = 'lonlat')
+
+
+```
+
+
+### Check Point-Mesh Coverage Overlap
+
+The following map shows the coverage overlap between trawl survey locations and FVCOM GOM3.
+
+```{r}
+
+# Map everything
+ggplot() +
+  geom_sf(data = gom3_mesh, 
+          alpha = 0.2, linewidth = 0.05, color = "gray30") +
+  geom_sf(
+    data = st_as_sf(all_trawl, coords = c("lon", "lat"), crs = 4326),
+    aes(color = "Trawl Surveys"),
+    shape = 3, size = 0.2, alpha = 0.2) +
+  geom_sf(
+    data = st_as_sf(vts_trips, coords = c("lon", "lat"), crs = 4326),
+    aes(color = "VTS Surveys"),
+    shape = 3, size = 0.2, alpha = 0.2) +
+  geom_sf(data = new_england) +
+  geom_sf(data = canada) +
+  theme(legend.position = "right") +
+  scale_fill_gmri() +
+  coord_sf(xlim = c(-78, -58), ylim = c(34, 46)) +
+  theme_bw() + map_theme() +
+  labs(
+    title = "Coverage overlap of FVCOM and Sample Points",
+    fill = "Area")
+
+
+```
+
+
+# Matching FVCOM Nodes + Times to Station Coordinates
+
+
+To pull FVCOM surface and bottom conditions we first need to identify the indexing in space for the neighboring points, and then the start+end indexes in time for each season. This will need to be done for all `r nrow(bind_rows(all_trawl, vts_trips))` locations.
+
+The following code approaches identifying the correct date indices to loop/map through this interpolation process.
+
+
+
+## Get the Proper Time Index for Each File
+
+
+```{r}
+#| label: surfbot date matching
+
+# Put the survey programs together
+all_stations <- bind_rows(all_trawl, vts_trips) %>% 
+  mutate(
+    season = tolower(season),
+    season = if_else(str_detect(program, "VTS"), "summer", season),
+    season = case_match(
+      season,
+      "s" ~ "spring",
+      "spring" ~ "spring",
+      "f" ~ "fall",
+      "fall" ~ "fall",
+      "summer" ~ "summer",
+      .default = season
+  ))
+
+
+# Get the dates within each file
+fvcom_dates <- map_dfr(
+  fvcom_surfbot_files,
+   function(x){
+     x_fvcom <- nc_open(x)
+     timez <- ncvar_get(x_fvcom, "Times")
+     nc_close(x_fvcom)
+     return(
+       data.frame("fvcom_date" = timez) %>% 
+         mutate(time_idx = row_number()))
+   }, .id = "fv_file")
+
+
+
+# Join them by date to look at their matches
+station_date_matches <- all_stations %>% 
+  left_join(
+    mutate(fvcom_dates, fvcom_date = as.Date(fvcom_date)),
+    join_by(date == fvcom_date))
+```
+
+
+
+
+
+
+
+## Get Proper Element and Node Weights for Points
+
+
+```{r}
+#| label: triangulate points function
+
+# Function to add the linear interpolation weights based on node coordinates
+triangulate_and_weight <- function(pts_sf, fvcom_mesh){
+
+    # Identify the triangles that overlap each point:
+    # Use st_join to assign elem, p1, p2, p3 IDs to the points
+    pts_assigned <- st_join(
+      st_transform(pts_sf, st_crs(fvcom_mesh)),
+      gom3_mesh, 
+      join = st_within) %>% 
+      drop_na(elem)
+  
+
+    # Iterate over the rows to add weights:
+    pts_weighted <- pts_assigned %>% 
+     base::split(., seq_len(nrow(.))) %>%
+     purrr::map_dfr(function(pt_assigned){
+    
+      # Subset the relevant triangle from st_join info
+      triangle_match <- fvcom_mesh[pt_assigned$elem,]
+      
+      # Build matrices for point to interpolate & of surrounding points:
+    
+      # Matrix for triangle
+      # Use the triangles node coordinates from the sf geometries
+      # Creates 3x3 matrix: 
+      # row1 x coords, 
+      # row 2, y coords, 
+      # row three rep(1,3)
+      
+      node_vertices <- t(
+        st_coordinates(triangle_match[1,])[1:3,1:3]
+        )
+      
+      # Make matrix from the points:
+      # creates 3x1 matrix: x, y, 1
+      point_coords <- matrix(
+        c(st_coordinates(pt_assigned[1,]), 1), 
+        nrow = 3)
+      
+      #### For Linear Interpolation:
+      
+      # Get inverse of the matrix
+      inverse_coordmat <- solve(node_vertices)
+      
+      # Solve for the weights
+      node_wts <- inverse_coordmat %*% point_coords %>%
+        t() %>% 
+        as.data.frame() %>% 
+        setNames(c("p1_wt", "p2_wt", "p3_wt"))
+      
+      # Return with dataframe
+      bind_cols(pt_assigned, node_wts)
+    
+    
+    })
+    # End Rowwise
+    return(pts_weighted)
+}
+
+
+```
+
+
+
+```{r}
+#| label: get weights for each point
+
+# Make the trawl locations an sf dataframe
+stations_sf <- station_date_matches %>% 
+  st_as_sf(coords = c("lon", "lat"), crs = 4326, remove = F)
+
+
+# Run for all points:
+stations_weighted <- triangulate_and_weight(
+  pts_sf = stations_sf, 
+  fvcom_mesh = gom3_mesh) %>% 
+  st_drop_geometry()
+```
+ 
+ 
+# Interpolations at Proper Time Step(s)
+
+For seasonal averages we need to pull a range of dates and then average over that period of time.
+
+
+ 
+### Determine the "when" for Seasonal Averages
+
+Most trawl surveys are performed twice a year in the "spring" and "fall". For the federal survey spring begins in March and is mostly done by April, with fall ocurring primarily in Sep-Oct.
+
+For the state surveys "spring" is more centered on May, and fall centered on September or October. This varies by program.
+
+ The VTS survey is a summertime program, with sampling happening fairly evenly across June-August, and then to a lesser extent in Sept. & Oct.
+ 
+
+```{r} 
+
+# Fall   = Sep-Nov
+# Spring = Mar-May
+# Both are sampled more heavily in first two months, then as needed in the third
+# ex. March and April have 4x more stations than May
+
+all_stations %>% 
+  mutate(doy = lubridate::yday(date),
+         flat_date = as.Date("2000-01-01") + doy-1) %>% 
+  ggplot(aes(flat_date, program)) +
+  geom_point(
+    shape = "l", size = 2, alpha = 0.25, color = "gray30",
+    position = position_jitter(height = 0.2)) +
+  labs(x = "Date")
+
+
+```
+ 
+
+For each survey we want the average condition over the period of time when these surveys are taking place. To be consistent across the different surveys we will be simplifying seasons to be consistent across surveys:
+
+Spring = March-May
+Fall   = September-November
+Summer = June-August
+
+
+The following table will be used as a key for each survey program's seasonal coverage, and provide the starting index (as day of year) to start and finish reading data along the time dimension.
+
+ 
+```{r}
+#| label: setup seasonal indexes
+
+# Set up Season Indexes
+season_indexing <- tribble(
+  ~"season", ~"start",      ~"end",
+  "spring",  "2000-03-01",  "2000-05-30",
+  "summer",  "2000-06-01",  "2000-08-30",
+  "fall",    "2000-09-01",  "2000-11-30") %>% 
+  mutate(
+    start = as.Date(start),
+    start = lubridate::yday(start),
+    end = lubridate::yday(end))
+
+```
+
+
+
+## Datewise Interpolation
+ 
+This step can be looped on each date/year to minimize the amount of fvcom file opening/closing. Within each year we need to identify which timestep to extract data at, and then iterate on them.
+
+
+```{r}
+#' Interpolate Values from FVCOM Mesh at Timestep
+#' 
+#' @description Takes a dataframe row containing node and time indices and interpolation weights and returns that contains time index from which to interpolate.
+#' 
+#' Should contain the following columns:
+#' time_idx = integer timestep to use for interpolation
+#' p1 = integer index value for node 1 surrounding the interpolation location
+#' p2 = integer index value for node 2 surrounding the interpolation location
+#' p3 = integer index value for node 3 surrounding the interpolation location
+#' p1_wt = linear interpolation weight for p1
+#' p2_wt = linear interpolation weight for p1
+#' p3_wt = linear interpolation weight for p1
+#'
+#' @param interp_details dataframe row containing time index, node index, and node weight information columns
+#' @param fvcom_nc FVCOM netcdf file to extract values from
+#' @param fvcom_varid = String indicating variable in FVCOM netcdf to interpolate values with
+#' @param var_out String to use as variable name in returned dataframe
+#'
+#' @return
+#' @export
+#'
+#' @examples
+# interpolate_seasonal_timestep <- function(
+#     interp_details, 
+#     fvcom_nc, 
+#     fvcom_varid, 
+#     var_out, 
+#     season_indexing){
+#         
+#     # Get the values of the variable of interest as vector
+#     node_vals <- ncvar_get(
+#       nc = fvcom_nc, 
+#       varid = fvcom_varid, 
+#       start = c(1, 1),
+#       count = c(-1, -1))
+#     #return(dim(node_vals))
+#     
+#     # Make a dataframe with the dates, and the three nodes, multiplied by their weights
+#     p1 <- node_vals[interp_details[["p1"]], ] * interp_details[["p1_wt"]]
+#     p2 <- node_vals[interp_details[["p2"]], ] * interp_details[["p2_wt"]]
+#     p3 <- node_vals[interp_details[["p3"]], ] * interp_details[["p3_wt"]]
+#     interp_timeseries <- data.frame(
+#       "date" = ncvar_get(nc = fvcom_nc, varid = "Times")) %>% 
+#       mutate({{var_out}} := p1 + p2 + p3)
+#     
+#     
+#     # Apply optional time-period integration
+#     if(missing(season_indexing)){
+#       return(interp_timeseries)
+#       } else if (is.null(season_indexing)) {
+#       message("Argument 'season_indexing' was supplied as NULL.")
+#     } else {
+#         # This works:
+#         seasonal_means <-  pmap_dfr(
+#           .l = season_indexing,
+#           .f = function(season, start, end) {
+#               data.frame("season" = season) %>%
+#               mutate(
+#                 {{var_out}} := mean(interp_timeseries[c(start:end), var_out])
+#           )
+#       })
+#       
+#       return(seasonal_means)
+#     }
+#   
+# }
+
+```
+
+
+
+### Test Out One Location Season
+
+```{r}
+# test_nc <- nc_open(fvcom_surfbot_files[[1]])
+# 
+# # Get all dates in the file:
+# test_daily <- interpolate_seasonal_timestep(
+#   interp_details = stations_weighted[1,], 
+#   fvcom_nc = test_nc, 
+#   fvcom_varid = "surface_t", 
+#   var_out = "surf_temp")
+# 
+# 
+# 
+# # Return an everaage over some seasonal period
+# # Average over season
+# test_seasons <- interpolate_seasonal_timestep(
+#   interp_details = stations_weighted[1,], 
+#   fvcom_nc = test_nc, 
+#   fvcom_varid = "surface_t", 
+#   var_out = "surf_temp", 
+#   season_indexing = season_indexing) %>% 
+#   mutate(date = case_match(
+#     season, 
+#     "spring" ~ as.Date("1978-04-15"),
+#     "summer" ~ as.Date("1978-07-15"),
+#     "fall" ~ as.Date("1978-10-15")
+#   ))
+# 
+# 
+# ggplot() +
+#   geom_line(data = test_daily, aes(as.Date(date), surf_temp), alpha = 0.2) +
+#   geom_point(data = test_seasons, aes(as.Date(date), surf_temp, color = season)) + 
+#   labs(title = "Seasonal Averaging Test")
+
+
+```
+
+
+
+
+## Iterate on Years to Interpolate All Points
+
+Now that we can pull/interpolate for a specific timestep, we can loop over the yearly files and obtain surface and bottom temperatures. I'm using yearly timesteps to loop because we have yearly files, this way we only need to open each year once, then slice out values at the corresponding timesteps within them.
+
+```{r}
+# Combine surface and bottom extraction into one function, 
+# will be so much faster
+
+# interpolate_seasonal_surfbot <- function(
+#     interp_details, 
+#     fvcom_nc, 
+#     fvcom_varid1, 
+#     var1_out, 
+#     fvcom_varid2, 
+#     var2_out, 
+#     season_indexing){
+#         
+#     # Get the values of the variables of interest
+#     var1_vals <- ncvar_get(
+#       nc = fvcom_nc, 
+#       varid = fvcom_varid1, 
+#       start = c(1, 1),
+#       count = c(-1, -1))
+#     var2_vals <- ncvar_get(
+#       nc = fvcom_nc, 
+#       varid = fvcom_varid2, 
+#       start = c(1, 1),
+#       count = c(-1, -1))
+#     #return(dim(node_vals))
+#     
+#     # Make a dataframe with the dates, and the three nodes, multiplied by their weights
+#     p1_idx <- interp_details[["p1"]]
+#     p2_idx <- interp_details[["p2"]]
+#     p3_idx <- interp_details[["p3"]]
+#     p1_wt  <- interp_details[["p1_wt"]]
+#     p2_wt  <- interp_details[["p2_wt"]]
+#     p3_wt  <- interp_details[["p3_wt"]]
+#     # Pull var1 for the three adjacent nodes, weight them
+#     var1_p1 <- var1_vals[p1_idx, ] * p1_wt
+#     var1_p2 <- var1_vals[p2_idx, ] * p2_wt
+#     var1_p3 <- var1_vals[p3_idx, ] * p3_wt
+#     # Pull var2 for the three adjacent nodes, weight them
+#     var2_p1 <- var2_vals[p1_idx, ] * p1_wt
+#     var2_p2 <- var2_vals[p2_idx, ] * p2_wt
+#     var2_p3 <- var2_vals[p3_idx, ] * p3_wt
+#     # Assemble as one dataframe
+#     interp_timeseries <- data.frame(
+#       "date" = ncvar_get(nc = fvcom_nc, varid = "Times")) %>% 
+#       mutate(
+#         {{var1_out}} := var1_p1 + var1_p2 + var1_p3,
+#         {{var2_out}} := var2_p1 + var2_p2 + var2_p3)
+#     
+#     
+#     # Apply optional time-period integration
+#     if(missing(season_indexing)){
+#       return(interp_timeseries)
+#       } else if (is.null(season_indexing)) {
+#       message("Argument 'season_indexing' was supplied as NULL.")
+#     } else {
+#         # This works:
+#         seasonal_means <-  pmap_dfr(
+#           .l = season_indexing,
+#           .f = function(season, start, end) {
+#               data.frame("season" = season) %>%
+#               mutate(
+#                 {{var1_out}} := mean(interp_timeseries[c(start:end), var1_out]),
+#                 {{var2_out}} := mean(interp_timeseries[c(start:end), var2_out])
+#           )
+#       })
+#       
+#       return(seasonal_means)
+#     }
+#   
+# }
+
+
+
+
+# # Test
+# interpolate_seasonal_surfbot(
+#   interp_details = stations_weighted[1,], 
+#   fvcom_nc = test_nc, 
+#   fvcom_varid1 = "surface_t", 
+#   fvcom_varid2 = "bottom_t", 
+#   var1_out = "surf_temp", 
+#   var2_out = "bot_temp", 
+#   season_indexing = season_indexing)
+```
+
+```{r}
+# # Operate over years
+# trawl_fvcom_temps <- stations_weighted %>% 
+#   drop_na(time_idx) %>% 
+#   mutate(year = year(date)) %>% 
+#   #filter(year == 2000) %>% 
+#   split(.$year) %>% 
+#   # Loop over years of data
+#   map_dfr(
+#     
+#     .f = function(samples_year_x){
+#     
+#       # Pull the file name details
+#       nc_name <- samples_year_x[["fv_file"]][[1]][[1]]
+#       # Open the corresponding Netcdf
+#       fvcom_yr_x <- nc_open(fvcom_surfbot_files[[nc_name]])
+#     
+#     
+#     # Just do every location
+#     # We need this:
+#     # the seasonal average, which we can filter to just use the season we care about
+#     seasonal_interpolations <- pmap_dfr(
+#       .l = samples_year_x,
+#       .f = function(station_id, p1, p2, p3, p1_wt, p2_wt, p3_wt, season, ...) {
+#         
+#         # Get the surface temperature
+#         surv_season <- season
+#         seasonal_means <- interpolate_seasonal_surfbot(
+#             interp_details = data.frame(
+#               "p1" = p1,
+#               "p2" = p2,
+#               "p3" = p3,
+#               "p1_wt" = p1_wt,
+#               "p2_wt" = p2_wt,
+#               "p3_wt" = p3_wt), 
+#             fvcom_nc = fvcom_yr_x, 
+#             fvcom_varid1 = "surface_t", 
+#             fvcom_varid2 = "bottom_t", 
+#             var1_out = "surf_temp", 
+#             var2_out = "bot_temp", 
+#             season_indexing = dplyr::filter(
+#               season_indexing, season == surv_season)) %>% 
+#           mutate(station_id = station_id, .before = "season")
+#       })
+#         
+#         
+#     return(seasonal_interpolations)
+#     
+#    
+#     
+#   })
+```
+
+
+```{r}
+# # Did it work?, should be same number of records
+# trawl_fvcom_temps %>% nrow()
+# stations_weighted %>% nrow()
+# stations_weighted %>% drop_na(time_idx) %>% nrow()
+```
+
+# Can We Speed it Up: Yes
+
+The above function takes much longer than necessary because we're pulling the data for all nodes three times
+
+Make a new function that will take the output from ncvar_get, instead of opening it for all the points.
+
+The first function: `subset_nc_var` that takes our indexing and quickly subsets the relevant data. This takes optional additional indexing information for indexing on multiple dimensions
+
+```{r}
+
+#' @title Extract Netcdf Data with Index List
+#' 
+#' @description Subsets data from the results of ncvar_get(). Accepts single or
+#' multiple indexes for one or more dimensions using a list. List order should
+#' match the relevant dimensions for the variable.
+#' 
+#' If no indexing is supplied for a relevant dimension, all elements are returned.
+#'
+#' @param nc_array 
+#' @param index_list 
+#'
+#' @returns
+#' @export
+#'
+#' @examples
+subset_nc_var <- function(nc_array, index_list) {
+  
+  # Get the number of dimensions
+  dims <- length(dim(nc_array))
+  
+  # Create a list of indices, defaulting to ":" (keeping all elements)
+  full_index_list <- rep(list(quote(expr = )), dims)  
+  
+  # Update with user-specified indices
+  for (dim_idx in seq_along(index_list)) {
+    if (!is.null(index_list[[dim_idx]])) {
+      full_index_list[[dim_idx]] <- index_list[[dim_idx]]
+    }
+  }
+  
+  # Use do.call to apply indexing dynamically
+  extracted_data <- do.call(`[`, c(list(nc_array), full_index_list, list(drop = TRUE)))
+  
+  return(extracted_data)
+}
+
+
+
+# This will get done outside
+# Get the values of the variables of interest
+test_var_vals <- ncvar_get(
+    nc = test_nc, 
+    varid = "surface_t", 
+    start = c(1, 1),
+    count = c(-1, -1))
+
+
+# Just one index
+subset_nc_var(test_var_vals, index_list = list(5))
+
+# Two indices, one node and a range of times
+subset_nc_var(test_var_vals, index_list = list(5, 10:20))
+
+```
+
+
+```{r}
+#| label: general interpolation function
+
+
+# Making the dynamic dimensions work
+# Maybe add the st_intersection here? - na
+interpolate_seasonal <- function(
+    interp_details, 
+    fvcom_var_array, 
+    fvcom_times,
+    var_out, 
+    season_indexing){
+     
+    # Pull the node and weight information for the point location 
+    # where values are being interpolated
+    node1_idx <- interp_details[["p1"]]
+    node2_idx <- interp_details[["p2"]]
+    node3_idx <- interp_details[["p3"]]
+    node1_wt  <- interp_details[["p1_wt"]]
+    node2_wt  <- interp_details[["p2_wt"]]
+    node3_wt  <- interp_details[["p3_wt"]]
+    
+    
+    
+    # Pull var1 for the three adjacent nodes, weight them
+    node1_vec <- subset_nc_var(fvcom_var_array, index_list = list(node1_idx)) * node1_wt
+    node2_vec <- subset_nc_var(fvcom_var_array, index_list = list(node2_idx)) * node2_wt
+    node3_vec <- subset_nc_var(fvcom_var_array, index_list = list(node3_idx)) * node3_wt
+  
+    # Assemble as one dataframe
+    interp_timeseries <- data.frame(
+      "date" = fvcom_times) %>% 
+      mutate({{var_out}} := node1_vec + node2_vec + node3_vec)
+    
+    
+    # Apply optional time-period integration
+    if(missing(season_indexing)){
+      return(interp_timeseries)
+      } else if (is.null(season_indexing)) {
+        message("Argument 'season_indexing' was supplied as NULL.")
+    
+        } else {
+          # Run the average for the season(s) in season index
+          seasonal_means <-  pmap_dfr(
+            .l = season_indexing,
+            .f = function(season, start, end) {
+                data.frame("season" = season) %>%
+                mutate(
+                  {{var_out}} := mean(interp_timeseries[c(start:end), var_out], na.rm = T))
+      
+            })
+      
+      return(seasonal_means)
+    }
+  
+}
+
+
+# Test this version
+interpolate_seasonal(
+  interp_details = stations_weighted[2,], 
+  fvcom_var_array = test_var_vals, 
+  fvcom_times = ncvar_get(test_nc, "Times"), 
+  var_out = "surf_temp", 
+  season_indexing = season_indexing)
+```
+
+
+
+
+
+```{r}
+# Full new flow:
+Sys.time()
+
+# Operate over years
+trawl_fvcom_temps_new <- stations_weighted %>% 
+  drop_na(time_idx) %>% 
+  mutate(year = year(date)) %>% 
+  #filter(year == 2000) %>% 
+  split(.$year) %>% 
+  
+  # Loop over years of data
+  map_dfr(
+    
+    .f = function(samples_year_x){
+    
+      # Pull the file name details
+      nc_name <- samples_year_x[["fv_file"]][[1]][[1]]
+      
+      # Open the corresponding Netcdf
+      fvcom_yr_x <- nc_open(fvcom_surfbot_files[[nc_name]])
+      
+      # Pull Surface
+      surf_temp_yrx <- ncvar_get(
+        nc = fvcom_yr_x, 
+        varid = "surface_t", 
+        start = c(1, 1),
+        count = c(-1, -1))
+      
+      # Pull Bottom
+      bot_temp_yrx <- ncvar_get(
+        nc = fvcom_yr_x, 
+        varid = "bottom_t", 
+        start = c(1, 1),
+        count = c(-1, -1))
+      
+      # Pull Dates
+      yrx_dates <- ncvar_get(fvcom_yr_x, "Times")
+      
+      # Close thje netcdf and return the data
+      nc_close(fvcom_yr_x)
+    
+      
+      # For each location, get relevant seasonal average
+      seasonal_interpolations <- pmap_dfr(
+        .l = samples_year_x,
+        .f = function(station_id, p1, p2, p3, p1_wt, p2_wt, p3_wt, season, ...) {
+          
+          
+          # Test the new version:
+          surv_season <- season
+          relevant_season <-  season_indexing %>% 
+            filter(season == surv_season)
+         
+          # Get the surface temperature
+           seasonal_stemp_means <- interpolate_seasonal(
+            interp_details = data.frame(
+                "p1" = p1,
+                "p2" = p2,
+                "p3" = p3,
+                "p1_wt" = p1_wt,
+                "p2_wt" = p2_wt,
+                "p3_wt" = p3_wt), 
+            fvcom_var_array = surf_temp_yrx, 
+            fvcom_times = yrx_dates, 
+            var_out = "surf_temp", 
+            season_indexing = relevant_season) %>% 
+            mutate(station_id = station_id, .before = "season")
+          
+           # Get Bottom Temps
+           seasonal_btemp_means <- interpolate_seasonal(
+            interp_details = data.frame(
+                "p1" = p1,
+                "p2" = p2,
+                "p3" = p3,
+                "p1_wt" = p1_wt,
+                "p2_wt" = p2_wt,
+                "p3_wt" = p3_wt), 
+            fvcom_var_array = bot_temp_yrx, 
+            fvcom_times = yrx_dates, 
+            var_out = "bot_temp", 
+            season_indexing = relevant_season)
+           
+           # Combine
+           bind_cols(seasonal_stemp_means, select(seasonal_btemp_means, bot_temp))
+          
+        })
+          
+      # Return the seasonal data
+      return(seasonal_interpolations)
+    
+   
+    
+  })
+
+Sys.time()
+```
+
+
+
+
+```{r}
+# Did it work?, should be same number of records
+trawl_fvcom_temps_new 
+stations_weighted %>% drop_na(time_idx) %>% nrow()
+
+
+```
+
+
+## Export
+
+
+
+```{r}
+# # # Save VTS Bottom temperatures
+
+# save to project path
+fvcom_processed_path <- cs_path("mills", "Projects/Lobster ECOL/FVCOM_processed/point_location_temperatures")
+
+write_csv(
+  x = trawl_fvcom_temps_new,
+  file = str_c(fvcom_processed_path, "survey_locations_seasonal_surfbottemps.csv"))
+
+```
+
+
+
+### Diagnostics - Missing Locations
+
+```{r}
+
+```
+
