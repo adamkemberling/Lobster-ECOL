@@ -255,22 +255,22 @@ ggplot() +
 #| eval: false
 #| label: step 1 polygon overlay
 
-# Run them all and save tables in- case we need to operate in python
-lsag_area_intersections <- map_dfr(lob_areas_trans, function(x){
-  
-  # Run intersection
-  mesh_clip <- st_intersection(gom3_mesh, x) 
-  
-  # Get areas
-  # Pull necessary information out
-  mesh_clip_df <- mesh_clip %>% 
-    mutate(rel_area = st_area(mesh_clip)) %>% 
-    st_drop_geometry()
-  
-  # Return
-  return(mesh_clip_df)
-  
-}, .id = "area_id")
+# # Run them all and save tables in- case we need to operate in python
+# lsag_area_intersections <- map_dfr(lob_areas_trans, function(x){
+#   
+#   # Run intersection
+#   mesh_clip <- st_intersection(gom3_mesh, x) 
+#   
+#   # Get areas
+#   # Pull necessary information out
+#   mesh_clip_df <- mesh_clip %>% 
+#     mutate(rel_area = st_area(mesh_clip)) %>% 
+#     st_drop_geometry()
+#   
+#   # Return
+#   return(mesh_clip_df)
+#   
+# }, .id = "area_id")
 
 
 
@@ -279,7 +279,6 @@ lsag_area_intersections <- map_dfr(lob_areas_trans, function(x){
 
 
 ```
-
 
 
 ```{r}
@@ -400,8 +399,6 @@ Within each polygon overlay, we want to weight the averages of each triangle we 
 
 
 
-
-
 #' @title Regional Averages from FVCOM-Polygon Intersection
 #' 
 #' @description
@@ -459,47 +456,47 @@ Everything below could be done in one step instead of a loop with xarray
 #| eval: false
 
 
-# Process Surface Temperature for all the regions:
-fvcom_var_name <- "surface_t"
-
-
-# Time it
-Sys.time()
-all_region_surface_temp <- map_dfr(fvcom_surfbot_files, function(nc_x){
-  
-  # 1. Open the netcdf:
-  yr_x_fvcom <- nc_open(nc_x)
-  
-  # 2. Get the average values for the triangles
-  # Run that for all the years I guess?!?
-  triangle_avgs <- regional_from_nodes(
-    fvcom_mesh_trios = lsag_area_intersections, 
-    nc = yr_x_fvcom, 
-    nc_varname = fvcom_var_name)
-  
-  
-  # Get the regional averages for each region/group
-  poly_avgs_yr_x <-  lsag_area_intersections %>% 
-    split(.$area_id) %>% 
-    map_dfr(
-    .x = .,
-    .f = ~fvcom_regional_averages(
-      mesh_poly_intersection = .x,
-      mesh_elem_avgs = triangle_avgs, 
-      nc = yr_x_fvcom),
-    .id = "area_id"
-  )
-  
-  # Close the netcdf connection
-  nc_close(yr_x_fvcom)
-  
-  # Return the regional averages
-  return(poly_avgs_yr_x)
-  
-})
-
-# time completion
-Sys.time()
+# # Process Surface Temperature for all the regions:
+# fvcom_var_name <- "surface_t"
+# 
+# 
+# # Time it
+# Sys.time()
+# all_region_surface_temp <- map_dfr(fvcom_surfbot_files, function(nc_x){
+#   
+#   # 1. Open the netcdf:
+#   yr_x_fvcom <- nc_open(nc_x)
+#   
+#   # 2. Get the average values for the triangles
+#   # Run that for all the years I guess?!?
+#   triangle_avgs <- regional_from_nodes(
+#     fvcom_mesh_trios = lsag_area_intersections, 
+#     nc = yr_x_fvcom, 
+#     nc_varname = fvcom_var_name)
+#   
+#   
+#   # Get the regional averages for each region/group
+#   poly_avgs_yr_x <-  lsag_area_intersections %>% 
+#     split(.$area_id) %>% 
+#     map_dfr(
+#     .x = .,
+#     .f = ~fvcom_regional_averages(
+#       mesh_poly_intersection = .x,
+#       mesh_elem_avgs = triangle_avgs, 
+#       nc = yr_x_fvcom),
+#     .id = "area_id"
+#   )
+#   
+#   # Close the netcdf connection
+#   nc_close(yr_x_fvcom)
+#   
+#   # Return the regional averages
+#   return(poly_avgs_yr_x)
+#   
+# })
+# 
+# # time completion
+# Sys.time()
 
 
 
@@ -522,56 +519,56 @@ Sys.time()
 #| eval: false
 
 
-# Process Surface Temperature for all the regions:
-fvcom_var_name <- "bottom_t"
-
-
-# Time it
-Sys.time()
-all_region_bottom_temp <- map_dfr(fvcom_surfbot_files, function(nc_x){
-  
-  # 1. Open the netcdf:
-  yr_x_fvcom <- nc_open(nc_x)
-  
-  # 2. Get the average values for the triangles
-  # Run that for each of the years once
-  triangle_avgs <- regional_from_nodes(
-    fvcom_mesh_trios = lsag_area_intersections, 
-    nc = yr_x_fvcom, 
-    nc_varname = fvcom_var_name)
-  
-  
-  # Get the regional averages for each region/group
-  poly_avgs_yr_x <-  lsag_area_intersections %>% 
-    split(.$area_id) %>% 
-    map_dfr(
-    .x = .,
-    .f = ~fvcom_regional_averages(
-      mesh_poly_intersection = .x,
-      mesh_elem_avgs = triangle_avgs, 
-      nc = yr_x_fvcom),
-    .id = "area_id"
-  )
-  
-  # Close the netcdf connection
-  nc_close(yr_x_fvcom)
-  
-  # Return the regional averages
-  return(poly_avgs_yr_x)
-  
-})
-
-# time completion
-Sys.time()
-
-
-
-# Plot
-all_region_bottom_temp %>% 
-  mutate(time = as.Date(time)) %>% 
-  ggplot() +
-  geom_line(aes(time, regional_mu, color = area_id),
-            linewidth = 0.4, alpha = 0.4)
+# # Process Surface Temperature for all the regions:
+# fvcom_var_name <- "bottom_t"
+# 
+# 
+# # Time it
+# Sys.time()
+# all_region_bottom_temp <- map_dfr(fvcom_surfbot_files, function(nc_x){
+#   
+#   # 1. Open the netcdf:
+#   yr_x_fvcom <- nc_open(nc_x)
+#   
+#   # 2. Get the average values for the triangles
+#   # Run that for each of the years once
+#   triangle_avgs <- regional_from_nodes(
+#     fvcom_mesh_trios = lsag_area_intersections, 
+#     nc = yr_x_fvcom, 
+#     nc_varname = fvcom_var_name)
+#   
+#   
+#   # Get the regional averages for each region/group
+#   poly_avgs_yr_x <-  lsag_area_intersections %>% 
+#     split(.$area_id) %>% 
+#     map_dfr(
+#     .x = .,
+#     .f = ~fvcom_regional_averages(
+#       mesh_poly_intersection = .x,
+#       mesh_elem_avgs = triangle_avgs, 
+#       nc = yr_x_fvcom),
+#     .id = "area_id"
+#   )
+#   
+#   # Close the netcdf connection
+#   nc_close(yr_x_fvcom)
+#   
+#   # Return the regional averages
+#   return(poly_avgs_yr_x)
+#   
+# })
+# 
+# # time completion
+# Sys.time()
+# 
+# 
+# 
+# # Plot
+# all_region_bottom_temp %>% 
+#   mutate(time = as.Date(time)) %>% 
+#   ggplot() +
+#   geom_line(aes(time, regional_mu, color = area_id),
+#             linewidth = 0.4, alpha = 0.4)
 ```
 
 ### Combine Surface and Bottom and Save
@@ -620,6 +617,7 @@ These tests determine the following:\
 - Significant trends = non-stationary, and global krigging model should not be used\
 - Breakpoints determine which groups of years should be used for seasonal kriging models
 
+
 ```{r}
 #| label: both-version-inshoreoffshore
 
@@ -650,7 +648,7 @@ regional_temperatures %>%
 
 
 
-# Second Workflow: Triangle-Specific Timeseries
+# Second Workflow: 
 
 Jeff would like the daily data for August-December for the Gulf of Maine, but at the daily resolution.
 
@@ -659,7 +657,15 @@ It may make sense to send it to him as triangle averages, using their ID's, and 
 
 
 
-### Bottom Temperatures at Mesh Resolution
+# Deliverable 1: Bottom Temperature at Mesh Resolution
+
+The lobster stock assesment group has expressed interest in using nearshore bottom temperatures, particularly during summer months, for mapping suitable postlarval sediment habitat and for incorporating into growth models.
+
+To do this on small spatial scales, they requested the data organized by triangle mesh elements over time.
+
+I initially prepared these for the summer months, but results from preliminary analyses of that data has led to a request for year-round data.
+
+The following code chunks prepare the data for the relevant regions and save the data out as annual files.
 
 
 ```{r}
@@ -671,169 +677,219 @@ lsag_area_intersections %>% filter(area_id == "OceanProductPoly_GOM") %>% distin
 
 
 ```{r}
-#| label: process element-wise bottom temperature timeseries
-#| eval: false
+#' @title Extract Netcdf Data with Index List
+#' 
+#' @description Subsets data from the results of ncvar_get(). Accepts single or
+#' multiple indexes for one or more dimensions using a list. List order should
+#' match the relevant dimensions for the variable.
+#' 
+#' If no indexing is supplied for a relevant dimension, all elements are returned.
+#'
+#' @param nc_array 
+#' @param index_list 
+#'
+#' @returns
+#' @export
+#'
+#' @examples
+subset_nc_var <- function(nc_array, index_list) {
+  
+  # Get the number of dimensions
+  dims <- length(dim(nc_array))
+  
+  # Create a list of indices, defaulting to ":" (keeping all elements)
+  full_index_list <- rep(list(quote(expr = )), dims)  
+  
+  # Update with user-specified indices
+  for (dim_idx in seq_along(index_list)) {
+    if (!is.null(index_list[[dim_idx]])) {
+      full_index_list[[dim_idx]] <- index_list[[dim_idx]]
+    }
+  }
+  
+  # Use do.call to apply indexing dynamically
+  extracted_data <- do.call(`[`, c(list(nc_array), full_index_list, list(drop = TRUE)))
+  
+  return(extracted_data)
+}
 
-# Process Surface Temperature for all the regions:
-fvcom_var_name <- "bottom_t"
+```
 
+
+```{r}
+#| label: average from nodes function
+
+
+mean_from_nodes_seasonal <- function(
+    mesh_element_details, 
+    fvcom_var_array, 
+    fvcom_times,
+    var_out, 
+    season_indexing){
+     
+    # Pull the node and weight information for the point location 
+    # where values are being interpolated
+    node1_idx <- mesh_element_details[["p1"]]
+    node2_idx <- mesh_element_details[["p2"]]
+    node3_idx <- mesh_element_details[["p3"]]
+    
+    # Pull for the three nodes
+    node1_vec <- subset_nc_var(fvcom_var_array, index_list = list(node1_idx)) 
+    node2_vec <- subset_nc_var(fvcom_var_array, index_list = list(node2_idx)) 
+    node3_vec <- subset_nc_var(fvcom_var_array, index_list = list(node3_idx))
+  
+    # Assemble as one dataframe, get average
+    interp_timeseries <- data.frame(
+      "date" = fvcom_times) %>% 
+      mutate({{var_out}} := (node1_vec + node2_vec + node3_vec)/3)
+    
+    
+    # Apply optional time-period integration
+    if(missing(season_indexing)){
+      return(interp_timeseries)
+      } else if (is.null(season_indexing)) {
+        message("Argument 'season_indexing' was supplied as NULL.")
+        return(interp_timeseries)
+        } else {
+          # Run the average for the season(s) in season index
+          seasonal_means <-  pmap_dfr(
+            .l = season_indexing,
+            .f = function(season, start, end) {
+                data.frame("season" = season) %>%
+                mutate(
+                  {{var_out}} := mean(interp_timeseries[c(start:end), var_out], na.rm = T))
+      
+            })
+      
+      return(seasonal_means)
+    }
+  
+}
+
+```
+
+
+
+
+```{r}
+#| label: processing annual files for LSAG regions
+
+# Process Bottom Temperature for all the regions:
 
 # Time it
 Sys.time()
 
 # Change the steps below, to loop over the three areas
-all_element_bottom_temp <- fvcom_surfbot_files %>% 
+element_bottom_temps <- fvcom_surfbot_files %>% 
+  # pluck(1) %>% 
   map_dfr(
     .x = ., 
     function(nc_x){
   
-  # 1. Open the netcdf:
-  yr_x_fvcom <- nc_open(nc_x)
+      # 1. Open the netcdf:
+      yr_x_fvcom <- nc_open(nc_x)
+      
+       # Pull Surface
+      surf_temp_yrx <- ncvar_get(
+        nc = yr_x_fvcom, 
+        varid = "surface_t", 
+        start = c(1, 1),
+        count = c(-1, -1))
   
-  # 2. Get the average values for the triangles
-  # Run that for each of the years once
-  triangle_avgs <- regional_from_nodes(
-    fvcom_mesh_trios = lsag_area_intersections,
-    #fvcom_mesh_trios = filter(lsag_area_intersections, str_detect(area_id, "SNE")),
-    nc = yr_x_fvcom,
-    nc_varname = fvcom_var_name)
+      
+      # Pull Bottom Temperature Everywhere to subset
+      bot_temp_yrx <- ncvar_get(
+        nc = yr_x_fvcom, 
+        varid = "bottom_t", 
+        start = c(1, 1),
+        count = c(-1, -1))
+      
+      # Pull Dates
+      yrx_dates <- ncvar_get(yr_x_fvcom, "Times")
+      
+      # Close thje netcdf and return the data
+      nc_close(yr_x_fvcom)
   
-  # # Faster But is averaging over time too...
-  # triangle_avgs <- average_from_nodes(
-  #   fvcom_mesh_trios = lsag_area_intersections, 
-  #   nc = yr_x_fvcom, 
-  #   nc_varname = fvcom_var_name, 
-  #   start_vec = c(1, 1), 
-  #   count_vec = c(-1,-1))
-   
-  # Get the time dimension
-  fv_dates <- data.frame(
-    "time" = ncvar_get(yr_x_fvcom, "Times"))
-  
-  # Bind and filter the dates
-  triangle_avgs <- bind_cols(fv_dates, triangle_avgs) %>% 
-    # filter(month(time) >= 8)
-    filter(month(time) == 7)
-  
-  # Close the netcdf connection
-  nc_close(yr_x_fvcom)
-  
-  # Return the regional averages
-  return(triangle_avgs)
+      # 2. Get the average values for the triangles
+      # For each mesh element, get relevant mean from its nodes
+      mesh_triangle_avgs <- pmap_dfr(
+        .l = lsag_area_intersections,
+        .f = function(area_id, elem, p1, p2, p3, ...) {
+          
+         
+          # Get the surface temperature
+           seasonal_stemp_means <- mean_from_nodes_seasonal(
+            mesh_element_details = data.frame(
+                "p1" = p1,
+                "p2" = p2,
+                "p3" = p3), 
+            fvcom_var_array = surf_temp_yrx, 
+            fvcom_times = yrx_dates, 
+            var_out = "surface_t") %>% 
+            mutate(
+              area_id = area_id, 
+              elem = elem,
+              .before = "date")
+           
+           # Bottom temps
+           seasonal_btemp_means <- mean_from_nodes_seasonal(
+            mesh_element_details = data.frame(
+                "p1" = p1,
+                "p2" = p2,
+                "p3" = p3), 
+            fvcom_var_array = bot_temp_yrx, 
+            fvcom_times = yrx_dates, 
+            var_out = "bottom_t") %>% 
+            mutate(
+              area_id = area_id, 
+              elem = elem,
+              .before = "date")
+           
+           # Combine
+           bind_cols(seasonal_stemp_means, select(seasonal_btemp_means, bottom_t))
+           
+           
+          })
+          
+      
+      # Save the File:
+      yr_x <- str_sub(yrx_dates[1], 1, 4)
+      message(str_c("Saving: ", yr_x))
+      save_name <- here::here(
+        "local_data/LSAG_Daily_BT", 
+        str_c("OceanProductPoly_dailyfvcomtemps_", yr_x, ".rds"))
+      saveRDS(mesh_triangle_avgs, save_name)
+      
+      # # Return the regional averages
+      # return(mesh_triangle_avgs)
   
 })
 
 # time completion
 Sys.time()
+
 ```
 
-
 ```{r}
-#| label: plot check of bottom temps
+#| label: plot check of bottom temps, new
 
-# REMEMBER, we downloaded specific months, so it will be jumpy
+test_elem_df <- read_rds(
+    here::here(
+        "local_data/LSAG_Daily_BT", 
+        str_c("OceanProductPoly_dailyfvcomBT_1978.rds")))
 
 # Looks like we have daily now
-all_element_bottom_temp %>% 
-  mutate(time = as.Date(time)) %>% 
+test_elem_df %>%
+  #filter(elem == 7567) %>% 
+  #filter(elem == 40749) %>% 
+  group_by(area_id, date) %>% summarise(bottom_t = mean(bottom_t)) %>% 
+  mutate(date = as.Date(date)) %>%
   ggplot() +
-    geom_line(aes(time, `7567`))
+    geom_line(aes(date, bottom_t, color = area_id))
 ```
 
 
-```{r}
-
-# Reshape
-element_bottom_temps_long <- all_element_bottom_temp %>% 
-  mutate(time = as.Date(time)) %>% 
-  pivot_longer(cols = -time, names_to = "elem", values_to = "bottom_t") %>% 
-  mutate(bottom_t = as.numeric(bottom_t)) 
-
-
-# Join in the area labels
-lsag_bottom_temps <- lsag_area_intersections %>% 
-  distinct(area_id, elem) %>% 
-    mutate(elem = as.character(elem)) %>% 
-  inner_join(element_bottom_temps_long, join_by(elem), relationship = "many-to-many") 
-
-# Plot a test day
-day_test <- "2010-12-25"
-day_test <- "2010-08-25"
-day_test <- "2010-07-25"
-
-# element_bottom_temps_long %>% 
-lsag_bottom_temps %>% 
-  filter(time == day_test) %>% 
-  left_join(mutate(gom3_mesh, elem = as.character(elem))) %>% 
-  st_as_sf() %>% 
-  ggplot() +
-  #geom_sf(data = new_england, color = "gray30") +
-  geom_sf(aes(fill = bottom_t), color = "transparent") +
-  facet_wrap(~area_id) +
-  scale_fill_distiller(
-    palette = "RdBu") +
-  theme_dark() +
-  theme(legend.position = "bottom", legend.title.position = "top", legend.title = element_text(hjust = 0.5)) +
-  coord_sf(expand = F) +
-  labs(title = str_c("FVCOM Daily Bottom Temperature:"),
-       fill = "Bottom Temperature",
-       subtitle = str_c("Date: ", day_test))
-
-
-
-```
-
-
-
-
-```{r}
-#| eval: false
-#| label: Save regional bottom temps
-
-# # Daily Bottom temperature for all mesh areas in SNE
-# rm(jkipp_original_gom, element_bottom_temps_long)
-# gc()
-
-# Save them by region
-lsag_bottom_temps %>% 
-  split(.$area_id) %>%
-  iwalk(function(x, y){
-    
-    # # Try rds
-    save_name <- here::here("local_data", str_c("dailyfvcomBT_", y, "_July.rds"))
-   saveRDS(x, save_name)
-
-  })
-```
-
-
-```{r}
-# # test those rds
-# sne_in <- readRDS(here::here("local_data", str_c("dailyfvcomBT_OceanProductPoly_SNEinshore_AugDec.rds")))
-# sne_off <- readRDS(here::here("local_data", str_c("dailyfvcomBT_OceanProductPoly_SNEinshore_AugDec.rds")))
-```
-
-
-
-```{r}
-#| eval: false
-#| label: Save gom timeseries
-
-# # This is the daily bottom temperature that Jeff wanted
-# write_csv(
-#   lsag_bottom_temps,
-#   here::here("local_data/dailyfvcomBT_OceanProductPoly_GOM_AugDec.csv")
-# )
-
-# # Check it
-# jkipp_original_gom <- read_csv(
-# here::here("local_data/dailyfvcomBT_OceanProductPoly_GOM_AugDec.csv")
-# )
-```
-
-
-
-# Extract Depth Information
+# Deliverable 2: Depth Information
 
 Jeff asked if the bathymetry data was available, the next sections pull what the bottom bathymetry was and then whatever depth the sigma layer is taken to represent:
 
@@ -1049,7 +1105,7 @@ bathy_mesh <- bathy_mesh %>%
 
 
 
-# Nodes/Elements Resolution
+# Deliverable 3: Node + Centroid Resolution
 
 As another layer of information, it may be useful to know how many nodes/elements (proxies for resolution) contributed to mean estimates:
 
@@ -1149,4 +1205,172 @@ bind_rows(lob_areas_trans, .id = "area_id") %>%
 # # check it
 # read_csv(here::here("local_data", "jkipp_regions_fvcom_elem_resolution.csv"))
 ```
+
+
+
+
+# EDITS Below: previous methods for summer daily temps
+
+
+
+-----
+
+
+
+```{r}
+#| label: process element-wise bottom temperature timeseries
+#| eval: false
+
+# # Process Surface Temperature for all the regions:
+# fvcom_var_name <- "bottom_t"
+# 
+# 
+# # Time it
+# Sys.time()
+# 
+# # Change the steps below, to loop over the three areas
+# all_element_bottom_temp <- fvcom_surfbot_files %>% 
+#   map_dfr(
+#     .x = ., 
+#     function(nc_x){
+#   
+#   # 1. Open the netcdf:
+#   yr_x_fvcom <- nc_open(nc_x)
+#   
+#   # 2. Get the average values for the triangles
+#   # Run that for each of the years once
+#   triangle_avgs <- regional_from_nodes(
+#     fvcom_mesh_trios = lsag_area_intersections,
+#     #fvcom_mesh_trios = filter(lsag_area_intersections, str_detect(area_id, "SNE")),
+#     nc = yr_x_fvcom,
+#     nc_varname = fvcom_var_name)
+#    
+#   # Get the time dimension
+#   fv_dates <- data.frame(
+#     "time" = ncvar_get(yr_x_fvcom, "Times"))
+#   
+#   # Bind and filter the dates
+#   triangle_avgs <- bind_cols(fv_dates, triangle_avgs) %>% 
+#     # filter(month(time) >= 8)
+#     filter(month(time) == 7)
+#   
+#   # Close the netcdf connection
+#   nc_close(yr_x_fvcom)
+#   
+#   # Return the regional averages
+#   return(triangle_avgs)
+#   
+# })
+# 
+# # time completion
+# Sys.time()
+```
+
+
+
+```{r}
+#| label: plot check of bottom temps
+
+# # REMEMBER, we downloaded specific months, so it will be jumpy
+# 
+# # Looks like we have daily now
+# all_element_bottom_temp %>% 
+#   mutate(time = as.Date(time)) %>% 
+#   ggplot() +
+#     geom_line(aes(time, `7567`))
+```
+
+
+```{r}
+
+# # Reshape
+# element_bottom_temps_long <- all_element_bottom_temp %>% 
+#   mutate(time = as.Date(time)) %>% 
+#   pivot_longer(cols = -time, names_to = "elem", values_to = "bottom_t") %>% 
+#   mutate(bottom_t = as.numeric(bottom_t)) 
+# 
+# 
+# # Join in the area labels
+# lsag_bottom_temps <- lsag_area_intersections %>% 
+#   distinct(area_id, elem) %>% 
+#     mutate(elem = as.character(elem)) %>% 
+#   inner_join(element_bottom_temps_long, join_by(elem), relationship = "many-to-many") 
+# 
+# # Plot a test day
+# day_test <- "2010-12-25"
+# day_test <- "2010-08-25"
+# day_test <- "2010-07-25"
+# 
+# # element_bottom_temps_long %>% 
+# lsag_bottom_temps %>% 
+#   filter(time == day_test) %>% 
+#   left_join(mutate(gom3_mesh, elem = as.character(elem))) %>% 
+#   st_as_sf() %>% 
+#   ggplot() +
+#   #geom_sf(data = new_england, color = "gray30") +
+#   geom_sf(aes(fill = bottom_t), color = "transparent") +
+#   facet_wrap(~area_id) +
+#   scale_fill_distiller(
+#     palette = "RdBu") +
+#   theme_dark() +
+#   theme(legend.position = "bottom", legend.title.position = "top", legend.title = element_text(hjust = 0.5)) +
+#   coord_sf(expand = F) +
+#   labs(title = str_c("FVCOM Daily Bottom Temperature:"),
+#        fill = "Bottom Temperature",
+#        subtitle = str_c("Date: ", day_test))
+
+
+
+```
+
+
+
+
+```{r}
+#| eval: false
+#| label: Save regional bottom temps
+
+# # # Daily Bottom temperature for all mesh areas in SNE
+# # rm(jkipp_original_gom, element_bottom_temps_long)
+# # gc()
+# 
+# # Save them by region
+# lsag_bottom_temps %>% 
+#   split(.$area_id) %>%
+#   iwalk(function(x, y){
+#     
+#     # # Try rds
+#     save_name <- here::here("local_data", str_c("dailyfvcomBT_", y, "_July.rds"))
+#    saveRDS(x, save_name)
+# 
+#   })
+```
+
+
+```{r}
+# # test those rds
+# sne_in <- readRDS(here::here("local_data", str_c("dailyfvcomBT_OceanProductPoly_SNEinshore_AugDec.rds")))
+# sne_off <- readRDS(here::here("local_data", str_c("dailyfvcomBT_OceanProductPoly_SNEinshore_AugDec.rds")))
+```
+
+
+
+```{r}
+#| eval: false
+#| label: Save gom timeseries
+
+# # This is the daily bottom temperature that Jeff wanted
+# write_csv(
+#   lsag_bottom_temps,
+#   here::here("local_data/dailyfvcomBT_OceanProductPoly_GOM_AugDec.csv")
+# )
+
+# # Check it
+# jkipp_original_gom <- read_csv(
+# here::here("local_data/dailyfvcomBT_OceanProductPoly_GOM_AugDec.csv")
+# )
+```
+
+
+
 

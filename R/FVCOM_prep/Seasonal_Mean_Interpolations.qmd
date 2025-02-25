@@ -602,40 +602,16 @@ stations_weighted <- triangulate_and_weight(
   st_drop_geometry()
 ```
  
- 
-# Interpolations at Proper Time Step(s)
-
-For seasonal averages we need to pull a range of dates and then average over that period of time.
 
 
  
-### Determine the "when" for Seasonal Averages
+# Determine the "when" for Seasonal Averages
 
 Most trawl surveys are performed twice a year in the "spring" and "fall". For the federal survey spring begins in March and is mostly done by April, with fall ocurring primarily in Sep-Oct.
 
 For the state surveys "spring" is more centered on May, and fall centered on September or October. This varies by program.
 
- The VTS survey is a summertime program, with sampling happening fairly evenly across June-August, and then to a lesser extent in Sept. & Oct.
- 
-
-```{r} 
-
-# Fall   = Sep-Nov
-# Spring = Mar-May
-# Both are sampled more heavily in first two months, then as needed in the third
-# ex. March and April have 4x more stations than May
-
-all_stations %>% 
-  mutate(doy = lubridate::yday(date),
-         flat_date = as.Date("2000-01-01") + doy-1) %>% 
-  ggplot(aes(flat_date, program)) +
-  geom_point(
-    shape = "l", size = 2, alpha = 0.25, color = "gray30",
-    position = position_jitter(height = 0.2)) +
-  labs(x = "Date")
-
-
-```
+The VTS survey is a summertime program, with sampling happening fairly evenly across June-August, and then to a lesser extent in Sept. & Oct.
  
 
 For each survey we want the average condition over the period of time when these surveys are taking place. To be consistent across the different surveys we will be simplifying seasons to be consistent across surveys:
@@ -653,14 +629,37 @@ The following table will be used as a key for each survey program's seasonal cov
 
 # Set up Season Indexes
 season_indexing <- tribble(
-  ~"season", ~"start",      ~"end",
-  "spring",  "2000-03-01",  "2000-05-30",
-  "summer",  "2000-06-01",  "2000-08-30",
-  "fall",    "2000-09-01",  "2000-11-30") %>% 
+  ~"season", ~"start_date",      ~"end_date",
+  "spring",  "2000-03-01",      "2000-05-30",
+  "summer",  "2000-06-01",      "2000-08-30",
+  "fall",    "2000-09-01",      "2000-11-30") %>% 
   mutate(
-    start = as.Date(start),
-    start = lubridate::yday(start),
-    end = lubridate::yday(end))
+    start_date = as.Date(start_date),
+    end_date = as.Date(end_date),
+    start = lubridate::yday(start_date),
+    end = lubridate::yday(end_date),
+    season = factor(season, levels = c("spring", "summer", "fall")))
+
+
+
+all_stations %>% 
+  mutate(doy = lubridate::yday(date),
+         flat_date = as.Date("2000-01-01") + doy-1) %>% 
+  ggplot() +
+  geom_rect(
+    data = season_indexing,
+    aes(xmin = start_date, xmax = end_date,
+        ymin = -Inf, ymax = Inf,
+        fill = season),
+    alpha = 0.4) +
+  geom_point(
+    aes(flat_date, program),
+    shape = "l", size = 2, alpha = 0.25, color = "gray30",
+    position = position_jitter(height = 0.2)) +
+  scale_fill_brewer(palette = "RdYlBu", direction = -1) +
+  labs(x = "Date")
+
+
 
 ```
 
@@ -670,277 +669,7 @@ season_indexing <- tribble(
  
 This step can be looped on each date/year to minimize the amount of fvcom file opening/closing. Within each year we need to identify which timestep to extract data at, and then iterate on them.
 
-
-```{r}
-#' Interpolate Values from FVCOM Mesh at Timestep
-#' 
-#' @description Takes a dataframe row containing node and time indices and interpolation weights and returns that contains time index from which to interpolate.
-#' 
-#' Should contain the following columns:
-#' time_idx = integer timestep to use for interpolation
-#' p1 = integer index value for node 1 surrounding the interpolation location
-#' p2 = integer index value for node 2 surrounding the interpolation location
-#' p3 = integer index value for node 3 surrounding the interpolation location
-#' p1_wt = linear interpolation weight for p1
-#' p2_wt = linear interpolation weight for p1
-#' p3_wt = linear interpolation weight for p1
-#'
-#' @param interp_details dataframe row containing time index, node index, and node weight information columns
-#' @param fvcom_nc FVCOM netcdf file to extract values from
-#' @param fvcom_varid = String indicating variable in FVCOM netcdf to interpolate values with
-#' @param var_out String to use as variable name in returned dataframe
-#'
-#' @return
-#' @export
-#'
-#' @examples
-# interpolate_seasonal_timestep <- function(
-#     interp_details, 
-#     fvcom_nc, 
-#     fvcom_varid, 
-#     var_out, 
-#     season_indexing){
-#         
-#     # Get the values of the variable of interest as vector
-#     node_vals <- ncvar_get(
-#       nc = fvcom_nc, 
-#       varid = fvcom_varid, 
-#       start = c(1, 1),
-#       count = c(-1, -1))
-#     #return(dim(node_vals))
-#     
-#     # Make a dataframe with the dates, and the three nodes, multiplied by their weights
-#     p1 <- node_vals[interp_details[["p1"]], ] * interp_details[["p1_wt"]]
-#     p2 <- node_vals[interp_details[["p2"]], ] * interp_details[["p2_wt"]]
-#     p3 <- node_vals[interp_details[["p3"]], ] * interp_details[["p3_wt"]]
-#     interp_timeseries <- data.frame(
-#       "date" = ncvar_get(nc = fvcom_nc, varid = "Times")) %>% 
-#       mutate({{var_out}} := p1 + p2 + p3)
-#     
-#     
-#     # Apply optional time-period integration
-#     if(missing(season_indexing)){
-#       return(interp_timeseries)
-#       } else if (is.null(season_indexing)) {
-#       message("Argument 'season_indexing' was supplied as NULL.")
-#     } else {
-#         # This works:
-#         seasonal_means <-  pmap_dfr(
-#           .l = season_indexing,
-#           .f = function(season, start, end) {
-#               data.frame("season" = season) %>%
-#               mutate(
-#                 {{var_out}} := mean(interp_timeseries[c(start:end), var_out])
-#           )
-#       })
-#       
-#       return(seasonal_means)
-#     }
-#   
-# }
-
-```
-
-
-
-### Test Out One Location Season
-
-```{r}
-# test_nc <- nc_open(fvcom_surfbot_files[[1]])
-# 
-# # Get all dates in the file:
-# test_daily <- interpolate_seasonal_timestep(
-#   interp_details = stations_weighted[1,], 
-#   fvcom_nc = test_nc, 
-#   fvcom_varid = "surface_t", 
-#   var_out = "surf_temp")
-# 
-# 
-# 
-# # Return an everaage over some seasonal period
-# # Average over season
-# test_seasons <- interpolate_seasonal_timestep(
-#   interp_details = stations_weighted[1,], 
-#   fvcom_nc = test_nc, 
-#   fvcom_varid = "surface_t", 
-#   var_out = "surf_temp", 
-#   season_indexing = season_indexing) %>% 
-#   mutate(date = case_match(
-#     season, 
-#     "spring" ~ as.Date("1978-04-15"),
-#     "summer" ~ as.Date("1978-07-15"),
-#     "fall" ~ as.Date("1978-10-15")
-#   ))
-# 
-# 
-# ggplot() +
-#   geom_line(data = test_daily, aes(as.Date(date), surf_temp), alpha = 0.2) +
-#   geom_point(data = test_seasons, aes(as.Date(date), surf_temp, color = season)) + 
-#   labs(title = "Seasonal Averaging Test")
-
-
-```
-
-
-
-
-## Iterate on Years to Interpolate All Points
-
-Now that we can pull/interpolate for a specific timestep, we can loop over the yearly files and obtain surface and bottom temperatures. I'm using yearly timesteps to loop because we have yearly files, this way we only need to open each year once, then slice out values at the corresponding timesteps within them.
-
-```{r}
-# Combine surface and bottom extraction into one function, 
-# will be so much faster
-
-# interpolate_seasonal_surfbot <- function(
-#     interp_details, 
-#     fvcom_nc, 
-#     fvcom_varid1, 
-#     var1_out, 
-#     fvcom_varid2, 
-#     var2_out, 
-#     season_indexing){
-#         
-#     # Get the values of the variables of interest
-#     var1_vals <- ncvar_get(
-#       nc = fvcom_nc, 
-#       varid = fvcom_varid1, 
-#       start = c(1, 1),
-#       count = c(-1, -1))
-#     var2_vals <- ncvar_get(
-#       nc = fvcom_nc, 
-#       varid = fvcom_varid2, 
-#       start = c(1, 1),
-#       count = c(-1, -1))
-#     #return(dim(node_vals))
-#     
-#     # Make a dataframe with the dates, and the three nodes, multiplied by their weights
-#     p1_idx <- interp_details[["p1"]]
-#     p2_idx <- interp_details[["p2"]]
-#     p3_idx <- interp_details[["p3"]]
-#     p1_wt  <- interp_details[["p1_wt"]]
-#     p2_wt  <- interp_details[["p2_wt"]]
-#     p3_wt  <- interp_details[["p3_wt"]]
-#     # Pull var1 for the three adjacent nodes, weight them
-#     var1_p1 <- var1_vals[p1_idx, ] * p1_wt
-#     var1_p2 <- var1_vals[p2_idx, ] * p2_wt
-#     var1_p3 <- var1_vals[p3_idx, ] * p3_wt
-#     # Pull var2 for the three adjacent nodes, weight them
-#     var2_p1 <- var2_vals[p1_idx, ] * p1_wt
-#     var2_p2 <- var2_vals[p2_idx, ] * p2_wt
-#     var2_p3 <- var2_vals[p3_idx, ] * p3_wt
-#     # Assemble as one dataframe
-#     interp_timeseries <- data.frame(
-#       "date" = ncvar_get(nc = fvcom_nc, varid = "Times")) %>% 
-#       mutate(
-#         {{var1_out}} := var1_p1 + var1_p2 + var1_p3,
-#         {{var2_out}} := var2_p1 + var2_p2 + var2_p3)
-#     
-#     
-#     # Apply optional time-period integration
-#     if(missing(season_indexing)){
-#       return(interp_timeseries)
-#       } else if (is.null(season_indexing)) {
-#       message("Argument 'season_indexing' was supplied as NULL.")
-#     } else {
-#         # This works:
-#         seasonal_means <-  pmap_dfr(
-#           .l = season_indexing,
-#           .f = function(season, start, end) {
-#               data.frame("season" = season) %>%
-#               mutate(
-#                 {{var1_out}} := mean(interp_timeseries[c(start:end), var1_out]),
-#                 {{var2_out}} := mean(interp_timeseries[c(start:end), var2_out])
-#           )
-#       })
-#       
-#       return(seasonal_means)
-#     }
-#   
-# }
-
-
-
-
-# # Test
-# interpolate_seasonal_surfbot(
-#   interp_details = stations_weighted[1,], 
-#   fvcom_nc = test_nc, 
-#   fvcom_varid1 = "surface_t", 
-#   fvcom_varid2 = "bottom_t", 
-#   var1_out = "surf_temp", 
-#   var2_out = "bot_temp", 
-#   season_indexing = season_indexing)
-```
-
-```{r}
-# # Operate over years
-# trawl_fvcom_temps <- stations_weighted %>% 
-#   drop_na(time_idx) %>% 
-#   mutate(year = year(date)) %>% 
-#   #filter(year == 2000) %>% 
-#   split(.$year) %>% 
-#   # Loop over years of data
-#   map_dfr(
-#     
-#     .f = function(samples_year_x){
-#     
-#       # Pull the file name details
-#       nc_name <- samples_year_x[["fv_file"]][[1]][[1]]
-#       # Open the corresponding Netcdf
-#       fvcom_yr_x <- nc_open(fvcom_surfbot_files[[nc_name]])
-#     
-#     
-#     # Just do every location
-#     # We need this:
-#     # the seasonal average, which we can filter to just use the season we care about
-#     seasonal_interpolations <- pmap_dfr(
-#       .l = samples_year_x,
-#       .f = function(station_id, p1, p2, p3, p1_wt, p2_wt, p3_wt, season, ...) {
-#         
-#         # Get the surface temperature
-#         surv_season <- season
-#         seasonal_means <- interpolate_seasonal_surfbot(
-#             interp_details = data.frame(
-#               "p1" = p1,
-#               "p2" = p2,
-#               "p3" = p3,
-#               "p1_wt" = p1_wt,
-#               "p2_wt" = p2_wt,
-#               "p3_wt" = p3_wt), 
-#             fvcom_nc = fvcom_yr_x, 
-#             fvcom_varid1 = "surface_t", 
-#             fvcom_varid2 = "bottom_t", 
-#             var1_out = "surf_temp", 
-#             var2_out = "bot_temp", 
-#             season_indexing = dplyr::filter(
-#               season_indexing, season == surv_season)) %>% 
-#           mutate(station_id = station_id, .before = "season")
-#       })
-#         
-#         
-#     return(seasonal_interpolations)
-#     
-#    
-#     
-#   })
-```
-
-
-```{r}
-# # Did it work?, should be same number of records
-# trawl_fvcom_temps %>% nrow()
-# stations_weighted %>% nrow()
-# stations_weighted %>% drop_na(time_idx) %>% nrow()
-```
-
-# Can We Speed it Up: Yes
-
-The above function takes much longer than necessary because we're pulling the data for all nodes three times
-
-Make a new function that will take the output from ncvar_get, instead of opening it for all the points.
-
-The first function: `subset_nc_var` that takes our indexing and quickly subsets the relevant data. This takes optional additional indexing information for indexing on multiple dimensions
+The first function: `subset_nc_var` takes our node indexing and quickly subsets the relevant data. This takes optional additional indexing information for indexing on multiple dimensions
 
 ```{r}
 
@@ -1000,9 +729,14 @@ subset_nc_var(test_var_vals, index_list = list(5, 10:20))
 ```
 
 
+
+## Iterate on Years to Interpolate All Points
+
+Now that we can pull the appropriate data and interpolate from nearest nodes for a specific timestep, we can loop over the yearly files and obtain surface and bottom temperatures. 
+
+
 ```{r}
 #| label: general interpolation function
-
 
 # Making the dynamic dimensions work
 # Maybe add the st_intersection here? - na
@@ -1040,7 +774,7 @@ interpolate_seasonal <- function(
       return(interp_timeseries)
       } else if (is.null(season_indexing)) {
         message("Argument 'season_indexing' was supplied as NULL.")
-    
+        return(interp_timeseries)
         } else {
           # Run the average for the season(s) in season index
           seasonal_means <-  pmap_dfr(
@@ -1066,6 +800,10 @@ interpolate_seasonal(
   var_out = "surf_temp", 
   season_indexing = season_indexing)
 ```
+
+
+
+I'm using yearly timesteps to loop because we have yearly files, this way we only need to open each year once to pull all nodes, then slice out values at the corresponding timesteps within them.
 
 
 
