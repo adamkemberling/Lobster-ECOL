@@ -1,0 +1,960 @@
+---
+title: "FVCOM - Maine Coastal Current"
+description: | 
+  Detailing the Maine Coastal Current Information with FVCOM
+date: "Updated on: `r Sys.Date()`"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    df-print: kable
+    self-contained: true
+execute: 
+  echo: true
+  warning: false
+  message: false
+  fig.align: "center"
+  comment: ""
+---
+
+```{r}
+
+{
+  library(raster)
+  library(sf) 
+  library(fvcom) 
+  library(ncdf4) 
+  library(tidyverse)
+  library(gmRi)
+  library(patchwork)
+  library(rnaturalearth)
+}
+
+# namespace conflicts
+conflicted::conflict_prefer("select", "dplyr")
+conflicted::conflict_prefer("filter", "dplyr")
+
+
+# Set the theme
+theme_set(theme_bw() + map_theme())
+
+# Project paths
+lob_ecol_path <- cs_path("mills", "Projects/Lobster ECOL")
+fvcom_path    <- cs_path("res", "FVCOM/Lobster-ECOL")
+poly_paths    <- cs_path("mills", "Projects/Lobster ECOL/Spatial_Defs")
+
+# Shapefiles
+new_england <- ne_states("united states of america", returnclass = "sf") %>% 
+  filter(postal %in% c("VT", "ME", "RI", "MA", "CT", "NH", "NY", "MD", "VA", "NJ", "DE", "NC", "PA", "WV"))
+canada <- ne_states("canada", returnclass = "sf")
+
+# # Support functions for FVCOM
+source(here::here("R/FVCOM_Support.R"))
+```
+
+
+```{r}
+#| label: style-sheet
+#| results: asis
+
+# Use GMRI style
+use_gmri_style_rmd()
+```
+
+
+```{r}
+#| label: fonts-config
+#| echo: false
+library(showtext)
+
+# Path to the directory containing the font file (replace with your actual path)
+font_dir <- paste0(system.file("stylesheets", package = "gmRi"), "/GMRI_fonts/Avenir/")
+
+# Register the font
+font_add(
+  family = "Avenir",
+  file.path(font_dir, "LTe50342.ttf"),
+  bold = file.path(font_dir, "LTe50340.ttf"),
+  italic = file.path(font_dir, "LTe50343.ttf"),
+  bolditalic = file.path(font_dir, "LTe50347.ttf"))
+
+# Load the font
+showtext::showtext_auto()
+
+```
+
+
+# Approaching the Maine Coastal Current Information from FVCOM
+
+The Gulf of Maine Coastal Current (GMCC) can be divided into to principal branches (Eastern Maine Coastal Current EMCC & Western Maine Coastal Current WMCC), separated by a junction near Penobscot bay. 
+
+This junction is important as it is a site where a variable portion of current flow shifts from continuing Southwest, and veers offshore. 
+
+This shift in current flow has important implications for nutrient and plankton distribution, and larval transport. This is why this section of the current flow is used as an indicator of general circulation patterns within the Gulf of Maine.
+
+
+#### Building on Past Work
+
+A previous team member (Matt Dzaugis) was responsible for accessing and storing the data, and we are grateful for his time/effort in doing so.
+
+[Matt's Previous Work on Ecosystem Indicators](https://github.com/dzaugis/Ecosystem_Indicators/blob/main/Code/MCC_index_report.Rmd)
+
+> Using a principal components analysis of surface current speed for the eastward (u) direction of an area just offshore of Penobscot Bay, the Maine Coastal Current can be decomposed into the Maine Coastal Current Index that captures the connectivity between the EMCC and WMCC. 
+
+> In this analysis, the first principal component, which capture 52.5% of the variability in the dataset, provides an index of connectivity. The second principal component, which captures 15.3% of the variability, is related to vorticity.
+
+
+
+```{r}
+#| label: load-monthly-fvcom
+#| eval: false
+# Loading FVCOM
+
+# Get some file names
+gom3_files <- monthly_fvcom_inventory(
+  start_yr = 1978,
+  end_y = 2019,
+  fvcom_folder = cs_path("res", "FVCOM/monthly_means"),
+  fvcom_vers = "GOM3"
+) 
+
+
+
+# Open one
+gom3_mon_early <- nc_open(gom3_files[[1]])
+
+# # Get the mesh itself as a simple feature collection
+# gom3_mesh <- get_mesh_geometry(gom3_early, what = 'lonlat') 
+```
+
+
+
+```{r}
+#| label: load-daily-fvcom
+# Loading FVCOM
+
+# Get some file names
+fvcom_surfbot_files <- setNames(
+  list.files(fvcom_path, full.names = T, pattern = ".nc"),
+  str_remove(list.files(fvcom_path, full.names = F, pattern = ".nc"), ".nc"))
+
+
+# Open one
+gom3_early <- nc_open(fvcom_surfbot_files[[1]])
+# So the data is daily...
+ncvar_get(gom3_early, varid = "surface_v", start = c(1,1), count = c(1,-1))
+
+
+# Get the mesh itself as a simple feature collection
+gom3_mesh <- get_mesh_geometry(gom3_early, what = 'lonlat') 
+
+```
+
+
+### Maine Coastal Current Region
+
+The primary area of concern rgarding capturing the continuous flow of the Maine Coastal Current is the area off the coast of penobscot bay.
+
+The following polygon was created as a boundary for subsetting the relevant data for calculating MCC indices.
+
+
+We may want to extend our area east (Li et al 2022): 
+> The EMCC generally bifurcates southeast of Mount Desert Island (D. Brooks & Townsend, 1989; D. Li et al., 2021; Luerssen et al., 2005; Pettigrew et al., 1998, 2005).
+
+```{r}
+
+# Make a polygon for the area of interest:
+mcc_turnoff_coords <- tribble(
+  ~"lon", ~"lat",
+  -69.34, 43.21,   # Bottom Left
+  -69.78, 43.62,   # Off Popham
+  -67.45, 44.34,   # Off Jonesport 
+  -67.4, 43.8,     # Bottom right
+  -69.34, 43.21,   # Bottom left again
+)
+
+# Make it a polygon
+mcc_turnoff_poly <- st_polygon(list(cbind(mcc_turnoff_coords$lon, mcc_turnoff_coords$lat))) %>% 
+  st_sfc(crs = 4326) %>% 
+  st_as_sf() %>% 
+  mutate(area = "Maine Coastal Current Region") 
+st_geometry(mcc_turnoff_poly) <- "geometry"
+
+
+# Map it
+ggplot() +
+  geom_sf(data = new_england) +
+  geom_sf(data = canada) +
+  geom_sf(data = mcc_turnoff_poly, fill = "orange", alpha = 0.2) +
+  theme_classic() +
+  coord_sf(xlim = c(-71, -66), ylim = c(43, 45)) +
+  map_theme() +
+  labs(title = "Area of Interest for MCC Turnoff FVCOM Input")
+```
+
+Using that boundary we can clip the FVCOM mesh and obtain the indices to use for pulling data from the many netcdf files.
+
+```{r}
+#| label: Trim Mesh to MCC area
+
+# Project polygon
+poly_projected <- st_transform(mcc_turnoff_poly, st_crs(gom3_mesh)) 
+
+# Turn off s2
+sf::sf_use_s2(FALSE)
+
+# Trim it
+mcc_nodes <- mesh_trim(
+  mesh = gom3_mesh, 
+  domain = st_as_sf(poly_projected) )
+
+# Map that
+ggplot() +
+  geom_sf(data = new_england) +
+  geom_sf(data = canada) +
+  geom_sf(data = mcc_nodes, color = "black", alpha = 0.6) +
+  geom_sf(data = mcc_turnoff_poly, fill = "orange", alpha = 0.4) +
+  theme_classic() +
+  map_theme() +
+  coord_sf(xlim = c(-71, -66), ylim = c(43, 45)) +
+  labs(title = "Area Coverage of MCC Turnoff FVCOM Input - Mesh trimmed")
+
+```
+
+## Grab the Surface Current Information
+
+The clipped mesh contains node and element index numbers. We will want to use these to pull variables for each of these locations. These will then be used for principal component analyses whos goal is to decompose the correlation structures between all these locations.
+
+
+### Option 1: Grab Monthly Averages
+
+This chunk of code loads the monthly-averaged hindcast data in sequence and pulls 
+
+```{r}
+#| eval: false
+#| label: getting-values-from-monthly files
+
+# The code below works, but has been commented out to prevent accidental repeat runs
+
+
+# # These are all the fils for gom3 hindcast stored on box
+# file_list <- monthly_fvcom_inventory(
+#   start_yr = 1978,
+#   end_y = 2016,
+#   fvcom_folder = cs_path("res", "FVCOM/monthly_means"),
+#   fvcom_vers = "GOM3"
+# )
+# 
+# 
+# # 2 or 4 vars for water velocity
+# gom3_early$var$u$longname  # Eastward Water Velocity in meters s-1
+# gom3_early$var$v$longname  # Northward Water Velocity in meters s-1
+# gom3_early$var$ua # Vertically Averaged x-velocity in meters s-1
+# gom3_early$var$va # Vertically Averaged y-velocity in meters s-1
+# 
+# # Set variables
+# mcc_vars <- c("u", "v", "ua", "va")
+# 
+# 
+# # Getting node elements
+# monthly_currents <- map_dfr(
+#     # file_list[c(1:5)],
+#     file_list,
+#     possibly(
+#       .f = function(fpath){
+#          # Open (lazy-load) the netcdf connection
+#         x <- nc_open(fpath)
+# 
+#         # Time dimension info
+#         time_dim <- fvcom_time(x)
+# 
+#         # Grab surface variables at the elements
+#         surface_elems <- get_elem_var(
+#           x, # Dataset lazyloaded with ncdf4 from THREDDS
+#           y = 1, # integer, or indices for siglay or siglev (depth indices)
+#           var = mcc_vars,  # Variables we want
+#           elem = unique(mcc_nodes$elem),
+#           time = c(1:time_dim)) %>%  # All time intervals - averaged
+#           as.data.frame()
+# 
+#         # Close connection to the netcdf:
+#         nc_close(x)
+# 
+#         # Join to the mesh
+#         surface_mesh <- left_join(mcc_nodes, surface_elems, by = join_by(elem))
+# 
+#         # Re-grid to a regular-grid raster
+#         surface_raster <- raster::stack(
+#           sapply(
+#             mcc_vars,
+#             function(f) {
+#               fvcom::rasterize(
+#                 x = surface_mesh,
+#                 template = default_template(surface_mesh, res = c(0.05,0.05)),
+#                 field = f) },
+#             simplify = FALSE))
+# 
+#         # Make it a table to facilitate PCA easier
+#         grid_df <-  surface_raster %>%
+#           raster::rasterToPoints() %>%
+#           as.data.frame()
+#         return(grid_df)},
+# 
+#       # Spit out NA's if there's trouble
+#       otherwise = data.frame(
+#         x = NULL,
+#         y = NULL,
+#         u = NULL,
+#         v = NULL,
+#         ua = NULL,
+#         va = NULL)),
+#     .id = "date")
+
+
+
+
+# # Save this out:
+# write_csv(monthly_currents, here::here("data/gom3_mcc_turnoff_input_data.csv"))
+
+
+
+####-----------------------####
+#### Checking Failed Files
+
+#Some of the files timed out during the download and were empty, this is a targeted chunk of code for re-downloading and re-cropping for those months.
+
+
+# The code below works, but has been commented out to prevent accidental repeat runs
+
+
+# # Need to download these again b/c zero bytes
+# missing_months <- c(
+#   198109,
+#   198303,
+#   198502,
+#   198610,
+#   198705,
+#   198707,
+#   199212 )
+
+
+
+# #### Download Fresh Copies:  ####
+#   
+# # Assemble year/month structure for file names
+#   
+# # Build THREDDS Link Structure
+# seaplan_hcast <- "http://www.smast.umassd.edu:8080//thredds/fileServer/models/fvcom/NECOFS/Archive/Seaplan_33_Hindcast_v1/monthly_mean/"
+# gom3_base <- "gom3_monthly_mean_"
+# dest_folder <- cs_path("res", "FVCOM/monthly_means/gom3_mon_means")
+# 
+# # File names
+# fnames <- str_c(gom3_base, missing_months, ".nc")
+# 
+# Now step through each one and download/save
+# purrr::walk(fnames, function(file_name){
+# 
+#   # Build the download url and out paths for saving
+#   url_full <- str_c(seaplan_hcast, file_name)
+#   save_full <- str_c(dest_folder, file_name)
+# 
+#   # Download and save
+#   message(str_c("Downloading: ", file_name))
+#   # message(str_c("from: ", url_full))
+#   # message(str_c("at: ", save_full))
+#   download.file(
+#     url = url_full,
+#     destfile = save_full)
+# })
+
+
+
+
+
+#### Get Timeseries for those months  ####
+# new_files <- str_c("/Users/akemberling/Library/CloudStorage/Box-Box/RES_Data/FVCOM/monthly_means/gom3_mon_means/gom3_monthly_mean_", missing_months, ".nc")
+# new_files <- setNames(new_files, missing_months)
+# 
+# # Run them through
+# missing_currents <- map_dfr(
+#     new_files,
+#     possibly(
+#       .f = function(fpath){
+#          # Open (lazy-load) the netcdf connection
+#         x <- nc_open(fpath)
+#         
+#         # Time dimension info
+#         time_dim <- fvcom_time(x)
+#         
+#         # Grab surface variables at the elements
+#         surface_elems <- get_elem_var(
+#           x, # Dataset lazyloaded with ncdf4 from THREDDS 
+#           y = 1, # integer, or indices for siglay or siglev (depth indices)
+#           var = c("u", "v"),  # Variables we want
+#           elem = unique(mcc_nodes$elem), 
+#           time = c(1:time_dim)) %>%  # All time intervals - averaged
+#           as.data.frame()
+#         
+#         # Close connection to the netcdf:
+#         nc_close(x)
+#         
+#         # Join to the mesh
+#         surface_mesh <- left_join(mcc_nodes, surface_elems, by = join_by(elem))
+#         
+#         # Re-grid to a regular-grid raster
+#         surface_raster <- raster::stack(
+#           sapply(
+#             c("u", "v"), 
+#             function(f) { 
+#               fvcom::rasterize(
+#                 x = surface_mesh, 
+#                 template = default_template(surface_mesh, res = c(0.05,0.05)),
+#                 field = f) }, 
+#             simplify = FALSE))
+#         
+#         # Make it a table to facilitate PCA easier
+#         grid_df <-  surface_raster %>% 
+#           raster::rasterToPoints() %>% 
+#           as.data.frame()
+#         return(grid_df)}, 
+#       
+#       # Spit out NA's if there's trouble
+#       otherwise = data.frame(
+#         x = NULL,
+#         y = NULL,
+#         u = NULL,
+#         v = NULL)), 
+#     .id = "date")
+
+
+# # Join these to the rest of the months that worked before:
+# all_gom3_currents <- bind_rows(mutate(monthly_currents, date = as.character(date)), missing_currents)
+
+
+
+# Now re-save
+# write_csv(all_gom3_currents, here::here("data/gom3_mcc_turnoff_input_data.csv"))
+
+```
+
+
+### Option 2: Pull Daily Surface Current Values
+
+The data obtained from the Chen lab directly contains surface current vector information, and does not contain `siglev` coordinates. The code to pull these variables from these files is slightly different for this reason (mainly just one less dimension to provide "start" and "count" arguments for within `ncdf4::ncvar_get()`)
+
+Daily current information gives us the option of estimating a more refined/targeted seasonal index and would give us higher resolution throughout the year.
+
+Literature suggests connectivity is highest in the winter (concurrent with offshore EMCC veering) and again in spring/summer (time of strongest EMCC flow).
+
+During late-fall and early winter the inshore flow reverses*
+
+>  Both the circulation and particle tracking models suggested that the connectivity generally peaks twice annually, highest in winter and then secondarily in late spring or early summer. The former is concurrent with the most southwest offshore veering of the EMCC, while the latter is concurrent with the strongest EMCC. Moreover, the counter-WMCC can reduce the connectivity and result in year-to-year variations. Li et al. 2022
+
+
+# WORKING HERE, its returning one value per year
+
+```{r}
+#' @title Extract Netcdf Data with Index List
+#' 
+#' @description Subsets data from the results of ncvar_get(). Accepts single or
+#' multiple indexes for one or more dimensions using a list. List order should
+#' match the relevant dimensions for the variable.
+#' 
+#' If no indexing is supplied for a relevant dimension, all elements are returned.
+#'
+#' @param nc_array 
+#' @param index_list 
+#'
+#' @returns
+#' @export
+#'
+#' @examples
+subset_nc_var <- function(nc_array, index_list) {
+  
+  # Get the number of dimensions
+  dims <- length(dim(nc_array))
+  
+  # Create a list of indices, defaulting to ":" (keeping all elements)
+  full_index_list <- rep(list(quote(expr = )), dims)  
+  
+  # Update with user-specified indices
+  for (dim_idx in seq_along(index_list)) {
+    if (!is.null(index_list[[dim_idx]])) {
+      full_index_list[[dim_idx]] <- index_list[[dim_idx]]
+    }
+  }
+  
+  # Use do.call to apply indexing dynamically
+  extracted_data <- do.call(`[`, c(list(nc_array), full_index_list, list(drop = TRUE)))
+  
+  return(extracted_data)
+}
+```
+
+
+```{r}
+#| label: test subset_nc
+#| eval: false
+
+
+# Check a daily file
+surf_u_test <- ncvar_get(
+    nc = gom3_early, 
+    varid = "surface_u", 
+    start = c(1, 1),
+    count = c(-1, -1))
+
+subset_nc_var(surf_u_test, index_list = list(5))
+```
+
+
+```{r}
+#| label: subset daily currents within MCC area
+
+
+# Function to grab each of them for a netcdf connection:
+# Loop through daily surfbot files and pull values for the proper nodes
+get_elem_timeseries <- function(fpath, elem_list){
+  
+  # Open (lazy-load) the netcdf connection
+  fvcom_x <- nc_open(fpath)
+
+  # Time dimension info
+  time_dim <- ncvar_get(fvcom_x, "Times")
+  
+  # Get U
+  u_array <- ncvar_get(
+    nc = fvcom_x, 
+    varid = "surface_u", 
+    start = c(1, 1),
+    count = c(-1, -1))
+  
+  # Get V
+  v_array <- ncvar_get(
+    nc = fvcom_x, 
+    varid = "surface_v", 
+    start = c(1, 1),
+    count = c(-1, -1))
+  
+  # Get Lon/Lat
+  lon_array <- ncvar_get(fvcom_x, varid = "lonc", start = c(1), count = c(-1))
+  lat_array <- ncvar_get(fvcom_x, varid = "latc", start = c(1), count = c(-1))
+  
+  # Close connection to the netcdf:
+  nc_close(fvcom_x)
+  
+  # Start index (just grab all the way through)
+  daily_df <- map_dfr(elem_list, function(elem_x){
+    elem_lon <- lon_array[[elem_x]]
+    elem_lat <- lat_array[[elem_x]]
+    data.frame(
+      "time" = time_dim,
+      "lonc" = elem_lon,
+      "latc" = elem_lat,
+      "u" = subset_nc_var(u_array, list(elem_x)) ,
+      "v" = subset_nc_var(v_array, list(elem_x))
+      )
+    
+  }, .id = "elem")
+
+ 
+  
+  # Return the table
+  message(str_c("Completed: ", fpath))
+  return(daily_df)
+}
+```
+
+
+```{r}
+
+
+
+# Get the elem numbers we care about for ncvar_get() 
+mcc_elems <- unique(mcc_nodes$elem) %>% 
+  setNames(unique(mcc_nodes$elem))
+
+
+
+# # Test one
+#t1 <-  get_elem_timeseries(fpath = fvcom_surfbot_files[[1]], elem_list = mcc_elems[1])
+
+# Run them all
+daily_mcc_surface_currents <- map_dfr(
+  .x = fvcom_surfbot_files, 
+  .f = ~get_elem_timeseries(fpath = .x, elem_list = mcc_elems))
+
+
+# Save them
+write_csv(
+  daily_mcc_surface_currents, 
+  #here::here("data/gom3_daily_mcc_surface_currents.csv"))
+  here::here("data/daily_mcc_surface_currents_vectors.csv"))
+
+```
+
+
+
+
+## Visualizing Inspection of Current Vectors
+
+If we load in the table(s) of the element values processed above, we can start to look what the current vectors look like on a map.
+
+Current vectors can be visualized easily using ggplot with `metR::geom_vector()`.
+
+
+#### Mapping Daily
+
+Daily values were not re-gridded. The following figure reflects the actual center locations of the mesh elements in the MCC region for a week's time
+
+```{r}
+#| label: load daily current vector files
+#| eval: true
+
+
+# Load daily:
+#daily_mcc_currents <- read_csv(here::here("data/gom3_daily_mcc_surface_currents.csv"))  %>% 
+daily_mcc_surface_currents <- read_csv(here::here("data/daily_mcc_surface_currents_vectors.csv"))  %>% 
+  mutate(
+    time = as.Date(time),
+    label = time,
+    year = str_sub(label, 1,4),
+    month = as.numeric(str_sub(label, 6, 7)))
+
+daily_mcc_surface_currents %>% distinct(time)
+daily_mcc_surface_currents %>% 
+  filter(elem == 48733) %>% 
+  filter(between(time, as.Date("1978-01-01"), as.Date("2019-12-31"))) %>% 
+  ggplot() +
+  geom_line(aes(time, u, color = "Eastward Velocity (u)"), alpha = 0.3) +
+  geom_line(aes(time, v, color = "Northward Velovity (v)"), alpha = 0.3)
+
+
+```
+
+
+
+#### Mapping Monthly
+
+```{r}
+#| label: load monthly current vector files
+#| eval: true
+
+# Load Monthly and plot a year (so we can verify it looks reasonable)
+monthly_currents <- read_csv(here::here("data/gom3_mcc_turnoff_input_data.csv")) %>% 
+  rename(label = date) %>% 
+  mutate(year = str_sub(label, 1,4),
+         month = as.numeric(str_sub(label, 5, 6)),
+         date = as.Date(str_c(year, month, "01", sep = "-")))
+
+
+# Make ID's from lat/lon pairs
+# monthly was regridded during download, these ID's are used later
+cell_labels <- monthly_currents %>% 
+  distinct(x,y) %>% 
+  mutate(cell_id = row_number())
+
+# Use them + variables to reshape into a matrix
+monthly_currents <- right_join(cell_labels, monthly_currents)
+
+
+ # Get xy coordinates
+ # all_gom3_currents %>% 
+ monthly_currents %>% 
+   filter(str_sub(label, 1, 4) %in% c(2000:2005)) %>% 
+   filter(str_sub(label, 5, 6) == "06") %>% 
+   ggplot() + 
+    metR::geom_vector(
+    aes(x, y = y, dx = u, dy = v), 
+    arrow.angle = 30, arrow.type = "open", arrow.length = .25, 
+    pivot = 0, 
+    preserve.dir = TRUE, 
+    direction = "ccw", 
+    color = "gray20", 
+    alpha = 0.85)+
+    scale_fill_distiller(palette = "RdBu") +
+   theme_gmri(panel.grid.major.y = element_blank()) +
+   facet_wrap(~date, ncol = 2) +
+   labs(y = "Lat", x = "Lon")
+
+```
+
+
+
+
+
+## MCC Index from Principal Component Analysis
+
+latc/lonc coordinate pairs for the centers of each triangle provide a unique ID for each element. 
+
+When transposed we can create a matrix where each triangular element value has one row per month (or daily, whatever timestep), and one column for each variable (eastward velocity, northward etc.). From this matrix we can perform a Principal Component Analysis (PCA) returning 2 or more principal components that explain a share of the variance in the matrix.
+
+
+**Question: What variables to include/exclude for PCA**
+
+We can perform the PCA using only one or more of the current variables, essentially just the water flow characteristics. **Or** we could include temperature and salinity and focus more on the water mass characteristics.
+
+[Code used for past indices looked at the vertically averaged Eastward current vector in isolation.](https://github.com/dzaugis/Ecosystem_Indicators/blob/6d21e553614cb06eb7ea02e4546535cf038d7678/Code/MCC_index_report.Rmd#L69-L76)
+
+**The primary variables of interest for this step are:**
+
+ - `u` The Daily Eastward Velocity  in meters s-1
+ - `v` The Daily Northward Water Velocity in meters s-1
+ 
+ 
+ **Secondary variables that could also be relevant for MCC dynamics include:**
+ 
+ - `ua` Vertically Averaged Daily Eastward Velocity in meters s-1
+ - `va` Vertically Averaged Daily Northward Water Velocity in meters s-1
+ - `temp` temperature in degrees_C
+ - `salinity` salinity in 1e-3
+ - `zeta` Water Surface Elevation in meters
+ 
+ 
+### Method/Approach Questions:
+
+Take a step back, understand the flow before trying to relate the PCA back.
+
+Our aim is generate a timeseries that is either a direct measure or a good proxy for MCC flow continuity. We care about this because flow characteristics determine whether lobster larva are transported along the coast or advected offshore.
+
+In chatting with Damien, there may not be 1 best way to get the meaningful information out of the different FVCOM variables available.
+
+It may make sense to tailor the data we use and the index we generate to lobster question:
+
+ - This could mean limitieng the time span, to include the time of year when lobster larva are dispersing.
+
+An alternative way to potentially get at MCC flow continuity is by measuring water volume flux directly for some transect along this area, and potentially use that instead of the PCA approach.
+
+It would be super interesting to correlate the surface volume flux with the river output from the penobscot.
+
+
+# Simple Test: PCA Approach, Monthly Data
+
+The following approach uses Northward (v) and Eastward(u) water velocity of the surface layer for the principal component analysis. 
+ 
+
+```{r}
+#| label: surface-currents-pca
+
+# Use them + variables to reshape into a matrix
+
+
+# A. For using non-vertically integrated current variables
+pca_mat <- monthly_currents %>% 
+  select(-x, -y, -year, -month, -ua, -va) %>% 
+  pivot_wider(
+    names_from = cell_id, 
+    values_from = c(u, v)) %>% 
+  column_to_rownames("date")
+
+
+# Do PCA
+# If all columns have comparable variances and you want to retain absolute differences in current strength, center but do not scale.
+mcc_pca <- prcomp(pca_mat, scale. = FALSE, center = TRUE)
+# If some locations have much larger variability and you want to analyze relative variability, center and scale.
+# mcc_pca <- prcomp(pca_mat, scale. = TRUE, center = TRUE)
+
+# Summary - Proportion of variance
+mcc_pca_summ <- summary(mcc_pca)
+mcc_pca_summ$importance[1:2, 1:2]
+
+
+# Pull Principal Components overall values
+mcc_pca_pc1 <- data.frame(mcc_pca$x[,1]) %>% 
+  rownames_to_column( "date") %>% 
+  rename("PC1" = mcc_pca.x...1.)
+mcc_pca_pc2 <- data.frame(mcc_pca$x[,2]) %>% 
+  rownames_to_column("date") %>% 
+  rename( "PC2" = mcc_pca.x...2.) 
+mcc_pca_both <- left_join(mcc_pca_pc1, mcc_pca_pc2, by= "date") %>% 
+  mutate(date = as.Date(date), 
+         mon = lubridate::month(date), 
+         yr = lubridate::year(date))
+
+
+
+# Pull Loadings
+mcc_loadings.pc1 <- data.frame(mcc_pca$rotation[,1])  %>% 
+  rownames_to_column("loc") %>% 
+  rename("PC1" = mcc_pca.rotation...1.)
+mcc_loadings.pc2 <- data.frame(mcc_pca$rotation[,2]) %>% 
+  rownames_to_column("loc") %>% 
+  rename("PC2" = mcc_pca.rotation...2.) 
+
+# Reshape loadings
+mcc_loadings <- left_join(mcc_loadings.pc1, mcc_loadings.pc2, by= "loc") %>% 
+  dplyr::filter(loc != "label") %>% 
+  pivot_longer(cols=c(PC1, PC2), names_to = "PC", values_to = "values") 
+
+
+```
+
+
+
+### Plotting Correlations in Space
+
+The following figure shows the correlation between principal components 1 & 2 from the PCA, and the monthly timeseries at each location for variables `u` & `v`.
+
+The two principal components have been rejoined to the original dataset containing the other variables for correlation checks against temperature and salinity etc.
+
+### Average Flow Characteristics
+
+Before proceeding too far, here is what the average flow direction is across the domain of interest to us:
+
+```{r}
+# Quick verification that directions make sense
+average_directions <-  monthly_currents %>% 
+  group_by(x, y) %>% 
+  summarise(
+    across(.cols = c(u,v,ua,va), .fns = ~mean(.x, na.rm = T))) %>% 
+  mutate(
+    # Radian to degree conversion
+    angle = atan2(v, u) * 180 / pi,   # Convert from radians to degrees
+    angle = if_else(angle<0, angle+360, angle),
+    speed = sqrt(u^2 + v^2),          # Compute speed (magnitude)
+    dx = u / speed * 0.05,            # Scale x-component for visualization
+    dy = v / speed * 0.05,            # Scale y-component for visualization
+    # Vertically averaged:
+    speed_a = sqrt(ua^2 + va^2),        # Compute speed (magnitude)
+    angle_a = atan2(va, ua) * 180 / pi, # Convert from radians to degrees
+    angle_a = if_else(angle_a < 0, angle_a + 360, angle_a),
+    dx_a = ua / speed * 0.05,           # Scale x-component for visualization
+    dy_a = va / speed * 0.05            # Scale y-component for visualization
+  )
+
+
+# Map them
+ggplot(average_directions) +
+  geom_sf(data = new_england) +
+  geom_segment(
+    aes(x, y, xend = x + dx, yend = y + dy),
+    arrow = arrow(length = unit(0.1, "cm")),
+    size = 0.5, color = "gray30") +
+  coord_fixed() +
+  theme_minimal() +
+  coord_sf(
+    xlim = c(-70.8, -66.7), 
+    ylim = c(43, 44.8), 
+    expand = F) +
+  labs(title = "Average Surface Current Direction", 
+       x = "Longitude", y = "Latitude")
+
+# Map them
+ggplot(average_directions) +
+  geom_sf(data = new_england) +
+  geom_segment(
+    aes(x, y, xend = x + dx_a, yend = y + dy_a),
+    arrow = arrow(length = unit(0.1, "cm")),
+    size = 0.5, color = "gray30") +
+  coord_fixed() +
+  theme_minimal() +
+  coord_sf(
+    xlim = c(-70.8, -66.7), 
+    ylim = c(43, 44.8), 
+    expand = F) +
+  labs(title = "Average Vertically-Integrated Current Direction", 
+       x = "Longitude", y = "Latitude")
+```
+
+
+```{r}
+# little bonus code for direction and velocity correlations
+mcc_corrs <- monthly_currents %>% 
+  left_join(mcc_pca_both, by = "date") %>% 
+  filter(year > 1978) %>% 
+  mutate(
+    # Surface layers: (u, v)
+    # Calculate Direction
+    dir = ifelse(
+      REdaS::rad2deg(atan2(v, u)) < 0, 
+      REdaS::rad2deg(atan2(v, u)) + 360, 
+      REdaS::rad2deg(atan2(v, u))), 
+    
+    # Calculate Velocity
+    vel = sqrt(u^2 + v^2),
+    
+    # Vertically integrated:
+    dir_a = ifelse(
+      REdaS::rad2deg(atan2(va, ua)) < 0, 
+      REdaS::rad2deg(atan2(va, ua)) + 360, 
+      REdaS::rad2deg(atan2(va, ua))), 
+    vel_a = sqrt(ua^2 + va^2)) %>% 
+  group_by(x, y) %>% 
+  # Get summary statistics
+  summarise(
+    # Get the all-year/date correlations
+    # Correlations with First PC
+    PC1_u    = cor(u, PC1),
+    PC1_v    = cor(v, PC1),
+    PC1_ua   = cor(ua, PC1),
+    PC1_va   = cor(va, PC1),
+    PC1_vel  = cor(vel, PC1),
+    PC1_dir  = cor(dir, PC1),
+    # Correlations with Second PC
+    PC2_u   = cor(u, PC2),
+    PC2_ua  = cor(ua, PC2),
+    PC2_v   = cor(v, PC2),
+    PC2_v   = cor(va, PC2),
+    PC2_vel = cor(vel, PC2),
+    PC2_dir = cor(dir, PC2)) %>% 
+  pivot_longer(
+    cols = c(-y, -x), 
+    names_to = "Cor", 
+    values_to = "Correlation")
+
+
+# Map correlations between Principal Components and u/v
+mcc_corrs %>% 
+  mutate(PC = str_sub(Cor, 1,3),
+         fvcom_var = str_sub(Cor, 5,-1)) %>% 
+  filter(Cor %in% c("PC1_u", "PC2_u", "PC1_v", "PC2_v")) %>% 
+  ggplot() + 
+  geom_sf(data = new_england) +
+  geom_raster(aes(x, y, fill = Correlation)) + 
+  scale_fill_distiller(
+    palette = "RdBu", 
+    limits = c(-1, 1),
+    direction = -1) + 
+  facet_grid(fvcom_var~PC) + 
+  theme_classic() +
+  map_theme(legend.position = "bottom") +
+  scale_x_continuous(breaks = seq(-75, -60, 1)) +
+  coord_sf(
+    xlim = c(-70.8, -66.7), 
+    ylim = c(43, 44.8), 
+    expand = F) +
+  labs(
+    title = "Reviewing PCA Mode Correlations\nAll monthly values (u, v) by location from 1978-2016",
+    subtitle = "u = Eastward Water Velocity\nv = Northward Water Velocity")
+```
+
+## Vertical Current Velocity?
+
+(It seems like Matt used the vertical movement velocity info in the PCA as well, here is how he grabbed it from the netcdfs, one value each time step)\[https://github.com/dzaugis/Ecosystem_Indicators/blob/6d21e553614cb06eb7ea02e4546535cf038d7678/Code/FVCOM_shp_extract.Rmd#L254C1-L279C2\]
+
+`ua` and `va` are variables in the FVCOM model that have been integrated (averaged) across all the depth layers.
+
+```{r}
+
+# # Need vertically integrated eastward velocity "ua" for this
+monthly_currents %>%
+ filter(date %in% c(as.Date("2010-03-01"), as.Date("1986-03-01"), as.Date("2011-03-01"))) %>%
+  mutate(
+    vel = sqrt(ua^2 + va^2), # Get velocity?
+    PC = if_else(
+      year == 2010, 
+      "positive PC1", 
+      if_else(year == 1986, "negative PC1", "neutral PC1"))) %>%
+  ggplot() + 
+  geom_sf(data = new_england, fill = "grey") +
+  geom_segment(
+    aes(x = x, y = y, 
+        xend = x+u, yend = y+v, color = vel),
+    arrow = arrow(angle = 30, length = unit(0.05, "inches"), type = "closed")) +
+  facet_wrap(~PC)+
+  scale_color_viridis_c() + 
+   theme_classic() +
+  map_theme() +
+  coord_sf(xlim = c(-70.8, -66.7), ylim = c(43, 44.8), expand = F,
+           datum = "+proj=longlat +datum=NAD83 +no_defs +ellps=GRS80 +towgs84=0,0,0")
+```

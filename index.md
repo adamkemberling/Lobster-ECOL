@@ -21,7 +21,9 @@
 
 ### LOB-ECOL Data Processing
 
-[Maine Coastal Current Area and Current PCA Processing](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/FVCOM_MaineCoastalCurrent_PCA.html)
+[Maine Coastal Current Exploratory Monthly PCA](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/MaineCoastalCurrent_Exploratory_PCA.html)
+
+[Maine Coastal Current Daily](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/MCC_Daily_PCA.html)
 
 [Processing Regional Daily Surface/Bottom Temperature Timeseries](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/FVCOM_Regional_Temperature_Timeseries.html)
 
@@ -40,12 +42,14 @@
 
 # Regime Shift Evaluation
 
+[rstars support code]()
+
 [Regime Shift Common Methods](https://adamkemberling.github.io/Lobster-ECOL/R/regime_tests/regime_shift_methods.html)
 
 [FVCOM Temperature + Salinity Regime Shifts](https://adamkemberling.github.io/Lobster-ECOL/R/regime_tests/STARS_FVCOM.html)
 
 [GLORYs Temperature + Salinity Regime Shifts](https://adamkemberling.github.io/Lobster-ECOL/R/regime_tests/STARS_GLORYS.html)
 
-
+[Maine Coastal Current Regime Shifts]()
 
 

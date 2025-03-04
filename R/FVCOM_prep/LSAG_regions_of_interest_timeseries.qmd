@@ -959,9 +959,6 @@ bathy_p / (surface_p | bottom_p)
 
 
 
-
-### Average Depth over Area
-
 I'm using the new function from `Regional_Salinity_Monthly.qmd` to speed things up.
 
 ```{r}
