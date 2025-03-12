@@ -1,0 +1,347 @@
+---
+title: "LSAG Data Comparisons"
+description: | 
+  Checking warm-bias of 2016+ data from FVCOM Products
+date: "Updated on: `r Sys.Date()`"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    df-print: kable
+    self-contained: true
+execute: 
+  echo: true
+  warning: false
+  message: false
+  fig.align: "center"
+  comment: ""
+---
+
+# About: 
+
+There is a question on why FVCOM data seems to show a warm bias when compared to 
+trawl survey data after 2016.
+
+Jeff has sent the data over for the region of interest. The goal is to now compare bottom temperatures from the data we received from Dr. Chen's Postdoc, against what those values would be in their original grid using the data on THREDDS.
+
+
+```{r}
+####. packages. ####
+library(gmRi)
+library(tidyverse)
+library(sf)
+library(rnaturalearth)
+library(fvcom)
+library(ncdf4)
+library(patchwork)
+library(showtext)
+
+# Set the theme
+theme_set(theme_bw() + map_theme())
+
+# Project paths
+lob_ecol_path <- cs_path("mills", "Projects/Lobster ECOL")
+fvcom_path    <- cs_path("res", "FVCOM/Lobster-ECOL")
+poly_paths    <- here::here("local_data", "OceanModelValidationPolygons")
+
+# Shapefiles
+new_england <- ne_states("united states of america", returnclass = "sf") %>% 
+  filter(postal %in% c("VT", "ME", "RI", "MA", "CT", "NH", "NY", "MD", "VA", "NJ", "DE", "NC", "PA", "WV"))
+canada <- ne_states("canada", returnclass = "sf")
+
+```
+
+
+
+```{r}
+# # Load the survey strata
+shape_path <- cs_path("res", "Shapefiles")
+
+# MENH Strata
+# Region = areas along the coastline
+# Stratum = depth areas, moving from inshore to offshore
+menh_strata <- read_sf(str_c(shape_path, "MENH_Strata/Updated MENH Survey Strata.shp")) %>% 
+  mutate(kipp_stratum = str_c(REGION, STRATUM, sep = "_"),
+         .before = "STRATUM")
+# ggplot() + geom_sf(data = menh_strata, aes(fill = kipp_stratum), alpha = 0.4) +
+#   theme(legend.position = "bottom") +
+#   labs(fill = "STRATUM")
+```
+
+
+```{r}
+#| label: style-sheet
+#| results: asis
+
+# Use GMRI style
+use_gmri_style_rmd()
+
+```
+
+```{r}
+#| label: fonts-config
+#| echo: false
+
+
+# Path to the directory containing the font file (replace with your actual path)
+font_dir <- paste0(system.file("stylesheets", package = "gmRi"), "/GMRI_fonts/Avenir/")
+
+# Register the font
+font_add(
+  family = "Avenir",
+  file.path(font_dir, "LTe50342.ttf"),
+  bold = file.path(font_dir, "LTe50340.ttf"),
+  italic = file.path(font_dir, "LTe50343.ttf"),
+  bolditalic = file.path(font_dir, "LTe50347.ttf"))
+
+# Load the font
+showtext::showtext_auto()
+
+```
+
+
+### Read the Data
+
+Here is the data Jeff sent over:
+
+It contains `date`, `latitude`, and `longitude` information and the `bottom_t` that (I presume) came from the FVCOM data I sent them.
+
+```{r}
+lsag_dat <- read_csv(here::here("local_data/LSAG_requests/FVCOM ME_NH overlap temp data.csv"))
+
+lsag_dat %>% 
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>% 
+  ggplot() +
+  geom_sf(aes(color = Stratum), size = 0.4) +
+  geom_sf(data = menh_strata, aes(fill = kipp_stratum), alpha = 0.4) +
+  coord_sf(xlim = range(lsag_dat$Longitude), ylim = range(lsag_dat$Latitude), expand = T) +
+  labs(color = "Stratum", fill = "Stratum", title = "GOM3 Centerpoint Strata Assignments")
+```
+
+This is his request:
+
+> Do you know how you would go about pulling comparable data points from the online version? If possible, I could drop these data in and calculate the time series to compare to try to isolate where the differences is coming from.
+
+
+After getting some clarification from Jeff, the above map only has coordinates from FVCOM centers. This is more clarification of whaat he was looking for:
+
+> The lat longs are the center points of the FVCOM, so not an exact match to the ME/NH tow coordinates. My process was to retain any daily temp data from FVCOM elements that had their center coordinates fall within a ME/NH stratum that was surveyed on the same day.
+
+And a map of those locations:
+
+```{r}
+# Read the original data sent over
+menh_dat <- read_csv(here::here("local_data/LSAG_requests/MENH_stations_2024-07-30.csv"))
+
+# Plot the stations over the strata designations
+menh_dat %>% 
+  ggplot() +
+  geom_point(aes(Longitude, Latitude), size = 0.2) +
+  geom_sf(data = menh_strata, aes(fill = kipp_stratum), alpha = 0.4) +
+  coord_sf(xlim = range(lsag_dat$Longitude), ylim = range(lsag_dat$Latitude), expand = T) +
+  theme(legend.position = "bottom") +
+  labs(color = "Stratum", fill = "Stratum",
+       title = "MENH Station Locations")
+```
+
+
+Here is the general workflow in my head that I'm mapping out:
+
+ 1. Open one file from the NECOFS hindcast that has hourly data from 2016-2023.
+ 2. Use the FVCOM package to construct the mesh as an sf object. 
+ 
+
+#### Open NECOFS Hindcast File
+
+If we want to get indexing information, we just need to open a single day and make the mesh. Then we can pass those either over to a jupyter notebook to hopefully index out faster, or loop over them in R to be more confident that it is pulling things properly.
+
+```{r}
+# Base URL path
+necofs_base <- "http://www.smast.umassd.edu:8080/thredds/dodsC/models/fvcom/NECOFS/Archive/NECOFS_GOM/"
+
+# year/month details
+necofs_yr   <- 2016
+necofs_mnth <- "02"
+necofs_url  <- str_c(necofs_base, necofs_yr,  "/gom4_", necofs_yr, necofs_mnth, ".nc")
+
+
+# # Open Connection
+necofs_x <- nc_open(necofs_url)
+```
+
+
+```{r}
+#| label: check timeseries 
+
+# # Plot the bottom temp for a known index to compare against python subset
+# test_times <- ncvar_get(necofs_x, varid = "Times")
+# test_temp <- ncvar_get(
+#   necofs_x, 
+#   varid = "temp", 
+#   start = c(33258, 40, 1), #40 sigma layers in the necofs 4 grid
+#   count = c(1, 1, -1))
+# 
+# ggplot(data.frame("time" = ymd_hms(test_times), "temp" = test_temp), aes(time, temp)) +
+#   geom_line(group = 1)
+```
+
+
+
+```{r}
+#| label: construct the mesh
+
+# Get the mesh itself as a simple feature collection
+gom4_mesh <- get_mesh_geometry(necofs_x, what = 'lonlat') 
+
+
+```
+
+
+
+# Working HERE - Strata Coverage
+
+Using the mesh from above, we can locate the relevant mesh node and nele indices for areas of interest.
+
+We need to determine which strata are sampled on a given date, and on each of those dates, we want bottom temperatures from FVCOM elements are within the strata.
+ 
+Use that mesh_sf object to determine node & element indexing via spatial overlap. This gets the relevant index numbers for pulling data out of the netcdf file
+ 
+ 
+
+```{r}
+#| label: Set up strata - date coverage table
+
+# Make the trawl locations an sf dataframe
+stations_sf <- menh_dat %>% 
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326, remove = F)
+
+
+# Identify what strata are being sampled by the MENH Station coordinates
+menh_strata_overlap <- st_join(
+  x = st_transform(stations_sf, st_crs(menh_strata)),
+  y = st_make_valid(menh_strata), 
+  join = st_within) %>% 
+  drop_na(kipp_stratum)
+
+
+# Make a strata + date key
+strata_sample_key <- menh_strata_overlap  %>% 
+  st_drop_geometry() %>% 
+  mutate(
+    time = as.Date(str_c(
+      Year, 
+      str_pad(Month, side = "left", width = 2, pad = "0"), 
+      str_pad(Day, side = "left", width = 2, pad = "0"), sep = "-"))) %>% 
+  distinct(kipp_stratum, time) %>% 
+  arrange(kipp_stratum, time)
+
+
+# Save that
+write_csv(
+  strata_sample_key,
+  here::here("local_data/LSAG_requests/MENH_strata_date_coverage.csv"))
+
+```
+
+The table from above tells us which strata we need FVCOM data for based on survey sampling effort that day.
+
+The next table will give us the details on what nodes we need to pull indexing information for on those days. This step puts all the mesh element details for areas within the strata into a table. 
+
+ 
+```{r}
+#| label: set up strata element overlap table
+# In/out strata
+
+# Take a subset of the survey strata to use as a placeholder
+# Use the intersection to identify a subgroup of those to start with
+
+# Clip the mesh using Just those Strata 
+strata_subset <- filter(menh_strata, kipp_stratum %in% menh_strata_overlap$kipp_stratum)
+
+
+# Make an SF object of the centers
+# Check which are within the strata subset
+gom4_centers <- data.frame(
+  "lonc" = ncvar_get(necofs_x, varid = "lonc", start = c(1), count = -1),
+  "latc" = ncvar_get(necofs_x, varid = "latc", start = c(1), count = -1)) %>% 
+  mutate(elem = row_number(), .before = "lonc") %>% 
+  st_as_sf(coords = c("lonc", "latc"), crs = 4326) %>% 
+  st_transform(st_crs(strata_subset)) %>% 
+  st_join(
+    y = st_make_valid(strata_subset), 
+    join = st_within) %>% 
+  drop_na(kipp_stratum) %>% 
+  st_drop_geometry()
+
+
+# We now know which elements to subset out of the mesh
+strata_overlap_info <- gom4_centers %>% 
+  left_join(gom4_mesh, join_by("elem")) %>% 
+  st_as_sf() %>% 
+  st_drop_geometry()
+
+# Save this. This tells us which elements to pull data from based on strata sampling
+write_csv(
+  strata_overlap_info, 
+  here::here("local_data/LSAG_requests/MENH_strata_GOM4_overlap_indices.csv"))
+
+```
+
+
+We can use those the information from those two tables to pull data from the correct locations in an automated way.
+ 
+ 
+ 
+# Averaging over time
+
+The next part is the difficult / time-consuming step:
+
+We need to get averages over time, without over-requesting too much data and shutting down the connection. This will involve requesting data for some numer of locations at a time, pulling down hourly data, and getting daily averages without exceeding 1GB.
+
+For this step, I think the way forward will be easier in python unfortunately. 
+
+
+### Checking Results from Python
+
+
+```{r}
+# Read in the Month of Data
+gom4_test_month <- read_csv(
+  list.files(here::here("local_data/LSAG_requests/NECOFS_Concurrent_Daily_Btemp"), full.names = T)[1])
+```
+
+
+```{r}
+# Verify the date and strata matches line up
+effort_check <- gom4_test_month %>% distinct(kipp_stratum, time) %>% arrange(kipp_stratum, time)
+effort_val <- strata_sample_key %>% filter(year(time) == 2016 & month(time) == 5) %>% arrange(kipp_stratum, time)
+dim(effort_check) == dim(effort_val)
+table(effort_val == effort_check, useNA = 'ifany')
+
+# Join the date by element back to the GOM4 mesh
+map_check <- gom4_test_month %>% 
+  left_join(gom4_mesh, join_by("elem", "p1", "p2", "p3")) %>% 
+  st_as_sf()
+
+# Any days where multiple were sampeld?
+map_check %>% st_drop_geometry() %>% 
+  distinct(time, kipp_stratum)  %>% 
+  count(time) %>% arrange(desc(n))
+  
+
+# Plot a map of daily temperatures
+map_check %>% 
+  filter(time == "2016-05-06") %>% 
+  ggplot() +
+  geom_sf(data = menh_strata, color = "transparent", alpha = 0.4) +
+  geom_sf(aes(fill = bot_temp), color = "transparent") +
+  geom_sf(data = menh_strata, color = "black", fill = "transparent") +
+  coord_sf(xlim = range(lsag_dat$Longitude), ylim = range(lsag_dat$Latitude), expand = T) +
+  scale_fill_distiller(palette = "RdBu") +
+  labs(title = "Sampled Strata on 2016-05-06",
+       fill = "Bottom Temperature")
+```
+
+
+
+

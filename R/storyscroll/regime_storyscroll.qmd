@@ -1,0 +1,295 @@
+---
+title: Gulf of Maine Warming Closeread
+date: "Updated on: `r Sys.Date()`"
+format: closeread-html
+execute:
+  echo: false
+  warning: false
+  message: false
+  comment: ""
+---
+
+
+
+```{r}
+
+# Packages
+{
+library(sf)            # vector spatial mapping/operations
+library(tidyverse)     # data wrangling and plotting
+library(gmRi)          # color schemes and cloud storage paths
+library(patchwork)     # plot arrangement
+library(rnaturalearth) # coastlines and state polygons
+library(sysfonts)      # font support
+library(ggtext)
+library(scales)
+}
+
+
+# Paths + conflicts
+conflicted::conflict_prefer("select", "dplyr")
+conflicted::conflict_prefer("filter", "dplyr")
+
+# Shapefiles
+new_england <- ne_states("united states of america", returnclass = "sf") %>% 
+  filter(postal %in% c("VT", "ME", "RI", "MA", "CT", "NH", "NY", "MD", "VA", "NJ", "DE", "NC", "PA", "WV"))
+canada <- ne_states("canada", returnclass = "sf")
+
+# File paths for various extents based on "apershing_gulf_of_maine"
+region_paths <- get_timeseries_paths(
+  region_group = "gmri_sst_focal_areas", 
+  box_location = "cloudstorage")
+
+
+deg_f <- "\u00b0F"
+deg_c <- "\u00b0C"
+```
+
+
+
+
+```{r}
+#| label: style-sheet
+#| results: asis
+
+# Use GMRI style
+use_gmri_style_rmd()
+
+```
+
+
+
+```{r}
+#| label: fonts-config
+#| echo: false
+
+# Path to the directory containing the font file (replace with your actual path)
+font_dir <- paste0(system.file("stylesheets", package = "gmRi"), "/GMRI_fonts/Avenir/")
+
+# Register the font
+font_add(
+  family = "Avenir",
+  file.path(font_dir, "LTe50342.ttf"),
+  bold = file.path(font_dir, "LTe50340.ttf"),
+  italic = file.path(font_dir, "LTe50343.ttf"),
+  bolditalic = file.path(font_dir, "LTe50347.ttf"))
+
+# Load the font
+showtext::showtext_auto()
+
+theme_set(theme_gmri(base_family = "Avenir", title_family = "Avenir"))
+
+```
+
+
+# Gulf of Maine Warming with Closeread
+
+I've been working on visualizations around this topic for a number of years, but I wanted to try something different to walk through my developing understanding of regional dynamics.
+
+This document uses the [quarto closeread extension](https://closeread.dev). 
+
+`Closeread`is a custom [Quarto](https://quarto.org) extension which can be used to create a storyscrolling experience for html documents.
+
+This is my first attempt at making one. This exercise has two/three goals:
+
+1. A show-and-tell of a new tool
+2. An attempt to evaluate whether this is worth the time investment
+3. Show some Ocean current or Lobster-ECOL regime results on a map
+
+
+# Gulf of Maine Warming Dynamics
+
+
+:::{.cr-section}
+
+
+
+In 2015, a study from Dr. Andrew Pershing and colleagues highlighted the rapid warming of the Gulf of Maine and its possible effects on cod populations.[@cr-areamap]{scale-by="1.25"} 
+
+> Over the past decade, sea surface temperatures in the Gulf of Maine increased faster than 99% of the global ocean. - Pershing et al. 2015 
+
+
+
+:::{#cr-areamap}
+
+
+```{r}
+# Bathymetric Contour Data
+bathy <- raster::raster(str_c(cs_path("res","Bathy/"), "ETOPO1/NEShelf_Etopo1_bathy.tiff")) 
+
+# Make a terra copyfor ggplot using tidyterra
+elev_terra <- terra::rast(bathy)
+
+# Polygon Path
+poly_path <- region_paths[["apershing_gulf_of_maine"]][["shape_path"]]
+region_extent <- read_sf(poly_path)
+
+ggplot() +
+  tidyterra::geom_spatraster_contour_filled(
+    data = terra::rast(bathy), 
+    breaks = c(seq(0,-600,-100),-10000),
+    alpha = 0.6, 
+    linewidth = 0.1,
+    color = "gray20", show.legend = F) +
+  scale_fill_brewer(
+    palette = "Blues",
+    na.value = "#08519C")  +
+  geom_sf(data = new_england) + 
+  geom_sf(data = canada) + 
+  geom_sf(data = region_extent, fill = "transparent", color = "black", linewidth = 1.2) +
+  theme_bw() + 
+  map_theme(
+    text = element_text(family = "Avenir"),
+    plot.title = element_text(face = "bold")) +
+  coord_sf(xlim = c(-74.5, -49.5), ylim = c(37, 48)) + # full zoom out to TGB
+  labs(title = "Gulf of Maine Study Area")
+```
+
+
+
+:::
+
+
+Beginning around 2010, SSTs rose rapidly in the Gulf of Maine and surrounding areas. Annual SSTs
+continued to fluctuate, but mean temperatures were hotter than previous decades.[@cr-warmingplot]{scale-by="1.25"} 
+
+
+
+:::{#cr-warmingplot}
+
+```{r}
+
+# Timeseries Path
+timeseries_path <- region_paths[["apershing_gulf_of_maine"]][["timeseries_path"]]
+
+# Load the regular timeseries
+region_timeseries <- read_csv(
+  file = timeseries_path, 
+  col_types = cols(), 
+  guess_max = 1e6) %>% 
+  mutate(year = lubridate::year(time))
+
+# Summarize by year to return mean annual anomalies and variance
+annual_summary <- region_timeseries %>% 
+  filter(year >1981) %>% 
+  group_by(year) %>% 
+  summarise(across(.cols = -c(time), .fns = mean)) %>% 
+  mutate(
+    yr_as_dtime = as.Date(paste0(year, "-07-02")),
+    anom_direction = ifelse(sst_anom > 0, "Above Long-Term Average", "Below Long-Term Average"))
+
+#RColorBrewer::brewer.pal(9, "RdBu")
+# "#B2182B" "#D6604D" "#F4A582" "#FDDBC7" "#F7F7F7" "#D1E5F0" "#92C5DE" "#4393C3" "#2166AC"
+
+
+ggplot(annual_summary, aes(year, area_wtd_anom)) +
+  geom_hline(yintercept = 0, color = "black", alpha = 0.9) +
+  geom_col(aes(fill = anom_direction)) +
+  geom_smooth(method = "lm", se = F, color = "black") +
+  geom_textbox(
+    data = data.frame(year = 2017, area_wtd_anom = 0.4),
+    aes(label = "Period of Consistently High SSTs After 2010."), 
+    family = "Avenir") +
+  scale_fill_manual(values = c("#D6604D", "#4393C3")) +
+  theme(legend.position = "bottom") +
+  scale_y_continuous(labels = label_number(suffix = deg_c)) +
+  labs(
+    x = "Year", 
+    y = "Sea Surface Temperature Anomaly",
+    title = "Rapidly Warming Gulf of Maine",
+    fill = "")
+```
+
+:::
+
+
+A review of deep-water (250m) temperatures show that temperatures below the surface made a similar transition around the same time.[@cr-buoyplot]{scale-by="1.25"}
+
+
+
+:::{#cr-buoyplot}
+
+```{r}
+# Package to interface with erddap
+library(rerddap)
+
+# Read the data we downloaded from erddap
+buoy_m <- read_csv("~/Documents/Repositories/oisst_mainstays/local_data/buoy_m_250m.csv")
+
+
+# Monthly averages and climatology
+bm_month_clim <-  buoy_m  %>% 
+  group_by(station, depth, mnth) %>% 
+  summarise(
+    mean_temp = mean(temperature, na.rm = T),
+    .groups = "drop")
+
+# Get Anomalies
+bm_monthly <- buoy_m  %>% 
+  group_by(station, depth, yr, mnth) %>% 
+  summarise(
+    temperature = mean(temperature, na.rm = T),
+    .groups = "drop") %>% 
+  mutate(
+    time  = as.Date(
+      str_c(yr, str_pad(mnth, pad = "0", side = "left", width = 2), 
+            "01", sep = "-"))) %>% 
+  left_join(bm_month_clim) %>% 
+  mutate(temp_anom = temperature - mean_temp,
+         is_pos = if_else(temp_anom < 0, F, T))
+
+# Add the monthly Gaps in explicitly
+buoy_month_range <- c(min(bm_monthly$time, na.rm = T), max(bm_monthly$time, na.rm = T))
+all_buoy_months <- data.frame(
+  "time" = seq.Date(
+    from = buoy_month_range[1], 
+    to = buoy_month_range[2], 
+    by = "month"))
+
+# Fill Gaps
+bm_monthly <- all_buoy_months %>%
+  left_join(bm_monthly) %>% 
+  mutate(anom_col = if_else(is_pos, "#B2182B", "#2166AC"))
+# Plot
+
+bm_monthly %>% 
+  ggplot() +
+  geom_line(aes(time, 0, group = 1)) +
+  geom_line(aes(time, temp_anom, color = I(anom_col), group = 1)) +
+  geom_segment(
+    aes(time, 0, xend = time, yend = temp_anom, group = 1, color = I(anom_col)), alpha = 0.3) +
+  geom_line(aes(time, temp_anom, color = I(anom_col), group = 1)) +
+  scale_y_continuous(labels = label_number(suffix = deg_c)) +
+  labs(
+    y = "Temperature Anomaly",
+    x = "Date",
+    title = "Deep-Water Temperature",
+    subtitle = "NERACOOS Buoy M: 250m Temperature Sensor")
+
+```
+
+:::
+
+
+At the time of Andy's publication, the rapid change in Gulf of Maine SST was attributed in part to a change in the Gulf Stream Position and the Pacific Decadal Oscillation:[@cr-areamap]{scale-by="1.25" pan-to="-30%,15%"}
+
+> The warming, which was related to a northward shift in the Gulf Stream and to changes in the Atlantic Multidecadal Oscillation and Pacific Decadal Oscillation, led to reduced recruitment and increased mortality in the region’s Atlantic cod (Gadus morhua) stock. - Pershing et al. 2015 
+
+Subsequent work has suggested that much of the regional warming may be attributed to natural climate variability:
+
+> ...Finally, the similarity between the basin‐wide average and the shelf/slope meridional mean trends implies approximately two‐thirds of the linear warming trend in 1982–2018 may be
+attributed to natural climate variability and approximately one third to external forcing. - Chen et al. 2020
+
+Observations of a Northward shift in the Gulf Stream path have been linked to ocean and atmospheric conditions across the shelf and northward to the Labrador Sea and Greenland (Joyce 2019). Other researchers have noted that in 2008, the Gulf Stream migrated closer to the Tail of the Grand Banks, reducing the westward connectivity of the Labrador Currnet.(Neto 2021) 
+
+:::
+
+
+### Is it worth it?
+
+Maybe if...
+
+1. There is a defined story you want to tell
+2. You are interested in html/css formatting for tweaking the style/layout
+3. You are looking to learn more quarto javascript functionality
+
