@@ -343,5 +343,202 @@ map_check %>%
 ```
 
 
+### Export Mesh Information
 
+
+# Deliverable 2: Depth Information
+
+Jeff asked if the bathymetry data was available, the next sections pull what the bottom bathymetry was and then whatever depth the sigma layer is taken to represent:
+
+```{r}
+
+
+# Pull bathymetry, figure out what its coordinates are
+gom4_bathy <- ncvar_get(necofs_x, varid = "h", start = c(1))
+
+# Pull the "bottom" siglay
+surface_siglay <- ncvar_get(necofs_x, varid = "siglay", start = c(1, 1), count = c(-1,1))
+bot_siglay <- ncvar_get(necofs_x, varid = "siglay", start = c(1, 40), count = c(-1,1))
+range(surface_siglay)
+range(bot_siglay)
+
+# Bathymetry links to nodes*
+bathy_df <- data.frame(
+  "lon" = ncvar_get(necofs_x, "lon"),
+  "lat" = ncvar_get(necofs_x, "lat"),
+  "bathy" = gom4_bathy,
+  "surface_depth" = abs(surface_siglay) * gom4_bathy,
+  "bottom_depth" = abs(bot_siglay) * gom4_bathy
+)
+
+
+# # Plot the three layers
+# bathy_p <- ggplot(bathy_df, aes(lon, lat)) + 
+#   geom_point(aes(color = bathy), size = 0.2) +
+#   scale_color_distiller(
+#     palette = "Blues", direction = 1, 
+#     limits = c(0, max(gom4_bathy))) +
+#   theme_dark() +
+#   labs(title = "FVCOM GOM4 Bathymetry (m)")
+# surface_p <- ggplot(bathy_df, aes(lon, lat)) + 
+#   geom_point(aes(color = surface_depth), size = 0.2) +
+#   scale_color_distiller(
+#     palette = "Blues", direction = 1, 
+#     limits = c(0, max(gom4_bathy))) +
+#   theme_dark() +
+#   labs(title = "GOM4 Surface Layer Depth (m)")
+# bottom_p <-  ggplot(bathy_df, aes(lon, lat)) + 
+#   geom_point(aes(color = bottom_depth), size = 0.2) +
+#   scale_color_distiller(
+#     palette = "Blues", direction = 1, 
+#     limits = c(0, max(gom4_bathy))) +
+#   theme_dark() +
+#   labs(title = "GOM4 Bottom Layer Depth (m)")
+
+# Plot them all
+bathy_p / (surface_p | bottom_p)
+
+```
+
+If we want the average depth for a mesh elem then we need to average over the nodes. The next function will do that:
+
+
+
+```{r}
+
+
+#' @Title FVCOM Element Average from Vertices
+#' 
+#' 
+#' @description Get the average value from the relevant vertices, along  
+#' the time dimension for FVCOM mesh triangles.
+#'
+#' @param fvcom_mesh_trios
+#' @param nc
+#' @param nc_varname 
+#' @param siglay index number for depth layer
+#'
+#' @return
+#' @export
+#'
+#' @examples
+average_from_nodes <- function(fvcom_mesh_trios, 
+    nc, 
+    nc_varname = "surface_t", 
+    start_vec = c(),
+    count_vec = c()){
+  
+  # Reduce any redundancies/repeats
+  fvcom_mesh_trios <- distinct(fvcom_mesh_trios, elem, p1, p2, p3)
+  
+  # Pull the full slice of the variable for a single depth
+  # Salinity coordinates are: node, siglay, time
+  # Grab the trio that matches the triangle
+  var_slice <- ncvar_get(
+      nc, 
+      varid = nc_varname, 
+      start = start_vec, 
+      count = count_vec)
+  
+  # Compute mean time series for each trio using purrr::map
+  triangular_element_means <- pmap(
+    .l = fvcom_mesh_trios, 
+    .f = function(elem, p1, p2, p3) {
+      p1_ts = var_slice[p1]
+      p2_ts = var_slice[p2]
+      p3_ts = var_slice[p3]
+      trio_time_series <- (p1_ts + p2_ts + p3_ts) / 3
+  })
+  
+  # Assign the triangle IDs to the list
+  triangular_element_means <- setNames(triangular_element_means, fvcom_mesh_trios$elem)
+  
+  
+  return(triangular_element_means)
+  
+}
+
+
+
+```
+
+
+
+```{r}
+# Get the avg bathymetry
+avg_depths <- average_from_nodes(
+  fvcom_mesh_trios = strata_overlap_info, 
+  nc = necofs_x, 
+  nc_varname = "h", 
+  start_vec = c(1), 
+  count_vec = c(-1))
+
+# Get the surface depth
+surf_siglay <- average_from_nodes(
+  fvcom_mesh_trios = strata_overlap_info, 
+  nc = necofs_x, 
+  nc_varname = "siglay", 
+  start_vec = c(1,1), 
+  count_vec = c(-1,1))
+
+# Get the bootom depth
+bot_siglay <- average_from_nodes(
+  fvcom_mesh_trios = strata_overlap_info, 
+  nc = necofs_x, 
+  nc_varname = "siglay", 
+  start_vec = c(1,40), 
+  count_vec = c(-1,1))
+
+# Make it a dataframe
+elem_depths <- map_dfr(
+  .x = names(avg_depths), 
+  .f = function(x){
+    data.frame(
+      "elem" = x,
+      "bathy" = avg_depths[[x]],
+      "surface_layer_depth" = abs(surf_siglay[[x]]) * avg_depths[[x]],
+      "bottom_layer_depth" = abs(bot_siglay[[x]]) * avg_depths[[x]])})
+
+
+
+# Join to mesh
+bathy_mesh <- elem_depths %>%
+  mutate(elem = as.numeric(elem) ) %>% 
+  left_join(gom4_mesh, join_by("elem")) %>% 
+  st_as_sf()
+
+# Map it
+bathy_mesh %>% 
+  pivot_longer(cols = -c(elem, geometry, p1, p2, p3), names_to = "var", values_to = "depth") %>% 
+  ggplot() +
+  geom_sf(aes(fill = depth), color = NA) +
+  facet_wrap(~var) +
+  scale_fill_distiller(
+    palette = "RdYlBu", direction = -1) +
+  labs(title = "Bathymetry Depth (m)")
+
+
+# Add the area labels back
+bathy_mesh <- bathy_mesh %>% 
+  left_join(
+    strata_overlap_info %>% distinct(kipp_stratum, REGION, STRATUM, elem)) %>% 
+  relocate(elem, p1, p2, p3, .before = geometry) %>% 
+  relocate(kipp_stratum, REGION, STRATUM, .before = "bathy") %>% 
+  st_as_sf()
+
+```
+
+
+
+
+```{r}
+# Save the bathymetry with the mesh
+
+# # this is the shapefile information
+sf::write_sf(bathy_mesh, here::here("local_data/LSAG_requests/GOM4_MENH_Strata_depths.geojson"))
+
+# bathy_mesh_test <- st_read(here::here("local_data/OceanProductPoly_depths.geojson"))
+# mesh_test <- st_read(here::here("local_data/FVCOM_gom3_mesh.geojson"))
+# ggplot(mesh_test) +geom_sf()
+```
 

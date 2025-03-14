@@ -514,6 +514,9 @@ pca_mat <- daily_mcc_sc %>%
 # Do PCA
 # If all columns have comparable variances and you want to retain absolute differences in current strength, center but do not scale.
 mcc_pca <- prcomp(pca_mat, scale. = TRUE, center = TRUE)
+
+# Save the PCA
+# mcc_pca <- saveRDS(mcc_pca, here::here("local_data/MCC_PC_timeseries/daily_surface_velocities_PCA.rds"))
 ```
 
 
