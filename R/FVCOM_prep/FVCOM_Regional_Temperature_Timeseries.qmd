@@ -50,6 +50,7 @@ canada <- ne_states("canada", returnclass = "sf")
 
 
 
+
 ```{r}
 #| label: style-sheet
 #| results: asis

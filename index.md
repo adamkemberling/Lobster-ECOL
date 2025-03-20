@@ -50,6 +50,6 @@
 
 [GLORYs Temperature + Salinity Regime Shifts](https://adamkemberling.github.io/Lobster-ECOL/R/regime_tests/STARS_GLORYS.html)
 
-[Maine Coastal Current Regime Shifts]()
+[Maine Coastal Current Regime Shifts](https://adamkemberling.github.io/Lobster-ECOL/R/regime_tests/MCC_rstars.html)
 
 

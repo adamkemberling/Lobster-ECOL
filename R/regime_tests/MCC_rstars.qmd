@@ -1,0 +1,969 @@
+---
+title: "Maine Coastal Current RSTARS"
+description: | 
+  Detailing the Regime Shifts in Maine Coastal Current Behavior
+date: "Updated on: `r Sys.Date()`"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    df-print: kable
+    self-contained: true
+execute: 
+  echo: true
+  warning: false
+  message: false
+  fig.align: "center"
+  comment: ""
+---
+
+```{r}
+
+{
+  library(sf) 
+  library(fvcom) 
+  library(tidyverse)
+  library(gmRi)
+  library(patchwork)
+  library(rnaturalearth)
+  library(showtext)
+  library(ncdf4)
+  # Cyclic color palettes in scico
+  # From: https://www.fabiocrameri.ch/colourmaps/
+  library(scico)
+  library(legendry)
+}
+
+# namespace conflicts
+conflicted::conflict_prefer("select", "dplyr")
+conflicted::conflict_prefer("filter", "dplyr")
+
+
+# Set the theme
+theme_set(theme_classic() + map_theme())
+
+# Project paths
+lob_ecol_path <- cs_path("mills", "Projects/Lobster ECOL")
+fvcom_path    <- cs_path("res", "FVCOM/Lobster-ECOL")
+poly_paths    <- cs_path("mills", "Projects/Lobster ECOL/Spatial_Defs")
+
+# Shapefiles
+new_england <- ne_states("united states of america", returnclass = "sf") %>% 
+  filter(postal %in% c("VT", "ME", "RI", "MA", "CT", "NH", "NY", "MD", "VA", "NJ", "DE", "NC", "PA", "WV"))
+canada <- ne_states("canada", returnclass = "sf")
+
+# # # Support functions for FVCOM
+source(here::here("R/FVCOM_Support.R"))
+```
+
+
+```{r}
+#| label: style-sheet
+#| results: asis
+
+# Use GMRI style
+use_gmri_style_rmd()
+```
+
+
+```{r}
+#| label: fonts-config
+#| echo: false
+
+
+# Path to the directory containing the font file (replace with your actual path)
+font_dir <- paste0(system.file("stylesheets", package = "gmRi"), "/GMRI_fonts/Avenir/")
+
+# Register the font
+font_add(
+  family = "Avenir",
+  file.path(font_dir, "LTe50342.ttf"),
+  bold = file.path(font_dir, "LTe50340.ttf"),
+  italic = file.path(font_dir, "LTe50343.ttf"),
+  bolditalic = file.path(font_dir, "LTe50347.ttf"))
+
+# Load the font
+showtext::showtext_auto()
+
+```
+
+# Maine Coastal Current Regime Shift Evaluation
+
+The Maine Coastal Current can be split into a western branch (the western maine coastal current WMCC) & an eastern branch (the eastern Maine coastal current). The two branches are separated by an area off the coast of Penobscot Bay. This is a junction where a portion of the MCC will at times deflect to the South, a seasonal behavior that is influenced by river discharge.
+
+Relevant Literature:
+
+> Pettigrew et al. 2005
+
+
+
+```{r}
+
+# Project path
+fvcom_processed_path <- cs_path("mills", "Projects/Lobster ECOL/FVCOM_processed/MaineCoastalCurrent")
+
+# Load the daily surface currents (u,v)
+daily_mcc_sc <- read_csv(here::here("local_data/MCC_PC_timeseries/MCC_daily_surface_velocities.csv"))
+
+# Load the PCA Timeseries
+mcc_pc_monthly <- read_csv(here::here("local_data/MCC_PC_timeseries/monthly_surface_velocities_PCA_timeseries.csv"))
+
+```
+
+
+
+```{r}
+#| label: load-daily-fvcom
+# Loading FVCOM
+
+
+# Get some file names
+fvcom_surfbot_files <- setNames(
+  list.files(fvcom_path, full.names = T, pattern = ".nc"),
+  str_remove(list.files(fvcom_path, full.names = F, pattern = ".nc"), ".nc"))
+
+# Open one
+gom3_early <- nc_open(fvcom_surfbot_files[[1]])
+
+# Get the mesh itself as a simple feature collection
+gom3_mesh <- get_mesh_geometry(gom3_early, what = 'lonlat') 
+
+```
+
+
+
+```{r}
+#| label: assemble the mcc mesh area for mapping
+
+#Original Area
+mcc_turnoff_coords <- tribble(
+  ~"lon", ~"lat",
+  -69.34, 43.21,   # Bottom Left
+  -69.78, 43.62,   # Off Popham
+  -67.45, 44.34,   # Off Jonesport
+  -67.4, 43.8,     # Bottom right
+  -69.34, 43.21,   # Bottom left again
+)
+
+
+# Make it a polygon
+mcc_turnoff_poly <- st_polygon(
+    list(cbind(mcc_turnoff_coords$lon, mcc_turnoff_coords$lat))) %>% 
+  st_sfc(crs = 4326) %>% 
+  st_as_sf() %>% 
+  mutate(area = "Maine Coastal Current Region") 
+st_geometry(mcc_turnoff_poly) <- "geometry"
+
+# Project polygon
+poly_projected <- st_transform(mcc_turnoff_poly, st_crs(gom3_mesh)) 
+
+# Turn off s2
+sf::sf_use_s2(FALSE)
+
+# Trim it
+mcc_studyarea_mesh <- mesh_trim(
+  mesh = gom3_mesh, 
+  domain = st_as_sf(poly_projected) )
+```
+
+
+#### Long-term Monthly Current Directions
+
+Before proceeding too far, here is what the average flow direction is across the domain of interest to us:
+
+```{r}
+#| label: plot current direction
+#| fig-height: 10
+
+# Quick verification that directions make sense
+average_directions <-  daily_mcc_sc %>% 
+  mutate(period = lubridate::month(time, label = TRUE)) %>% 
+  bind_rows(mutate(daily_mcc_sc, period = "Year Round")) %>% 
+  mutate(period = factor(period, levels = c(month.abb, "Year Round"))) %>% 
+  group_by(period, lonc, latc) %>% 
+  summarise(
+    across(.cols = c(u,v), .fns = ~mean(.x, na.rm = T))) %>% 
+  mutate(
+    # Radian to degree conversion
+    angle = atan2(v, u) * 180 / pi,   # Convert from radians to degrees
+    angle = if_else(angle<0, angle+360, angle),
+    speed = sqrt(u^2 + v^2),          # Compute speed (magnitude)
+    dx = u / speed * 0.05,            # Scale x-component for visualization
+    dy = v / speed * 0.05)            # Scale y-component for visualization
+
+
+
+# Map them
+yr_round_map <- average_directions %>% 
+  filter(period == "Year Round") %>% 
+  ggplot() +
+  geom_sf(data = new_england) +
+  geom_segment(
+    aes(lonc, latc, xend = lonc + dx, yend = latc + dy, color = angle),
+    arrow = arrow(length = unit(0.075, "cm")),
+    linewidth = 0.5) +
+  coord_sf(
+    xlim = c(-70.2, -67.1), 
+    ylim = c(43.2, 44.7), 
+    expand = F) +
+  scale_y_continuous(breaks = seq(43, 45, .5)) +
+  scale_x_continuous(breaks = seq(-71, -67, 1)) +
+  facet_wrap(~period, ncol = 4) +
+  scale_color_scico(
+    palette = 'romaO',
+    breaks = c(45, 90, 135, 180, 225, 270, 315, 360),
+    labels = c("NE", "N", "NW", "W", "SW", "S", "SE", "E"),
+    limits = c(0,360)) +
+  guides(color = guide_colring(
+    reverse = T, 
+    start = pi/2)) +
+  theme(
+    legend.position = "bottom", 
+    legend.title.position = "top") +
+  labs(
+    x = "Longitude", y = "Latitude",
+    color = "Current Flow")
+
+
+yr_round_map
+```
+
+
+The currents for this region of Maine's coast flow to the South/SSW on-average for the year, with some local variability.
+
+
+```{r}
+#| fig-height: 8
+
+# Map the months independently
+monthly_flow <- average_directions %>% 
+  filter(period != "Year Round") %>% 
+  ggplot() +
+  geom_sf(data = new_england) +
+  geom_segment(
+    aes(lonc, latc, xend = lonc + dx, yend = latc + dy, color = angle),
+    arrow = arrow(length = unit(0.03, "cm")),
+    linewidth = 0.25) +
+  coord_sf(
+    xlim = c(-70.2, -67.1), 
+    ylim = c(43.2, 44.7), 
+    expand = F) +
+  scale_y_continuous(breaks = seq(43, 45, .5)) +
+  scale_x_continuous(breaks = seq(-71, -67, 1)) +
+  facet_wrap(~period, ncol = 3) +
+  scale_color_scico(
+    palette = 'romaO',
+    breaks = c(45, 90, 135, 180, 225, 270, 315, 360),
+    labels = c("NE", "N", "NW", "W", "SW", "S", "SE", "E"),
+    limits = c(0,360)) +
+  guides(color = guide_colring(
+    reverse = T, 
+    start = pi/2)) +
+  theme(legend.position = "none") +
+  labs(
+    x = "Longitude", y = "Latitude",
+    color = "Current Flow")
+
+
+monthly_flow
+```
+
+Local variability evolves throughout the year, with a blocking recirculation developing in the western portion of this study area during the summer which then forces water adjacent to this area to the east to flow away from the coast at this time of year.
+
+
+
+### Review the Year-Round MCC Principal Components
+
+The original two principal components I was using were derived from daily FVCOM surface-layer current vector information. 
+
+They explained the following proportions of the variance in the year-round current directions:
+
+```{r}
+# Load the PCA we ran:
+mcc_pca <- readRDS(here::here("local_data/MCC_PC_timeseries/daily_surface_velocities_PCA.rds"))
+
+# Summary - Proportion of variance
+mcc_pca_summ <- summary(mcc_pca)
+mcc_pca_summ$importance[1:2, 1:2] %>% 
+  round(2) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Feature")  %>% 
+  gt::gt() %>% gt::tab_header(title = "Year-round Current PCA")
+```
+
+
+The loadings for each principal component show these patterns when plotted in space:
+
+```{r}
+#| fig.height: 6
+
+# Pull + Reshape the Rotations / Loadings
+mcc_loadings <- data.frame(
+  "PC1" = mcc_pca$rotation[,"PC1"],
+  "PC2" = mcc_pca$rotation[,"PC2"]) %>% 
+  rownames_to_column("loc") %>% 
+  separate(col = "loc", into = c("var", "elem"), sep = "_") %>% 
+  pivot_longer(
+    cols = starts_with("PC"), 
+    names_to = "PC", 
+    values_to = "PC_rotation") %>% 
+  mutate(longname = if_else(var == "u", "Eastward Velocity (u)", "Northward Velocity (v)"))
+
+
+
+# Map The Loadings
+loadings_map <- mcc_studyarea_mesh %>% 
+  mutate(elem = as.character(elem)) %>% 
+  left_join(mcc_loadings) %>% 
+  st_as_sf() %>% 
+  ggplot() +
+  geom_sf(data = new_england) +
+  geom_sf(aes(fill = PC_rotation)) +
+  facet_grid(PC~longname, labeller = label_wrap_gen(width = 10)) +
+  coord_sf(
+    xlim = c(-70.2, -67.1), 
+    ylim = c(43.2, 44.7), 
+    expand = F) +
+  scale_y_continuous(breaks = seq(43, 45, .5)) +
+  scale_x_continuous(breaks = seq(-71, -67, 1)) +
+  scale_fill_distiller(palette = "RdBu", limits = c(-0.06, 0.06)) +
+  map_theme(
+    legend.title.position = "top",
+    legend.title = element_text(hjust = 0.5),
+    legend.position = "right",
+    legend.direction = "horizontal") +
+  labs(fill = "Principal Component Rotation",
+       title = "Surface Current Principal Component Loadings/Rotations")
+
+
+
+
+
+# Plot daily with the monthly smooth
+mcc_pc_ts <- mcc_pc_monthly %>% 
+  ggplot() +
+  geom_line(
+    aes(date, vals, color = `Principal Component`),
+    linewidth = 0.4, alpha = 0.4) +
+  geom_line(
+    aes(date, vals_rollmean, color = `Principal Component`),
+    linewidth = 0.8) +
+  rcartocolor::scale_color_carto_d() + 
+  labs(
+    title = "Monthly Surface Current PCA Timeseries",
+    y = "Principal Component Value",
+    x = "Date",
+    color = "12-month average")
+
+
+
+loadings_map / mcc_pc_ts
+```
+
+We can see from these maps that each mesh element contributed a similar amount to each principal component, which East/West velocities contributing more to PC1 & North/South contributing more to PC2.
+
+Further investigation into how these relate to the southward turnoff flow can be found in `MCC_Daily_Workup.Qmd`
+
+
+# Summer MCC Dynamics
+
+The opening/closing of the "gate" dynamics are a phenomenon that happens primarily during the summer (June-August). This is when our hypotheses relating to lobster are most clear, and why it makes sense to instead do an annual timeseries of average summer conditions. 
+
+This should hopefully* better reflect the offshore/alongshore flow dynamics with the noise of the other months removed.
+
+```{r}
+
+# A. Surface current variables (u,v), averaged over summer months
+summer_sc <- daily_mcc_sc %>% 
+  filter(month %in% c(6:8)) %>% 
+  group_by(time = str_c(year, "-07-15"), elem, lonc, latc) %>% 
+  summarise(across(c(u,v), ~mean(.x, na.rm = T)),
+            .groups = "drop") %>% 
+  mutate(time = as.Date(time))
+
+# The matrix that will go to the PCA
+summer_pca_mat <- summer_sc %>% 
+  select(time, elem, u, v) %>% 
+  pivot_wider(
+    names_from = elem, 
+    values_from = c(u, v)) %>% 
+  column_to_rownames("time")
+
+# # Inspect
+# pca_mat[1:6,1:6]
+
+
+# Do PCA
+# If all columns have comparable variances and you want to retain absolute differences in current strength, center but do not scale.
+summer_mcc_pca <- prcomp(summer_pca_mat, scale. = TRUE, center = TRUE)
+
+# Summary - Proportion of variance
+summer_mcc_pca_summ <- summary(summer_mcc_pca)
+summer_mcc_pca_summ$importance[1:2, 1:2] %>% 
+  round(2) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Feature")  %>% 
+  gt::gt() %>% gt::tab_header(title = "Summertime Surface Current PCA")
+
+```
+
+The summertime PCA explains a similar level of variability as the year-round principal components.
+
+
+### Summer PC Loadings
+
+The following maps show how the two principal component rotations/loadings (the same if matrix is scaled) relate to areas along the study area.
+
+```{r}
+
+# Pull + Reshape the Rotations / Loadings
+summer_mcc_loadings <- data.frame(
+  "PC1" = summer_mcc_pca$rotation[,"PC1"],
+  "PC2" = summer_mcc_pca$rotation[,"PC2"]) %>% 
+  rownames_to_column("loc") %>% 
+  separate(col = "loc", into = c("var", "elem"), sep = "_") %>% 
+  pivot_longer(
+    cols = starts_with("PC"), 
+    names_to = "PC", 
+    values_to = "PC_rotation") %>% 
+  mutate(longname = if_else(var == "u", "Eastward Velocity (u)", "Northward Velocity (v)"))
+
+
+
+# Map The Loadings
+mcc_studyarea_mesh %>% 
+  mutate(elem = as.character(elem)) %>% 
+  left_join(summer_mcc_loadings) %>% 
+  st_as_sf() %>% 
+  ggplot() +
+  geom_sf(data = new_england) +
+  geom_sf(aes(fill = PC_rotation)) +
+  facet_grid(PC~longname) +
+  coord_sf(
+    xlim = c(-70.2, -67.1), 
+    ylim = c(43.2, 44.7), 
+    expand = F) +
+  scale_fill_distiller(palette = "RdBu", limits = c(-0.1, 0.1)) +
+  map_theme(
+    legend.title.position = "top",
+    legend.title = element_text(hjust = 0.5),
+    legend.position = "bottom")
+
+```
+
+With the summertime surface currents, the principal component loadings now highlight different local patterns in the study area (in contrast to the uniform pattern seen for the year-round PCA).
+
+### Summer PC Timeseries
+
+The following plot shoes a timeseries for the two summertime principal components. The points in time that are highlighted by the pettigrew paper have been highlights to see how they align with the two timeseries.
+
+```{r}
+
+# Pull Principal Components overall values
+summer_mcc_pcomponents <- data.frame(
+  "date" = rownames(summer_pca_mat),
+  "PC1" = summer_mcc_pca$x[,"PC1"],
+  "PC2" = summer_mcc_pca$x[,"PC2"]) %>% 
+  mutate(date = as.Date(as.character(date)))
+
+# Make a monthly summary, with a 12-month rolling average
+summer_mcc_pc <- summer_mcc_pcomponents %>% 
+  pivot_longer(
+    starts_with("PC"), 
+    names_to = "Principal Component", 
+    values_to = "vals") %>% 
+  group_by(`Principal Component`) %>% 
+  arrange(date) %>% 
+  mutate(vals_rollmean = zoo::rollmean(vals, k = 5, fill = NA, align = "center"))
+
+
+
+# Plot daily with the monthly smooth
+summer_mcc_pc %>% 
+  mutate(gate_position = case_match(
+    year(date),
+    1998 ~ "Closed",
+    2000 ~ "Open",
+    2001 ~ "Mixed",
+    TRUE ~ NA_character_)) %>% 
+  ggplot() +
+  geom_line(
+    aes(date, vals, color = `Principal Component`),
+    linewidth = 0.4, alpha = 0.4) +
+  geom_line(
+    aes(date, vals_rollmean, color = `Principal Component`),
+    linewidth = 1) +
+  geom_point(aes(date, vals, shape = gate_position), size = 2) +
+  #geom_point(aes(date, vals_rollmean, shape = gate_position), size = 2) +
+  rcartocolor::scale_color_carto_d() + 
+  labs(
+    title = "Summer Surface Current PCA Timeseries",
+    y = "Principal Component Value",
+    x = "Date",
+    color = "5-Year Average")
+
+```
+
+
+### Validation Exercise: Pettigrew 2005 Years
+
+I need to figure out how to relate the principal components to the open/closed gate language of pettigrew 2005.
+
+Their study used 1998-2001 as the study years, and characterized strong offshore veering in 1998 and strong continuous flow in 2000.
+
+These years may be useful for characterizing the relationship between the current principal components. Here is what the current directions were like during those years:
+
+```{r}
+
+# Quick verification that directions make sense
+pettigrew_directions <-  summer_sc %>% 
+  filter(between(time, as.Date("1998-01-01"), as.Date("2001-12-31"))) %>% 
+  mutate(year = lubridate::year(time)) %>% 
+  filter(year != 1999) %>% 
+  mutate(
+    gate_position = case_match(
+      year, 
+      1998~"Gate Closed", 
+      2000~"Gate Open", 
+      2001~"Mixed")) %>% 
+  group_by(gate_position, year, lonc, latc) %>% 
+  summarise(
+    across(.cols = c(u,v), .fns = ~mean(.x, na.rm = T)),
+    .groups = "drop") %>% 
+  mutate(
+    # Radian to degree conversion
+    angle = atan2(v, u) * 180 / pi,   # Convert from radians to degrees
+    angle = if_else(angle<0, angle+360, angle),
+    speed = sqrt(u^2 + v^2),          # Compute speed (magnitude)
+    dx = u / speed * 0.05,            # Scale x-component for visualization
+    dy = v / speed * 0.05)            # Scale y-component for visualization
+
+
+
+# Map them
+ggplot(pettigrew_directions) +
+  geom_sf(data = new_england) +
+  geom_segment(
+    aes(
+      lonc, 
+      latc, 
+      xend = lonc + dx, 
+      yend = latc + dy,
+      color = angle),
+    arrow = arrow(length = unit(0.05, "cm")),
+    linewidth = 0.5) +
+  theme_classic() +
+  theme(
+    legend.position = "inside",
+    legend.position.inside = c(0.75, 0.25)) +
+  coord_sf(
+    xlim = c(-70.2, -67.1), 
+    ylim = c(43.2, 44.7), 
+    expand = F) +
+  facet_wrap(~gate_position*year, ncol = 2) +
+  scale_color_scico(
+    palette = 'romaO',
+    breaks = c(45, 90, 135, 180, 225, 270, 315, 360),
+    labels = c("NE", "N", "NW", "W", "SW", "S", "SE", "E"),
+    limits = c(0,360)) +
+  guides(color = guide_colring(
+    reverse = T, 
+    start = pi/2)) +
+  labs(
+    title = "Average Summer Surface Current Direction", 
+    subtitle = "MCC Pettigrew 2025: Gate Open/Closed/Mixed Example Years",
+    x = "Longitude", 
+    y = "Latitude",
+    color = "Current Direction")
+
+```
+
+Mapping the summertime current directions show some correspondence, but maybe not the clear 1:1 match we may have hoped for.
+
+
+### Validation Exercise: PC Timeseries Peaks
+
+For a second check, I've pulled out the periods for the two summertime PC's where loadings are at their highest and lowest. The idea being that these should be the extreme characterizations of either principal component.
+
+The following maps show what the summertime current directions were over those same periods of time. 
+
+```{r}
+# Get the dates when the principal component values crest
+# Top three
+mcc_highs <- summer_mcc_pc %>% 
+  select(-vals_rollmean) %>% 
+  group_by(`Principal Component`) %>%
+  slice_max(vals, n = 3) %>% 
+  #mutate(PC_state = str_c(`Principal Component`, " - High")) %>% 
+  mutate(PC_state = "PC High") %>% 
+  ungroup()
+mcc_lows <- summer_mcc_pc %>% 
+  select(-vals_rollmean) %>% 
+  group_by(`Principal Component`) %>%
+  slice_min(vals, n = 3) %>% 
+  #mutate(PC_state = str_c(`Principal Component`, " - Low")) %>% 
+  mutate(PC_state = "PC Low") %>% 
+  ungroup()
+
+# Combine those
+mcc_peaks <- bind_rows(mcc_highs, mcc_lows)
+
+# Get the average currents for the 12 months around those breaks
+peak_directions <- mcc_peaks %>% 
+  split(.$date) %>% 
+  map_dfr(function(peak_date){
+    
+    # Get the start-end date brackets for the year
+    yr          <- year(peak_date$date)
+    start_month <- as.Date(str_c(yr, "-06-01"))
+    end_month   <- as.Date(str_c(yr, "-08-30"))
+    mon         <- str_pad(peak_date$mon, width = 2, side = "left", pad = "0")
+    state       <- peak_date$PC_state
+    
+    # Filter to that period, get average conditions
+    daily_mcc_sc %>% 
+      filter(between(time, start_month, end_month)) %>% 
+      group_by(lonc, latc) %>% 
+      summarise( 
+        across(
+          .cols = c(u,v), 
+          .fns = ~mean(.x, na.rm = T)),
+        .groups = "drop")  %>% 
+    mutate(
+      # Radian to degree conversion
+      angle = atan2(v, u) * 180 / pi,   
+      angle = if_else(angle<0, angle+360, angle),
+      speed = sqrt(u^2 + v^2),          
+      dx = u / speed * 0.05,            
+      dy = v / speed * 0.05) %>% 
+        mutate(
+          PC = peak_date$`Principal Component`,
+          date = peak_date$date,
+          start_month = start_month,  
+          end_month = end_month,  
+          PC_state = state,
+          .before = "lonc")
+      
+    # End the function
+    })
+
+
+
+
+# Map the current directions at those times
+PC1_peak_direction_maps <- peak_directions %>% 
+  filter(PC == "PC1") %>% 
+  ggplot() +
+  geom_sf(data = new_england) +
+  geom_segment(
+    aes(
+      lonc, 
+      latc, 
+      xend = lonc + dx, 
+      yend = latc + dy,
+      color = angle),
+    arrow = arrow(length = unit(0.05, "cm")),
+    linewidth = 0.5) +
+  theme_minimal() +
+  theme(
+    legend.position = "right") +
+  coord_sf(
+    xlim = c(-70.2, -67.1), 
+    ylim = c(43.2, 44.7), 
+    expand = F) +
+  facet_grid(str_c(PC_state, "\n", date) ~ PC) +
+  # facet_grid(PC ~ str_c(PC_state, "\n", date)) +
+  scale_color_scico(
+    palette = 'romaO',
+    breaks = c(45, 90, 135, 180, 225, 270, 315, 360),
+    labels = c("NE", "N", "NW", "W", "SW", "S", "SE", "E"),
+    limits = c(0,360)) +
+  guides(color = guide_colring(
+    reverse = T, 
+    start = pi/2)) +
+  theme(
+    axis.text = element_blank(), 
+    strip.text.y = element_text(angle = 0),
+    plot.margin = margin(1,1,1,1)) +
+  labs(
+    title = "Peak/Trough Periods in Summertime Current PCA Timeseries",
+    subtitle = "Average Summer Surface Current Direction", 
+    x = "", 
+    y = "",
+    color = "Current Direction")
+
+PC2_peak_direction_maps <- peak_directions %>% 
+  filter(PC == "PC2") %>% 
+  ggplot() +
+  geom_sf(data = new_england) +
+  geom_segment(
+    aes(
+      lonc, 
+      latc, 
+      xend = lonc + dx, 
+      yend = latc + dy,
+      color = angle),
+    arrow = arrow(length = unit(0.05, "cm")),
+    linewidth = 0.5) +
+  theme_minimal() +
+  theme(
+    legend.position = "right") +
+  coord_sf(
+    xlim = c(-70.2, -67.1), 
+    ylim = c(43.2, 44.7), 
+    expand = F) +
+  facet_grid(str_c(PC_state, "\n", date) ~ PC) +
+  # facet_grid(PC ~ str_c(PC_state, "\n", date)) +
+  scale_color_scico(
+    palette = 'romaO',
+    breaks = c(45, 90, 135, 180, 225, 270, 315, 360),
+    labels = c("NE", "N", "NW", "W", "SW", "S", "SE", "E"),
+    limits = c(0,360)) +
+  guides(color = guide_colring(
+    reverse = T, 
+    start = pi/2)) +
+  theme(
+    axis.text = element_blank(), 
+    strip.text.y = element_text(angle = 0),
+    legend.position = "none",
+    plot.margin = margin(1,1,1,1)) +
+  labs(
+    x = "", 
+    y = "",
+    color = "Summer Current Direction")
+
+
+# Stack them
+(PC1_peak_direction_maps | PC2_peak_direction_maps) + plot_layout(guides = "collect")
+  
+```
+
+
+
+
+# STARS {rstars} Regime Shifts
+
+Regime shifts for both the year-round monthly principal component timeseries, and the annual summertime principal components were evaluated for regime shifts using the STARS methodology.
+
+The following results extend the detailed approach of Stirnimann et al. 2019's [{rstars}](https://github.com/LStirnimann/rstars) repository.
+
+
+```{r}
+# Stirnimann used these values in their paper:
+# l = 5, 10, 15, 17.5 years, with monthly data
+# Huber = 1
+# Subsampling = (l + 1) / 3
+
+
+# Load the function(s)
+source(here::here("rstars-master","rSTARS.R"))
+
+```
+
+
+### Year-round Current PCA Shifts
+
+```{r}
+#| label: year round rstars
+
+# Get the for the
+mcc_rstars <- mcc_pc_monthly %>% 
+  select(`Principal Component`, time = date, vals) %>% 
+  split(.$`Principal Component`) %>% 
+  map_dfr(function(x){
+    
+    rstars(
+      data.timeseries = as.data.frame(
+        x[,c("time", "vals")]),
+      l.cutoff = 12*7, # Seven years
+      pValue = 0.05,
+      Huber = 1,
+      Endfunction = T,
+      preWhitening = T,
+      OLS = F,
+      MPK = T,
+      IP4 = F,
+      SubsampleSize = (12*7 + 1)/3,
+      returnResults = T)  },
+    .id = "PC"
+  ) %>% 
+  mutate(
+    var = "Maine Coastal Current",
+    PC = str_replace_all(PC, "PC", "Principal Component "),
+    shift_direction = if_else(RSI>0, "Shift Up", "Shift Down"))  %>% 
+  group_by(PC) %>% 
+  arrange(time) %>% 
+  mutate(vals_rollmean = zoo::rollmean(vals, k = 12, fill = NA, align = "center")) %>% 
+  ungroup()
+
+
+```
+
+Year-round surface current data shows a regime transition in March of 2011. Shifting from low-to-high for the first principal component, and from high-to-low on the second.
+
+```{r}
+#| fig-height: 10
+#| label: year-round shifts
+
+
+# Summarise the breakpoint locations
+shift_points <- mcc_rstars %>% 
+  filter(RSI != 0) %>% 
+  dplyr::select(time, PC, var, shift_direction)
+
+
+# Plot the breaks over the monthly data
+ggplot() +
+   geom_vline(
+    data = shift_points,
+    aes(
+      xintercept = time,
+      color = shift_direction),
+    linewidth = 1.5) +
+  geom_line(
+    data = mcc_rstars,
+     aes(time, vals, group = PC),
+    linewidth = 0.2, alpha = 0.5) +
+  geom_line(
+    data = mcc_rstars,
+     aes(time, vals_rollmean, group = PC),
+    linewidth = 0.8, alpha = 0.75) +
+ 
+  scale_color_gmri() +
+  facet_wrap(~var*PC, ncol = 1, labeller = label_wrap_gen()) +
+  theme(
+    legend.position = "bottom",
+    strip.text.y = element_text(angle = 0)) + 
+  labs(color = "",
+       y = "Measurement",
+       x = "Date",
+       title = "Year-Round Monthly Surface Currents, MCC Region",
+       subtitle = "STARS Regime Shifts")
+
+```
+
+### Summer Current PCA
+
+```{r}
+#| label: summer rstars
+
+# Take the input data,
+# remove trend
+# run STARS routine again
+
+
+# Run the shift test for summertime PCA
+summer_current_shifts <- summer_mcc_pc %>%
+  split(.$`Principal Component`) %>%
+  map_dfr(function(.x){
+
+    # Detrend
+    .x <- .x %>% 
+      arrange(date) %>% 
+      mutate(
+        time = date,
+        yr_num = year(time))
+    
+    # annual trend
+    trend_mod <- lm(vals ~ yr_num, data = .x)
+    
+    # save the results
+    .x <- broom::augment(x = trend_mod) %>%
+      rename(
+        trend_fit = .fitted,
+        trend_resid = .resid) %>% 
+      left_join(.x, join_by(yr_num, vals))
+
+    # Get the results from that
+    x_rstars <- rstars(
+      data.timeseries = as.data.frame(
+        .x[,c("time", "trend_resid")]),
+      l.cutoff = 7,
+      pValue = 0.05,
+      Huber = 1,
+      Endfunction = T,
+      preWhitening = T,
+      OLS = F,
+      MPK = T,
+      IP4 = F,
+      SubsampleSize = (7 + 1)/3,
+      returnResults = T) %>% 
+      mutate(
+        vals = .x$vals,
+        vals_rollmean = .x$vals_rollmean)
+    
+    },
+    .id = "PC"
+  ) %>% 
+  mutate(
+    var = "Summertime Maine Coastal Current",
+    PC = str_replace_all(PC, "PC", "Principal Component "),
+    shift_direction = if_else(RSI > 0, "Shift Up", "Shift Down")) 
+
+```
+
+The summertime principal components did showed linear-trends, and after their removal showed no evidence of STARS regime shifts/breaks.
+
+
+```{r}
+#| fig-height: 10
+#| label: summer shifts
+
+
+# Summarise the breakpoint locations
+summer_shift_points <- summer_current_shifts %>% 
+  filter(RSI != 0) %>% 
+  dplyr::select(time, PC, var, shift_direction)
+
+
+# Plot the breaks over the monthly data
+ggplot() +
+   geom_vline(
+    data = summer_shift_points,
+    aes(
+      xintercept = time,
+      color = shift_direction),
+    linewidth = 1.5) +
+  geom_line(
+    data = summer_current_shifts,
+     aes(time, vals, group = PC),
+    linewidth = 0.2, alpha = 0.5) +
+  geom_line(
+    data = summer_current_shifts,
+     aes(time, vals_rollmean, group = PC),
+    linewidth = 0.8, alpha = 0.75) +
+ 
+  scale_color_gmri() +
+  facet_wrap(~var*PC, ncol = 1, labeller = label_wrap_gen()) +
+  theme(
+    legend.position = "bottom",
+    strip.text.y = element_text(angle = 0)) + 
+  labs(color = "",
+       y = "Measurement",
+       x = "Date",
+       title = "Summertime Surface Currents, MCC Region",
+       subtitle = "STARS Regime Shifts")
+
+```
+
+
+
+
+### Export
+
+```{r}
+# # Save it
+write_csv(
+  mcc_rstars,
+  here::here("rstars_results/mcc_monthly_shifts.csv"))
+
+# # Save it
+write_csv(
+  summer_current_shifts,
+  here::here("rstars_results/mcc_summertime_shifts.csv"))
+
+```
+
+
+
+
