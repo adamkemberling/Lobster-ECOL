@@ -19,25 +19,44 @@ library(tidyverse)
 library(gmRi)
 library(showtext)
 
-# Read Regions in
+# Path to project folder
 proj_path <- cs_path("mills", "Projects/Lobster ECOL")
 
-# Load Shapefiles for inshore/offshore
+# Path to spatial definition polygons
 poly_paths <- cs_path("mills", "Projects/Lobster ECOL/Spatial_Defs")
 
-inshore_areas <- map(
-  setNames(
-    list.files(str_c(poly_paths, "inshore_areas"), full.names = T),
-    str_remove(list.files(str_c(poly_paths, "inshore_areas")), ".geojson")),
-  function(x){read_sf(x)}
-)
+# Set North-South names
+area_id_order <- c(
+  "eastern maine", "central maine", "western maine",
+  "eastern mass", "southern mass", "rhode island shore",
+  "long island sound", "new jersey shore", "five fathom bank",
+  "virginia shore", "gom_gbk", "sne")
 
-offshore_areas <- map(
-  setNames(
-    list.files(str_c(poly_paths, "offshore_areas"), full.names = T),
-    str_remove(list.files(str_c(poly_paths, "offshore_areas")), ".geojson")),
-  function(x){read_sf(x)}
-)
+
+
+# 1. Clusters of statistical areas that align loosely with geography and management areas
+inshore_areas <- read_sf(str_c(poly_paths,"spatial_defs_2025/12nm_poly_statarea_merge.shp")) %>% 
+  janitor::clean_names() %>% 
+  mutate(
+    area_type = "nearshore-coastal",
+    area_id = tolower(short_name),
+    area_id = factor(area_id, levels = area_id_order))
+
+# 2. Ecological production units
+offshore_areas <- read_sf(str_c(poly_paths,"spatial_defs_2025/sne_gom_tocoast.shp"))  %>% 
+  janitor::clean_names() %>% 
+  mutate(
+    area_type = "offshore-regional",
+    area_id = tolower(region),
+    area_id = factor(area_id, levels = area_id_order))
+
+# Combine them
+all_areas <- bind_rows(
+  st_transform(select(inshore_areas, area_id, geometry), st_crs(offshore_areas)), 
+  select(offshore_areas, area_id, geometry)) %>% 
+  mutate(
+    area_id = factor(area_id, levels = area_id_order)
+  )
 
 # Statebounds
 canada <- ne_states("Canada", returnclass = "sf")# %>% filter(name_en %in% c("Nova Scotia", "Quebec", "New Brunswick", "Prince Edward Island"))
@@ -45,11 +64,12 @@ ne_us <- ne_states("united states of america", returnclass = "sf") %>%
   filter(postal %in% c("VT", "ME", "RI", "MA", "CT", "NH", "NY", "MD", "VA", "NJ", "DE", "NC", "PA", "WV"))
 
 # Map theme
-theme_set(theme_bw() + 
-            map_theme(
-              plot.title = element_text(family = "Avenir", face = "bold", size = 14),
-              axis.text = element_text(family = "Avenir", size = 11),
-              plot.text = element_text(family = "Avenir")))
+theme_set(
+  theme_bw() + 
+    map_theme(
+    plot.title = element_text(family = "Avenir", face = "bold", size = 14),
+    axis.text = element_text(family = "Avenir", size = 11),
+    plot.text = element_text(family = "Avenir")))
 ```
 
 
@@ -142,7 +162,8 @@ ggplot() +
   geom_sf(data = canada) +
   scale_fill_gmri() +
   coord_sf(xlim = c(-78, -66), ylim = c(35.5, 45)) +
-  labs(title = "Nearshore Scale: < 12nm", fill = "")
+  labs(title = "Nearshore Regions:",
+       subtitle = "Statistical area clusters extending up to 12nm from shore", fill = "")
 
 ```
 
@@ -159,12 +180,15 @@ ggplot() +
 #| label: fig-offshore-scale-map
 
 ggplot() +
-  geom_sf(data = bind_rows(offshore_areas), aes(fill = Region), alpha = 0.4) +
+  geom_sf(
+    data = offshore_areas, 
+    aes(fill = area_id), alpha = 0.4) +
   geom_sf(data = ne_us) +
   geom_sf(data = canada) +
   scale_fill_gmri() +
   coord_sf(xlim = c(-78, -66), ylim = c(35.5, 45)) +
-  labs(title = "Offshore Scale: > 12nm", fill = "")
+  labs(title = "Offshore Scale:",
+    subtitle = "Ecological production units and/or broader regions extending to shelf-break", fill = "")
 ```
 
 
@@ -181,7 +205,9 @@ ggplot() +
   geom_sf(data = canada) +
   scale_fill_gmri() +
   coord_sf(xlim = c(-78, -66), ylim = c(35.5, 45)) +
-  labs(title = "Offshore Scale: > 12nm", fill = "")
+  labs(title = "Shelf Scale:",
+       subtitle = "Processes operating at scales that affect the whole shelf",
+       fill = "")
 ```
 
 

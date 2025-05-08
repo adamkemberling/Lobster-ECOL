@@ -88,7 +88,7 @@ Values](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/Survey_Locati
 Interest](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/FVCOM_Regional_Temperature_Timeseries.html)
 
 [Maine Coastal Current
-Processing](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/FVCOM_MaineCoastalCurrent_PCA.html)
+Processing](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/MaineCoastalCurrent/FVCOM_MaineCoastalCurrent_PCA.html)
 
 [FVCOM Temperature Regime Shifts with
 STARS](https://adamkemberling.github.io/Lobster-ECOL/R/regime_tests/STARS_FVCOM.html)
