@@ -49,6 +49,14 @@ new_england <- ne_states("united states of america", returnclass = "sf") %>%
   filter(postal %in% c("VT", "ME", "RI", "MA", "CT", "NH", "NY", "MD", "VA", "NJ", "DE", "NC", "PA", "WV"))
 canada <- ne_states("canada", returnclass = "sf")
 
+st_write(
+  canada,
+  str_c(
+    cs_path("res", "Shapefiles/naturalearth/canada"),
+    "rnaturalearth_canada.geojson"
+  )
+)
+
 ```
 
 

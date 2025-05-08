@@ -1,0 +1,167 @@
+---
+title: "Common Features of Timeseries and Regime Shift Testing"
+description: | 
+  Detailing the Regime Shifts in Maine Coastal Current Behavior
+date: "Updated on: `r Sys.Date()`"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    df-print: kable
+    self-contained: true
+execute: 
+  echo: true
+  warning: false
+  message: false
+  fig.align: "center"
+  comment: ""
+---
+
+```{r}
+
+{
+  library(tidyverse)
+  library(gmRi)
+  library(patchwork)
+  library(showtext)
+  library(legendry)
+}
+
+# namespace conflicts
+conflicted::conflict_prefer("select", "dplyr")
+conflicted::conflict_prefer("filter", "dplyr")
+
+
+# Set the theme
+theme_set(
+  theme_gmri() +
+    theme(strip.text.y = element_text(angle = 0),
+          legend.position = "bottom", 
+          legend.title.position = "top", 
+          legend.title = element_text(hjust = 0.5), 
+          strip.text = element_text(size = 8),
+          axis.text = element_text(size = 8)))
+
+
+
+```
+
+
+```{r}
+#| label: style-sheet
+#| results: asis
+
+# Use GMRI style
+use_gmri_style_rmd()
+```
+
+
+```{r}
+#| label: fonts-config
+#| echo: false
+
+
+# Path to the directory containing the font file (replace with your actual path)
+font_dir <- paste0(system.file("stylesheets", package = "gmRi"), "/GMRI_fonts/Avenir/")
+
+# Register the font
+font_add(
+  family = "Avenir",
+  file.path(font_dir, "LTe50342.ttf"),
+  bold = file.path(font_dir, "LTe50340.ttf"),
+  italic = file.path(font_dir, "LTe50343.ttf"),
+  bolditalic = file.path(font_dir, "LTe50347.ttf"))
+
+# Load the font
+showtext::showtext_auto()
+
+```
+
+# Reviewing STARS Regime Changes in Space/Time
+
+
+
+## Stationary Mean with Variation
+
+
+The most basic timeseries is one where there is no change in the mean over time. Just a sequence of data that has some measurable variance. Timeseries of this form would not be expected to show any breakpoints when evaluated using breakpoint testing methods.
+
+
+```{r}
+# Set seed for reproducibility
+set.seed(123)
+
+# Time settings
+n_years <- 20
+n <- n_years * 12  # monthly data
+time <- seq(from = 1, to = n)
+dates <- seq(from = as.Date("2000-01-01"), by = "1 month", length.out = n)
+
+# 4. Periodicity (e.g., annual cycle + noise)
+period <- 12  # one cycle per year
+
+# Determine change point: 2/3 of the way through for changepoint example
+change_point <- floor(n * 2 / 3)
+
+# Means 1 & 2
+mean1 <- 0
+mean2 <- 3
+sd1 <- 0.8
+
+# 1. Stationary mean with some variance (white noise)
+ts_types <- tibble(
+  "date" = dates,
+  "Stationary Mean+Variance" = rnorm(n, mean = mean1, sd = sd1),
+  "Trends" = time * 0.025 + rnorm(n, mean = mean1, sd = sd1),
+  "Seasonal Periods" = sin(2 * pi * time / 12) + rnorm(n, mean = mean1, sd = 0.3),
+  "White-noise: phi = 0" = arima.sim(model = list(ar = 0), n = n),
+  "Positive autocorrelation (red-noise): phi = 0 to 1" = arima.sim(model = list(ar = 0.7), n = n),
+  #"random walk: phi = 1" = arima.sim(model = list(ar = 1), n = n),
+  #"Explosive Process: phi > 1" = arima.sim(model = list(ar = 2), n = n),
+  "Negative autocorrelation: phi  0 to -1" = arima.sim(model = list(ar = -.7), n = n),
+  #"Perfect negative autocorrelation: phi= -1" = arima.sim(model = list(ar = -1), n = n),
+  "Mean (Regime) Shifts" = c(
+    rnorm(change_point, mean = mean1, sd = 1),
+    rnorm(n - change_point, mean = mean2, sd = 1))) %>% 
+  pivot_longer(cols = -date, names_to = "ts_type", values_to = "vals")
+  
+```
+
+
+```{r}
+ts_types %>% 
+  filter(str_detect(ts_type, "phi") == FALSE) %>% 
+ggplot(aes(date, vals)) +
+  geom_line(color = "gray20") +
+  facet_wrap(~ts_type, ncol = 2, scales = "free") +
+  labs(x = "Date", y = "Value")
+```
+
+
+
+
+```{r}
+ts_types %>% 
+  filter(str_detect(ts_type, "phi") == FALSE,
+         str_detect(ts_type, "Stationary") == FALSE) %>% 
+ggplot(aes(date, vals)) +
+  geom_line(color = "gray20") +
+  facet_wrap(~ts_type, ncol = 1, scales = "free") +
+  labs(x = "Date", y = "Value")
+```
+
+
+
+```{r}
+ts_types %>% 
+  filter(str_detect(ts_type, "phi") == TRUE) %>% 
+  mutate(ts_type = factor(ts_type, levels = c(
+    "Positive autocorrelation (red-noise): phi = 0 to 1",
+    "White-noise: phi = 0",
+    "Negative autocorrelation: phi  0 to -1"))) %>% 
+  ggplot(aes(date, vals)) +
+  geom_line(color = "gray20") +
+  facet_wrap(~ts_type, ncol = 1, scales = "free") +
+  labs(x = "Date", y = "Value")
+```
+

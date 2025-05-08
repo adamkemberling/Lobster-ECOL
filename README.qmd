@@ -40,7 +40,7 @@ offshore_areas <- map(
 )
 
 # Statebounds
-canada <- ne_states("Canada", returnclass = "sf") %>% filter(name_en %in% c("Nova Scotia", "Quebec", "New Brunswick", "Prince Edward Island"))
+canada <- ne_states("Canada", returnclass = "sf")# %>% filter(name_en %in% c("Nova Scotia", "Quebec", "New Brunswick", "Prince Edward Island"))
 ne_us <- ne_states("united states of america", returnclass = "sf") %>% 
   filter(postal %in% c("VT", "ME", "RI", "MA", "CT", "NH", "NY", "MD", "VA", "NJ", "DE", "NC", "PA", "WV"))
 
@@ -140,6 +140,7 @@ ggplot() +
   geom_sf(data = bind_rows(inshore_areas), aes(fill = area_id), alpha = 0.4) +
   geom_sf(data = ne_us) +
   geom_sf(data = canada) +
+  scale_fill_gmri() +
   coord_sf(xlim = c(-78, -66), ylim = c(35.5, 45)) +
   labs(title = "Nearshore Scale: < 12nm", fill = "")
 
@@ -161,6 +162,7 @@ ggplot() +
   geom_sf(data = bind_rows(offshore_areas), aes(fill = Region), alpha = 0.4) +
   geom_sf(data = ne_us) +
   geom_sf(data = canada) +
+  scale_fill_gmri() +
   coord_sf(xlim = c(-78, -66), ylim = c(35.5, 45)) +
   labs(title = "Offshore Scale: > 12nm", fill = "")
 ```
@@ -177,6 +179,7 @@ ggplot() +
   geom_sf(data = st_union(bind_rows(offshore_areas)), aes(fill = "Shelf-Scale"), alpha = 0.4) +
   geom_sf(data = ne_us) +
   geom_sf(data = canada) +
+  scale_fill_gmri() +
   coord_sf(xlim = c(-78, -66), ylim = c(35.5, 45)) +
   labs(title = "Offshore Scale: > 12nm", fill = "")
 ```
@@ -193,7 +196,7 @@ ggplot() +
 
 [Timeseries for Areas of Interest](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/FVCOM_Regional_Temperature_Timeseries.html)
 
-[Maine Coastal Current Processing](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/FVCOM_MaineCoastalCurrent_PCA.html)
+[Maine Coastal Current Processing](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/MaineCoastalCurrent/FVCOM_MaineCoastalCurrent_PCA.html)
 
 [FVCOM Temperature Regime Shifts with STARS](https://adamkemberling.github.io/Lobster-ECOL/R/regime_tests/STARS_FVCOM.html)
 

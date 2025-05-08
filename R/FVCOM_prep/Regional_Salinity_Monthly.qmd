@@ -33,28 +33,48 @@ theme_set(theme_bw() + map_theme())
 
 # Project paths
 lob_ecol_path <- cs_path("mills", "Projects/Lobster ECOL")
-fvcom_path <- cs_path("res", "FVCOM/Lobster-ECOL")
-poly_paths <- cs_path("mills", "Projects/Lobster ECOL/Spatial_Defs")
+fvcom_path    <- cs_path("res", "FVCOM/Lobster-ECOL")
+poly_paths    <- cs_path("mills", "Projects/Lobster ECOL/Spatial_Defs")
 
 # Shapefiles
 new_england <- ne_states("united states of america", returnclass = "sf") %>% 
   filter(postal %in% c("VT", "ME", "RI", "MA", "CT", "NH", "NY", "MD", "VA", "NJ", "DE", "NC", "PA", "WV"))
 canada <- ne_states("canada", returnclass = "sf")
 
-# Load inshore
-inshore_areas <- map(
-  setNames(
-    list.files(str_c(poly_paths, "inshore_areas"), full.names = T),
-    str_remove(list.files(str_c(poly_paths, "inshore_areas")), ".geojson")),
-  function(x){read_sf(x)})
+# # Load inshore
+# inshore_areas <- map(
+#   setNames(
+#     list.files(str_c(poly_paths, "inshore_areas"), full.names = T),
+#     str_remove(list.files(str_c(poly_paths, "inshore_areas")), ".geojson")),
+#   function(x){read_sf(x)})
+# 
+# # Load offshore
+# offshore_areas <- map(
+#   setNames(
+#     list.files(str_c(poly_paths, "offshore_areas"), full.names = T),
+#     str_remove(list.files(str_c(poly_paths, "offshore_areas")), ".geojson")),
+#   function(x){read_sf(x)})
 
-# Load offshore
-offshore_areas <- map(
-  setNames(
-    list.files(str_c(poly_paths, "offshore_areas"), full.names = T),
-    str_remove(list.files(str_c(poly_paths, "offshore_areas")), ".geojson")),
-  function(x){read_sf(x)})
 
+# clusters of statistical areas that align loosely with geography and management areas
+inshore_areas <- read_sf(str_c(poly_paths,"spatial_defs_2025/12nm_poly_statarea_merge.shp")) %>% 
+  janitor::clean_names() %>% 
+  mutate(
+    area_type = "nearshore-coastal",
+    area_id = tolower(short_name))
+
+# ecological production units
+offshore_areas <- read_sf(str_c(poly_paths,"spatial_defs_2025/sne_gom_tocoast.shp"))  %>% 
+  janitor::clean_names() %>% 
+  mutate(
+    area_type = "offshore-regional",
+    area_id = tolower(region))
+
+# Combine them
+all_areas <- bind_rows(
+  st_transform(select(inshore_areas, area_id, geometry), st_crs(offshore_areas)), 
+  select(offshore_areas, area_id, geometry)
+)
 
 ```
 
@@ -116,16 +136,18 @@ After we perform the `st_intersection` we are left with all the mesh areas withi
 
 ```{r}
 
-# We already did the intersections for SST/BT so we don't need to repeat it
-inshore_zones <- read_csv(here::here("local_data/inshore_areas_mesh_weights.csv"))
-offshore_zones <- read_csv(here::here("local_data/offshore_areas_mesh_weights.csv"))
+# # We already did the intersections for SST/BT so we don't need to repeat it
+# inshore_zones <- read_csv(here::here("local_data/inshore_areas_mesh_weights.csv"))
+# offshore_zones <- read_csv(here::here("local_data/offshore_areas_mesh_weights.csv"))
+regional_assignments <- read_csv(here::here("local_data/new_areas_mesh_weights.csv"))
 
 
-# Put the inshore and offshore together as one big table
-regional_assignments <- bind_rows(
-    dplyr::select(inshore_zones, area_id = SHORT_NAME, elem, p1, p2, p3, rel_area),
-    dplyr::select(offshore_zones, area_id = Region, elem, p1, p2, p3, rel_area)) %>% 
-  mutate(rel_area = as.numeric(rel_area))
+
+# # Put the inshore and offshore together as one big table
+# regional_assignments <- bind_rows(
+#     dplyr::select(inshore_zones, area_id = SHORT_NAME, elem, p1, p2, p3, rel_area),
+#     dplyr::select(offshore_zones, area_id = Region, elem, p1, p2, p3, rel_area)) %>% 
+#   mutate(rel_area = as.numeric(rel_area))
 
 
 ```
@@ -322,11 +344,10 @@ test_area_avg_bottom <-  map_dfr(
 
 # Plot them as areas? - need to sort out string split
 lp <- left_join(
-  x = test_area_avg_surface, 
-  y = bind_rows(inshore_areas) %>% 
-    separate(area_id, into = c("stat_num", "area_id"), sep = "-") %>% 
-    mutate(area_id = str_replace_all(area_id, "_", " ")),
+    x = test_area_avg_surface, 
+    y = all_areas,
     join_by(area_id)) %>% 
+  filter(area_id %in% c("gom_gbk", "sne") == FALSE) %>% 
   st_as_sf() %>% 
   ggplot() +
   geom_sf(aes(fill = regional_mu)) +
@@ -334,18 +355,17 @@ lp <- left_join(
   labs(title = "Area Surface Salinity: 1978 Test")
 
 rp <- left_join(
-  x = test_area_avg_bottom, 
-  y = bind_rows(inshore_areas) %>% 
-    separate(area_id, into = c("stat_num", "area_id"), sep = "-") %>% 
-    mutate(area_id = str_replace_all(area_id, "_", " ")),
+    x = test_area_avg_bottom, 
+    y = all_areas,
     join_by(area_id)) %>% 
+  filter(area_id %in% c("gom_gbk", "sne") == FALSE) %>% 
   st_as_sf() %>% 
   ggplot() +
   geom_sf(aes(fill = regional_mu)) +
   scale_fill_viridis_c(limits = c(28,34)) +
   labs(title = "Area Bottom Salinity: 1978 Test")
 
-
+library(patchwork)
 (lp | rp ) + plot_layout(guides = "collect")
 ```
 
@@ -484,16 +504,23 @@ all_region_salinity %>%
 #   all_region_salinity,
 #   str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_salinity_monthly_gom3.csv"))
 
+# # Exporting
+write_csv(
+  all_region_salinity,
+  str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/new_regions_fvcom_salinity_monthly_gom3.csv"))
+
 test_load <- read_csv(
-  str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_salinity_monthly_gom3.csv"))
+  str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/new_regions_fvcom_salinity_monthly_gom3.csv"))
 
 
 ```
 
 
+
+
 ## Check Gom4
 
-I had forgotten this, but the pre-processed files contain a limited suite of variables.
+I had forgotten this, but the pre-processed files contain a limited suite of variables... i.e. not salinity, just temperature.
 
 
 ```{r}

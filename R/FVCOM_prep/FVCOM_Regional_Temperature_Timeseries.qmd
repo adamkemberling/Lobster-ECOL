@@ -92,27 +92,35 @@ Regions of interest are looking at temperature dynamics ar two spatial scales:
 
  1.a nearshore scale within 12nm of the coast, which is further sub-divided by NMFS statistical areas. \
  2. The second is an offshore scale extending beyond 12nm to the shelf break. This area is split into Southern New England and a Northern Gulf of Maine + Georges Bank region.\
-
+ 
+ 
 ```{r}
-# Load inshore
-inshore_areas <- map(
-  setNames(
-    list.files(str_c(poly_paths, "inshore_areas"), full.names = T),
-    str_remove(list.files(str_c(poly_paths, "inshore_areas")), ".geojson")),
-  function(x){read_sf(x)})
+#| label: new shapefiles
 
-# Load offshore
-offshore_areas <- map(
-  setNames(
-    list.files(str_c(poly_paths, "offshore_areas"), full.names = T),
-    str_remove(list.files(str_c(poly_paths, "offshore_areas")), ".geojson")),
-  function(x){read_sf(x)})
+# clusters of statistical areas that align loosely with geography and management areas
+inshore_areas <- read_sf(str_c(poly_paths,"spatial_defs_2025/12nm_poly_statarea_merge.shp")) %>% 
+  janitor::clean_names() %>% 
+  mutate(
+    area_type = "nearshore-coastal",
+    area_id = tolower(short_name))
+
+# ecological production units
+offshore_areas <- read_sf(str_c(poly_paths,"spatial_defs_2025/sne_gom_tocoast.shp"))  %>% 
+  janitor::clean_names() %>% 
+  mutate(
+    area_type = "offshore-regional",
+    area_id = tolower(region))
+
+# Combine them
+all_areas <- bind_rows(
+  st_transform(select(inshore_areas, area_id, geometry), st_crs(offshore_areas)), 
+  select(offshore_areas, area_id, geometry)
+)
 
 
 # Map everything
 ggplot() +
-  geom_sf(data = bind_rows(inshore_areas), aes(fill = area_id), alpha = 0.4) +
-  geom_sf(data = bind_rows(offshore_areas), aes(fill = Region), alpha = 0.4) +
+  geom_sf(data = all_areas, aes(fill = area_id), alpha = 0.4) +
   geom_sf(data = new_england) +
   geom_sf(data = canada) +
   theme(legend.position = "right") +
@@ -120,6 +128,40 @@ ggplot() +
   coord_sf(xlim = c(-78, -66), ylim = c(35.5, 45)) +
   theme_bw() + map_theme() +
   labs(fill = "Area")
+```
+
+ 
+
+```{r}
+#| label: old shapefiles
+
+
+# # Load inshore
+# inshore_areas <- map(
+#   setNames(
+#     list.files(str_c(poly_paths, "inshore_areas"), full.names = T),
+#     str_remove(list.files(str_c(poly_paths, "inshore_areas")), ".geojson")),
+#   function(x){read_sf(x)})
+# 
+# # Load offshore
+# offshore_areas <- map(
+#   setNames(
+#     list.files(str_c(poly_paths, "offshore_areas"), full.names = T),
+#     str_remove(list.files(str_c(poly_paths, "offshore_areas")), ".geojson")),
+#   function(x){read_sf(x)})
+# 
+# 
+# # Map everything
+# ggplot() +
+#   geom_sf(data = bind_rows(inshore_areas), aes(fill = area_id), alpha = 0.4) +
+#   geom_sf(data = bind_rows(offshore_areas), aes(fill = Region), alpha = 0.4) +
+#   geom_sf(data = new_england) +
+#   geom_sf(data = canada) +
+#   theme(legend.position = "right") +
+#   scale_fill_gmri() +
+#   coord_sf(xlim = c(-78, -66), ylim = c(35.5, 45)) +
+#   theme_bw() + map_theme() +
+#   labs(fill = "Area")
 ```
 
 ### Open Daily Data
@@ -149,8 +191,7 @@ gom3_mesh <- get_mesh_geometry(fvcom_yrx, what = 'lonlat')
 # Map everything
 ggplot() +
   geom_sf(data = gom3_mesh, alpha = 0.4, linewidth = 0.1) +
-  geom_sf(data = bind_rows(inshore_areas), aes(fill = area_id), alpha = 0.4) +
-  geom_sf(data = bind_rows(offshore_areas), aes(fill = Region), alpha = 0.4) +
+  geom_sf(data = all_areas, aes(fill = area_id), alpha = 0.4) +
   geom_sf(data = new_england) +
   geom_sf(data = canada) +
   theme(legend.position = "right") +
@@ -182,24 +223,31 @@ node_ids <- fvcom_nodes(fvcom_yrx) %>%
 elem_ids <- fvcom_elems(fvcom_yrx) %>% 
   st_as_sf(coords = c("lon", "lat"), crs = 4326)
 
-# We want both the ids to join, but we also want to crop it...
-inshore_trans <- map(inshore_areas, ~st_transform(.x, crs = 6318))
-offshore_trans <- map(offshore_areas, ~st_transform(.x, crs = 6318))
-
+# # We want both the ids to join, but we also want to crop it...
+# inshore_trans <- map(inshore_areas, ~st_transform(.x, crs = 6318))
+# offshore_trans <- map(offshore_areas, ~st_transform(.x, crs = 6318))
+all_areas_trans <- all_areas %>% 
+  split(.$area_id) %>% 
+  map(~st_transform(.x, crs = 6318))
 
 # Map what is going on in the next steps
 # everything below steps through the steps
-crop_t <- st_intersection(gom3_mesh, inshore_trans$`511-Eastern_Maine`) 
+crop_t <- st_intersection(gom3_mesh, all_areas_trans$`eastern maine`) 
 
 
 # Map what is happening:
 ggplot() +
-  geom_sf(data = crop_t, aes(color = "FVCOM Mesh"), 
-          alpha = 0.5) +
-  geom_sf(data = inshore_trans$`511-Eastern_Maine`, 
-          aes(color = "511 - Eastern Maine"), linewidth = 1,
-          alpha = 0.5, fill = "transparent") +
+  geom_sf(
+    data = all_areas_trans$`eastern maine`, 
+    aes(color = "Eastern Maine"), linewidth = 1,
+    fill = "transparent") +
+  geom_sf(
+    data = crop_t, 
+    aes(color = "FVCOM Mesh"), 
+    alpha = 0.5) +
+  geom_sf(data = new_england) +
   scale_color_gmri() +
+  coord_sf(xlim = c(-68.2, -67), ylim = c(44.2, 45.4)) +
   labs(
     title = "Assigning node/elements and area-weights to regions",
     subtitle = "st_intersection(mesh, area_poly)",
@@ -215,7 +263,8 @@ For each area of interest we need to identify the FVCOM node/element indices tha
 #| label: step 1 polygon overlay
 
 # Run them all and save tables in- case we need to operate in python
-inshore_intersections <- map_dfr(inshore_trans, function(x){
+area_intersections <- map_dfr(all_areas_trans, function(x){
+  
   # Run intersection
   mesh_clip <- st_intersection(gom3_mesh, x) 
   
@@ -223,7 +272,7 @@ inshore_intersections <- map_dfr(inshore_trans, function(x){
   # Pull necessary information out
   mesh_clip_df <- mesh_clip %>% 
     mutate(rel_area = st_area(mesh_clip)) %>% 
-    select(SHORT_NAME, Id_1, FULL_NAME, elem, p1, p2, p3, rel_area) %>% 
+    select(area_id, elem, p1, p2, p3, rel_area) %>% 
     st_drop_geometry()
   
   # Return
@@ -231,23 +280,8 @@ inshore_intersections <- map_dfr(inshore_trans, function(x){
   
 })
 
-# Run them all and save tables in- case we need to operate in python
-offshore_intersections <- map_dfr(offshore_trans, function(x){
-  
-  # Run intersection
-  mesh_clip <- st_intersection(gom3_mesh, x) 
-  
-  # Get areas
-  # Pull necessary information out
-  mesh_clip_df <- mesh_clip %>% 
-    mutate(rel_area = st_area(mesh_clip)) %>% 
-    select(Region, elem, p1, p2, p3, rel_area) %>% 
-    st_drop_geometry()
-  
-  # Return
-  return(mesh_clip_df)
-  
-})
+# Save the new ones
+write_csv(area_intersections, here::here("local_data/new_areas_mesh_weights.csv"))
 
 
 # # Save these out for lookup tables
@@ -261,15 +295,16 @@ offshore_intersections <- map_dfr(offshore_trans, function(x){
 #| label: load polygon assignments
 
 # Load what we did above
-inshore_zones <- read_csv(here::here("local_data/inshore_areas_mesh_weights.csv"))
-offshore_zones <- read_csv(here::here("local_data/offshore_areas_mesh_weights.csv"))
+# inshore_zones <- read_csv(here::here("local_data/inshore_areas_mesh_weights.csv"))
+# offshore_zones <- read_csv(here::here("local_data/offshore_areas_mesh_weights.csv"))
+regional_assignments <- read_csv(here::here("local_data/new_areas_mesh_weights.csv"))
 
 
-# Put the inshore and offshore together
-regional_assignments <- bind_rows(
-    dplyr::select(inshore_zones, area_id = SHORT_NAME, elem, p1, p2, p3, rel_area),
-    dplyr::select(offshore_zones, area_id = Region, elem, p1, p2, p3, rel_area)) %>% 
-  mutate(rel_area = as.numeric(rel_area))
+# # Put the inshore and offshore together
+# regional_assignments <- bind_rows(
+#     dplyr::select(inshore_zones, area_id = SHORT_NAME, elem, p1, p2, p3, rel_area),
+#     dplyr::select(offshore_zones, area_id = Region, elem, p1, p2, p3, rel_area)) %>% 
+#   mutate(rel_area = as.numeric(rel_area))
 
 
 # From intersection we need to add areas
@@ -467,7 +502,7 @@ poly_avgs_1978 <-  map_dfr(
 mutate(poly_avgs_1978, time = as.Date(time)) %>% 
 ggplot(aes(time, regional_mu, color = area_id)) +
   geom_line(alpha = 0.4, linewidth = 0.5) +
-  labs(title = "regional Average SST for Lob-ECOL Polygons: 1978 Test")
+  labs(title = "Average SST for Lob-ECOL Polygons: 1978 Test")
 
 
 
@@ -531,17 +566,6 @@ all_region_surface_temp <- map_dfr(fvcom_surfbot_files, function(nc_x){
 Sys.time()
 
 
-# # Save them individually
-# fvcom_regional_surface_temps %>% 
-# # all_region_surface_temp %>%
-#   # rename(surface_temp = regional_mu) %>%
-#   split(.$area_id) %>%
-#   iwalk(
-#     function(.x,.y){
-#       write_csv(.x, str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/surface_temperature/", .y, ".csv"))
-#     }
-#     )
-
 
 # Plot
 all_region_surface_temp %>%
@@ -549,6 +573,10 @@ all_region_surface_temp %>%
   ggplot() +
   geom_line(aes(time, regional_mu, color = area_id),
             linewidth = 0.4, alpha = 0.4)
+
+
+
+
 
 
 ```
@@ -604,34 +632,86 @@ Sys.time()
 
 
 
-# # Save them individually
-# fvcom_regional_bottom_temps %>% 
-# #all_region_bottom_temp %>%
-#   #rename(bottom_temp = regional_mu) %>%
-#   split(.$area_id) %>%
-#   iwalk(
-#     function(.x,.y){
-#       write_csv(.x, str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/bottom_temperature/", .y, ".csv"))
-#     }
-#     )
-
-
-
 # Plot
 all_region_bottom_temp %>% 
-  mutate(time = as.Date(time)) %>% 
-  filter(area_id %in% c("GOM_GBK", "SNE"))
+  mutate(time = as.Date(time)) %>% #distinct(area_id)
+  filter(area_id %in% c("gom_gbk", "sne")) %>% 
   ggplot() +
   geom_line(aes(time, regional_mu, color = area_id),
             linewidth = 0.4, alpha = 0.4)
 ```
 
+# Exporting
+
+Combine surface and bottom outputs into one table for export:
+
+
+```{r}
+#| eval: false
+# Combine surface and bottom to save:
+
+regional_temperature_collection <- left_join(
+  all_region_surface_temp %>% rename(surface_t = regional_mu),
+  all_region_bottom_temp %>% rename(bottom_t = regional_mu))
 
 
 
-### Running 2012/2017-2019 
+# Export the set:
+write_csv(regional_temperature_collection, 
+          str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/new_regions_fvcom_temperatures_daily.csv"))
 
-On the first pass I was missing a number of files which were later added. This section covers processing a subset of years and adding them back to the collection.
+```
+
+Review the collection
+
+```{r}
+regional_temperature_collection <- read_csv(
+  str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/new_regions_fvcom_temperatures_daily.csv")
+)
+
+
+ggplot(filter(regional_temperature_collection, str_detect(area_id,"maine")), aes(time)) +
+  geom_line(aes(y = surface_t, color = "surface temperature")) +
+  geom_line(aes(y = bottom_t, color = "bottom temperature")) +
+  scale_x_date(limits = as.Date(c("2016-01-01", "2019-12-31"))) +
+  facet_wrap(~area_id, ncol = 1) +
+  theme(legend.position = "bottom")
+
+
+```
+
+
+
+```{r}
+# # This is what the collection export used to be:
+# 
+# # Load the collection if necessary: (should look like this)
+# regional_temperatures_collection <- read_csv(str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_temperatures_daily.csv"))
+# 
+# glimpse(regional_temperatures_collection)
+# 
+# # Plot to look
+# fvcom_regional_temperatures %>% 
+#   filter(area_id %in% c("GOM_GBK", "SNE")) %>% 
+#   ggplot() +
+#   geom_line(aes(time, surface_t, color = "Surface Temperature"), linewidth = 0.8, alpha = 0.6) +
+#   geom_line(aes(time, bottom_t, color = "Bottom Temperature"), linewidth = 0.8, alpha = 0.6) +
+#   scale_color_gmri() +
+#   facet_wrap(~area_id, nrow = 2)
+# 
+# 
+# # # Exporting
+# # write_csv(
+# #   fvcom_regional_temperatures,
+# #   str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_temperatures_daily.csv"))
+
+```
+
+
+
+### Running Single Years 2012/2017-2019 
+
+On the first pass when I first coded this up I was missing a number of files which were later added. This section covers processing a subset of years and adding them back to the collection.
 
 This is a good example of what the process looks likg for a single NetCDF file.
 
@@ -702,39 +782,42 @@ yearx_regional_temperatures <- left_join(
 
 
 
-# Load the collection if necessary:
-fvcom_regional_temperatures <- read_csv(str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_temperatures_daily.csv"))
 
+# Old export code, from original areas
 
-# Put them into one table to save them:
-fvcom_regional_temperatures <- bind_rows(fvcom_regional_temperatures, yearx_regional_temperatures)
-
-# Plot to look
-fvcom_regional_temperatures %>% 
-  filter(area_id %in% c("GOM_GBK", "SNE")) %>% 
-  ggplot() +
-  geom_line(aes(time, surface_t, color = "Surface Temperature"), linewidth = 0.8, alpha = 0.6) +
-  geom_line(aes(time, bottom_t, color = "Bottom Temperature"), linewidth = 0.8, alpha = 0.6) +
-  scale_color_gmri() +
-  facet_wrap(~area_id, nrow = 2)
-
-
-# # Exporting
-# write_csv(
-#   fvcom_regional_temperatures,
-#   str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_temperatures_daily.csv"))
+# # Load the collection if necessary:
+# fvcom_regional_temperatures <- read_csv(str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_temperatures_daily.csv"))
+# 
+# 
+# # Put them into one table to save them:
+# fvcom_regional_temperatures <- bind_rows(fvcom_regional_temperatures, yearx_regional_temperatures)
+# 
+# # Plot to look
+# fvcom_regional_temperatures %>% 
+#   filter(area_id %in% c("GOM_GBK", "SNE")) %>% 
+#   ggplot() +
+#   geom_line(aes(time, surface_t, color = "Surface Temperature"), linewidth = 0.8, alpha = 0.6) +
+#   geom_line(aes(time, bottom_t, color = "Bottom Temperature"), linewidth = 0.8, alpha = 0.6) +
+#   scale_color_gmri() +
+#   facet_wrap(~area_id, nrow = 2)
+# 
+# 
+# # # Exporting
+# # write_csv(
+# #   fvcom_regional_temperatures,
+# #   str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_temperatures_daily.csv"))
 ```
 
 
-## How many Nodes/Elements
+## Checking Model Resolution: Nodes/Element Density
 
 As another layer of information, it may be useful to know how many nodes/elements (proxies for resolution) contributed to mean estimates:
 
 ```{r}
 
 # This gets the average area of the polygons within the strata
-strata_resolutions <- lobster_intersections %>% 
-  group_by(strata) %>% 
+area_resolutions <- regional_assignments %>% 
+  group_by(area_id) %>% 
   summarise(n_elems = n_distinct(elem),
             avg_area_km2 =  mean(rel_area)/1e6) 
 
@@ -744,17 +827,20 @@ gom3_mesh_elems <- data.frame(
   "lonc" = ncvar_get(fvcom_yrx, "lonc"),
   "latc" = ncvar_get(fvcom_yrx, "latc")) %>% 
   mutate(elem = row_number()) %>% 
-  st_as_sf(coords = c("lonc", "latc"), 
-           crs = st_crs(gom3_mesh), 
-           remove = F)
+  st_as_sf(
+    coords = c("lonc", "latc"), 
+    crs = st_crs(gom3_mesh), 
+    remove = F)
+
 # and the nodes this way
 gom3_mesh_nodes <- data.frame(
   "lon" = ncvar_get(fvcom_yrx, "lon"),
   "lat" = ncvar_get(fvcom_yrx, "lat")) %>% 
   mutate(node = row_number()) %>% 
-  st_as_sf(coords = c("lon", "lat"), 
-           crs = st_crs(gom3_mesh), 
-           remove = F)
+  st_as_sf(
+    coords = c("lon", "lat"), 
+    crs = st_crs(gom3_mesh), 
+    remove = F)
 
 # validate we have the coordinates right
 ggplot() +
@@ -763,8 +849,8 @@ ggplot() +
 
 
 # Use crop to count the points within each one
-strata_points <- map_dfr(
-  .x = lobster_areas, 
+area_points <- map_dfr(
+  .x = all_areas_trans, 
   .f = possibly(function(strata_x){
   n_nodes <- st_crop(x = gom3_mesh_nodes, y = strata_x) %>% 
       nrow()
@@ -775,58 +861,34 @@ strata_points <- map_dfr(
     "n_centers" = n_centers)
   }, 
   otherwise = tibble("n_nodes" = 0, "n_centers" = 0)), 
-  .id = "strata")
+  .id = "area_id")
 
-# totally missed it, use the new trick i learned
+
+
+# totally missed saving it, use the new trick i learned
 #strata_points <- .Last.value
 
 
 
 # Join them together:
-strata_resolution_data <- left_join(
-  mutate(strata_resolutions, strata = as.character(strata)),
-  y = strata_points)
+area_resolution_data <- left_join(
+  mutate(area_resolutions, area_id = as.character(area_id)),
+  y = area_points)
 
 # Check the distribution
 #hist(strata_resolution_data$avg_area_km2)
 
-# Mqp the avg resolution in each strata
-lobster_strata %>% 
-  mutate(strata = as.character(strata)) %>% 
-  left_join(strata_resolution_data) %>% 
+# Join the avg resolution in each strata
+all_areas %>% 
+  left_join(area_resolution_data) %>% 
   ggplot() +
   #geom_sf(data = gom3_mesh, color = "gray80", alpha = 0.2) +
   geom_sf(aes(fill = avg_area_km2)) +
+  facet_wrap(~area_id) +
   scale_fill_distiller(palette = "RdYlGn")
 
 
 
-
-
-# # Save that out:
+# # Save that out: legacy code
 # write_csv(strata_resolution_data, here::here("local_data", "jkipp_areas_fvcom_elem_resolution.csv"))
-```
-
-
-# Inspecting Timeseries
-
-Timeseries can now be evaluated:
-
-
-# Inspecting Timeseries
-
-Prior to any interpolations, timeseries for both inshore and offshore areas are evaluated for both long-term trends (Kendall test), and structural breaks in means/trends (changepoint/breakpoint tests).
-
-These tests determine the following:\
-- Significant trends = non-stationary, and global krigging model should not be used\
-- Breakpoints determine which groups of years should be used for seasonal kriging models
-
-```{r}
-#| label: both-version-inshoreoffshore
-
-# Load and add inshore/offshore labels on the daily data
-fvcom_regional_temperatures <- read_csv(
-  str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/jkipp_regions_fvcom_temperatures_daily.csv")) %>% 
-  mutate(depth_type = if_else(area_id %in% c("GOM_GBK", "SNE"), "offshore", "nearshore"))
-
 ```

@@ -1,0 +1,1263 @@
+---
+title: "Regime Shift Review"
+description: | 
+  Detailing the Regime Shifts in Maine Coastal Current Behavior
+date: "Updated on: `r Sys.Date()`"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    df-print: kable
+    self-contained: true
+execute: 
+  echo: true
+  warning: false
+  message: false
+  fig.align: "center"
+  comment: ""
+---
+
+```{r}
+{
+  library(sf) 
+  library(fvcom) 
+  library(tidyverse)
+  library(gmRi)
+  library(patchwork)
+  library(rnaturalearth)
+  library(showtext)
+  library(ncdf4)
+  # Cyclic color palettes in scico
+  # From: https://www.fabiocrameri.ch/colourmaps/
+  library(scico)
+  library(legendry)
+}
+
+# namespace conflicts
+conflicted::conflict_prefer("select", "dplyr")
+conflicted::conflict_prefer("filter", "dplyr")
+
+
+# Set the theme
+theme_set(
+  theme_gmri() +
+    theme(strip.text.y = element_text(angle = 0),
+          legend.position = "bottom", 
+          legend.title.position = "top", 
+          legend.title = element_text(hjust = 0.5), 
+          strip.text = element_text(size = 8),
+          axis.text = element_text(size = 8)))
+
+# Project paths
+lob_ecol_path <- cs_path("mills", "Projects/Lobster ECOL")
+fvcom_path    <- cs_path("res", "FVCOM/Lobster-ECOL")
+poly_paths    <- cs_path("mills", "Projects/Lobster ECOL/Spatial_Defs")
+
+# Shapefiles
+new_england <- ne_states("united states of america", returnclass = "sf") %>% 
+  filter(postal %in% c("VT", "ME", "RI", "MA", "CT", "NH", "NY", "MD", "VA", "NJ", "DE", "NC", "PA", "WV"))
+canada <- ne_states("canada", returnclass = "sf")
+
+# # # Support functions for FVCOM
+source(here::here("R/FVCOM_Support.R"))
+
+
+# Factor Levels
+areas_northsouth <- c(
+  "Eastern Maine",  
+  "Western Maine",  
+  "Central Maine",  
+  "Eastern Mass",
+  "W South Channel",
+  "Nantucket Shoals",  
+  "Off No Mans Land",  
+  "Southern Mass",  
+  "Rhode Island Shore",
+  "Long Island Sound", 
+  "Cholera Bank",
+  "Off Long Island",   
+  "New Jersey Shore",  
+  "Barnegat Ridge",  
+  "Five Fathom Bank",  
+  "Virginia Shore",
+  "GOM_GBK",         
+  "SNE")
+```
+
+
+```{r}
+#| label: load shapes
+
+# Read Regions in
+proj_path <- cs_path("mills", "Projects/Lobster ECOL")
+
+# Load Shapefiles for inshore/offshore
+poly_paths <- cs_path("mills", "Projects/Lobster ECOL/Spatial_Defs")
+
+# Load inshore areas
+inshore_areas <- map(
+  setNames(
+    list.files(str_c(poly_paths, "inshore_areas"), full.names = T),
+    str_remove(list.files(str_c(poly_paths, "inshore_areas")), ".geojson")),
+  function(x){read_sf(x)}
+) %>% 
+  bind_rows()
+
+offshore_areas <- map(
+  setNames(
+    list.files(str_c(poly_paths, "offshore_areas"), full.names = T),
+    str_remove(list.files(str_c(poly_paths, "offshore_areas")), ".geojson")),
+  function(x){read_sf(x)}
+) %>% bind_rows() %>% 
+  mutate(SHORT_NAME = Region) 
+
+# st_crs(offshore_areas)
+# st_crs(inshore_areas)
+
+# Combine so we can plot them
+study_regions <- bind_rows(
+  st_transform(inshore_areas, crs = st_crs(4269)),
+  offshore_areas)
+
+```
+
+
+```{r}
+#| label: style-sheet
+#| results: asis
+
+# Use GMRI style
+use_gmri_style_rmd()
+```
+
+
+```{r}
+#| label: fonts-config
+#| echo: false
+
+
+# Path to the directory containing the font file (replace with your actual path)
+font_dir <- paste0(system.file("stylesheets", package = "gmRi"), "/GMRI_fonts/Avenir/")
+
+# Register the font
+font_add(
+  family = "Avenir",
+  file.path(font_dir, "LTe50342.ttf"),
+  bold = file.path(font_dir, "LTe50340.ttf"),
+  italic = file.path(font_dir, "LTe50343.ttf"),
+  bolditalic = file.path(font_dir, "LTe50347.ttf"))
+
+# Load the font
+showtext::showtext_auto()
+
+```
+
+# Reviewing STARS Regime Changes in Space/Time
+
+This markdown reviews the various rstars regime shift results which were produced separately. I will begin at the largest geographic scales and work down to local timeseries:
+
+Regime shifts for individual timeseries were tested using the STARS methodology. Any daily timeseries (temperature and salinity from ocean reanalysis models) were aggregated to a monthly temporal resolution, and any trends and seasonal cycles were removed. 
+
+The Marriott, Pope and Kendall (MPK) "pre-whitening" routine was used within the {rstars} algorithm to remove "red noise" (autoregressive processes, typically AR1) from the timeseries.
+
+For more details on trend removal and pre-whitening methods see Rodionov 2006.
+
+## Shelf-Scale Shifts
+
+There are 2-3 climate and oceanographic timeseries that operate at the broad regional scale of the Northeast shelf. These are:
+ 
+ 1. The Gulf Stream Index (a metric indicating the North/South position of the Gulf Stream) based on SSH
+ 2. The Northeast Channel Slopewater Proportions (the percentage of various water masses at the 150-200m depth entering GOM, using NERACOOS buoy data)
+ 3. The North Atlantic Oscillation (atmospheric pressure differential between icelandic low and the Azores High)
+
+These three indices affect conditions over large spatial scales and and are likely to either directly or indirectly impact more local scale changes.
+
+These three metrics are available in the `ecodata` r package and can be pulled directly from the package.
+
+```{r}
+library(ecodata)
+
+# GSI
+# Why is there more than one value per month?
+gsi <- ecodata::gsi %>% #glimpse()
+  mutate(Time = as.Date(str_c(str_replace(Time, "[.]", "-"), "-01")))
+
+
+# use the old one
+gsi_old <- ecodata::gsi_old %>% #glimpse()
+  mutate(Var = "gulf stream index old") %>% 
+  mutate(Time = as.Date(str_c(str_replace(Time, "[.]", "-"), "-01")))
+
+
+# NAO
+nao <- ecodata::nao%>% 
+  mutate(Time = as.Date(str_c(Time, "-01-01")))
+
+# Put them together to plot
+shelf_indices <- bind_rows(list(gsi, gsi_old, nao))
+
+
+```
+
+The Gulf Stream indices come as two monthly datasets, the other indices are annual. Any long-term trends for each metric have been removed prior to regime shift tests on these metrics.
+
+```{r}
+#| fig-height: 5
+
+# Run the shift test for summertime PCA
+shelf_indices_detrended <- shelf_indices %>%
+  split(.$Var) %>%
+  map_dfr(function(.x){
+
+    # Detrend
+    .x <- .x %>% 
+      arrange(Time) %>% 
+      mutate(
+        time = Time,
+        yr_num = year(time))
+    
+    # annual trend
+    trend_mod <- lm(Value ~ Time, data = .x)
+    
+    # save the results
+    .x <- broom::augment(x = trend_mod) %>%
+      rename(
+        trend_fit = .fitted,
+        trend_resid = .resid) %>% 
+      full_join(.x, join_by(Time, Value)) %>% 
+      mutate(trend_resid = if_else(is.na(Value), NA, trend_resid))
+    
+    return(.x)})
+
+
+
+
+
+
+# Plot the residuals from the trend
+ggplot(shelf_indices_detrended, aes(Time, trend_resid, color = Var)) + 
+  geom_line(linewidth = 0.6, alpha = 0.8) + 
+  facet_grid(EPU * Var ~ ., scales = "free", labeller = label_wrap_gen(width= 8)) +
+  guides(color = guide_legend(nrow = 2)) +
+  labs(title = "Shelf Scale Ocean/Climate Metrics - Detrended")
+```
+
+Bacause the slopewater proportion contains NA values, we cannot evaluate it for breaks unless we impute missing values somehow or take a subset of time that is uninterrupted.
+
+
+```{r}
+# Stirnimann used these values in their paper:
+# l = 5, 10, 15, 17.5 years, with monthly data
+# Huber = 1
+# Subsampling = (l + 1) / 3
+
+
+# Load the function(s)
+source(here::here("rstars-master","rSTARS.R"))
+
+```
+
+
+```{r}
+
+# Run the regime shift test
+shelf_indices_rstars <- shelf_indices_detrended %>%
+  split(.$Var) %>%
+  map_dfr(function(.x){
+    
+    cutoff_length <- ifelse(
+      str_detect(.x$Var[[1]], "index"),
+      12*7,
+      7)
+    
+    # This is only here because we have duplicate dates in the GSI
+    .x <- distinct(.x, Time, .keep_all = T)
+    
+    # Get the results from that
+    x_rstars <- rstars(
+      data.timeseries = as.data.frame(
+        .x[,c("Time", "trend_resid")]),
+      l.cutoff = cutoff_length,
+      pValue = 0.05,
+      Huber = 1,
+      Endfunction = T,
+      preWhitening = T,
+      OLS = F,
+      MPK = T,
+      IP4 = F,
+      SubsampleSize = (cutoff_length + 1)/3,
+      returnResults = T) %>% 
+      mutate(
+        EPU = .x$EPU[[1]],
+        Value = .x$Value,
+        shift_direction = case_when(
+          RSI > 0 ~ "Shift Up", 
+          RSI < 0 ~ "Shift Down",
+          TRUE ~ NA))
+    
+    },
+    
+    .id = "Var"
+  )
+
+```
+
+
+
+The results can be seen below:
+
+```{r}
+
+# Summarise the breakpoint locations
+shelf_shift_points <- shelf_indices_rstars %>% 
+  filter(RSI != 0) %>% 
+  dplyr::select(Time, Var, EPU, shift_direction)
+
+
+# Plot the breaks over the monthly data
+ggplot() +
+   geom_vline(
+    data = shelf_shift_points,
+    aes(
+      xintercept = Time,
+      color = shift_direction),
+    linewidth = 1.5) +
+  geom_line(
+    data = shelf_indices_rstars,
+    aes(Time, Value),
+    linewidth = 0.4, alpha = 0.5) +
+  scale_color_gmri() +
+  facet_grid(EPU * Var~., labeller = label_wrap_gen(width = 8)) +
+  scale_x_date(
+    breaks = seq.Date(
+      from = as.Date("1950-01-01"),
+      to = as.Date("2020-01-01") ,
+      by = "10 year"),
+     limits = as.Date(c("1970-01-01", "2020-01-01")),
+    labels = scales::label_date_short()) +
+  theme(
+    legend.position = "bottom",
+    strip.text.y = element_text(angle = 0)) + 
+  labs(color = "",
+       y = "Measurement",
+       x = "Date",
+       title = "Shelf-Scale Ocean/Climate Metrics - STARS Changepoints",
+       subtitle = "Performed on Detrended Timeseries")
+```
+
+Based on these results, there is some evidence for breakpoints in the Gulf Stream Indices, and not in the NAO index.
+
+```{r}
+shelf_shift_points %>% 
+  group_by(Var) %>% 
+  arrange(Time, EPU) %>% 
+  gt::gt() %>% 
+  gt::tab_header(title = "Shelf-Scale Breaks")
+```
+
+
+
+## EPU-Scale Shifts
+
+For the EPU-scale metrics we have the cold-pool index, the Northeast Channel Slopewater Proportion (from NERACOOS Buoy N), as well as metrics of primary production and zooplankton community. We also have temperature and salinity timeseries specific to each area. 
+
+Temperature and salinity is from either GLORYS or FVCOM, primary productivity is satellite derived (OC-CCI, SeaWiFS, MODIS-Aqua), , and the zooplankton community indices are from the Gulf of Maine CPR transect.
+
+
+```{r}
+# # There are a ton here. We want primary productivity / chlor a, and maybe anomalies
+# chl_pp <- ecodata::chl_pp %>% 
+#   filter(str_detect(Var, "MONTHLY")) %>% 
+#   filter(str_detect(Var, "PPD|CHLOR_A")) %>% 
+#   separate(col = "Time", into = c("Period", "Time"), sep = "_") %>% 
+#   mutate(Time = as.Date(
+#     str_c(
+#       str_sub(Time, 1, 4),
+#       str_sub(Time, 5, 6), 
+#       "01",
+#       sep = "-")))
+
+# Annual will make life easier
+annual_chl_pp <- ecodata::annual_chl_pp %>% 
+  filter(str_detect(Var, "MEAN")) %>% 
+  separate(col = "Time", into = c("Period", "Time"), sep = "_") %>% 
+  mutate(Time = as.Date(
+    str_c(
+      Time,
+      "01-01",
+      sep = "-")))
+
+
+# Just take one cold pool index for now
+cold_pool <- ecodata::cold_pool %>% #distinct(Source)
+  filter(Var == "cold_pool_index") %>% 
+  mutate(
+    Var = str_c(Source, Var, sep = "_"),
+    Time = as.Date(
+    str_c(
+      Time,
+      "01-01",
+      sep = "-")))
+
+# Slopewater
+slopewater <- ecodata::slopewater %>% 
+  mutate(Time = as.Date(str_c(Time, "-01-01")))  %>% 
+  filter(Time > as.Date("1990-01-01")) %>% 
+  drop_na()
+
+
+# Combine those
+epu_indices <- bind_rows(annual_chl_pp, slopewater, cold_pool) %>% 
+  group_by(Var, EPU) %>% 
+  arrange(Time) 
+
+
+# Plot them
+ggplot(epu_indices, aes(Time, Value, color = Var)) +
+  geom_line(linewidth = 0.6, alpha = 0.8) +
+  facet_grid(Var * EPU ~ ., scales = "free", labeller = label_wrap_gen(width= 8)) +
+  guides(color = guide_legend(nrow = 3)) +
+  scale_x_date(
+    breaks = seq.Date(
+      from = as.Date("1950-01-01"),
+      to = as.Date("2020-01-01") ,
+      by = "10 year"),
+     limits = as.Date(c("1970-01-01", "2020-01-01")),
+    labels = scales::label_date_short()) +
+  guides(color = guide_legend(nrow = 2)) +
+  labs(title = "EPU Scale Ocean/Ecological Metrics")
+
+  
+
+```
+
+
+```{r}
+#| fig.height: 6
+
+
+# Detrend the epu stuff
+
+epu_indices_detrended <- epu_indices %>% 
+  mutate(var_epu = str_c(Var, EPU, sep = "X")) %>% 
+  split(.$var_epu) %>%
+  map_dfr(function(.x){
+
+    # Detrend
+    .x <- .x %>% 
+      arrange(Time) %>% 
+      mutate(
+        time = Time,
+        yr_num = year(time))
+    
+    # annual trend
+    trend_mod <- lm(Value ~ Time, data = .x)
+    
+    # save the results
+    .x <- broom::augment(x = trend_mod) %>%
+      rename(
+        trend_fit = .fitted,
+        trend_resid = .resid) %>% 
+      full_join(.x, join_by(Time, Value)) %>% 
+      mutate(trend_resid = if_else(is.na(Value), NA, trend_resid))
+    
+    return(.x)})
+
+
+# Plot detrended
+ggplot(epu_indices_detrended, aes(Time, trend_resid, color = Var)) + 
+  geom_line(linewidth = 0.6, alpha = 0.8) + 
+  facet_grid(EPU * Var ~ ., scales = "free", labeller = label_wrap_gen(width= 8)) +
+  guides(color = guide_legend(nrow = 3)) +
+    scale_x_date(
+    breaks = seq.Date(
+      from = as.Date("1950-01-01"),
+      to = as.Date("2020-01-01") ,
+      by = "10 year"),
+     limits = as.Date(c("1970-01-01", "2020-01-01")),
+    labels = scales::label_date_short()) +
+  labs(title = "EPU Scale Ocean/Climate Metrics - Detrended",
+       y = "Metric")
+
+
+```
+
+
+
+```{r}
+# Run rstars for those, temperature and salinity are done
+
+
+# Run the regime shift test
+epu_indices_rstars <- epu_indices_detrended %>%
+  #filter(str_detect(Var, "proportion") == FALSE) %>% 
+  split(.$var_epu) %>%
+  map_dfr(function(.x){
+    
+    # This is only here because we have duplicate dates in the GSI
+    .x <- distinct(.x, Time, .keep_all = T)
+    
+    # cutoff length
+    cutoff_length <- 7
+    
+    # Get the results from that
+    x_rstars <- rstars(
+      data.timeseries = as.data.frame(
+        .x[,c("Time", "trend_resid")]),
+      l.cutoff = cutoff_length,
+      pValue = 0.05,
+      Huber = 1,
+      Endfunction = T,
+      preWhitening = T,
+      OLS = F,
+      MPK = T,
+      IP4 = F,
+      SubsampleSize = (cutoff_length + 1)/3,
+      returnResults = T) %>% 
+      mutate(
+        Value = .x$Value,
+        shift_direction = case_when(
+          RSI > 0 ~ "Shift Up", 
+          RSI < 0 ~ "Shift Down",
+          TRUE ~ NA))
+    
+    },
+    
+    .id = "var_epu"
+  ) %>% 
+  separate(var_epu, into = c("Var", "EPU"), sep = "X")
+
+```
+
+### Primary Production and Cold-Pool Dynamics
+
+The results can be seen below:
+
+```{r}
+
+# Summarise the breakpoint locations
+epu_shift_points <- epu_indices_rstars %>% 
+  filter(RSI != 0) %>% 
+  dplyr::select(Time, Var, EPU, shift_direction)
+
+
+# Plot the breaks over the monthly data
+ggplot() +
+   geom_vline(
+    data = epu_shift_points,
+    aes(
+      xintercept = Time,
+      color = shift_direction),
+    linewidth = 1.5) +
+  geom_line(
+    data = epu_indices_rstars,
+     aes(Time, Value),
+    linewidth = 0.4, alpha = 0.5) +
+  scale_color_gmri() +
+  facet_grid(EPU * Var~., labeller = label_wrap_gen(width = 8), scales = "free") +
+  scale_x_date(
+    breaks = seq.Date(
+      from = as.Date("1950-01-01"),
+      to = as.Date("2020-01-01") ,
+      by = "10 year"),
+     limits = as.Date(c("1970-01-01", "2020-01-01")),
+    labels = scales::label_date_short()) +
+  theme(
+    legend.position = "bottom",
+    strip.text.y = element_text(angle = 0)) + 
+  labs(color = "",
+       y = "Measurement",
+       x = "Date",
+       title = "EPU Scale Ocean/Climate Metrics - Detrended",
+       subtitle = "STARS Regime Shifts")
+```
+
+Based on these results, we see no breakpoints in either primary production or the cold pool index.
+
+```{r}
+epu_shift_points %>% 
+  group_by(Var) %>% 
+  arrange(Time, EPU) %>% 
+  gt::gt() %>% 
+  gt::tab_header(title = "EPU Scale Breaks")
+```
+
+
+### EPU Temperature and Salinity
+
+Temperature and salinity changes were done separately, here are their results
+
+
+```{r}
+# Load Temperature and Salinity, Pull out the EPU scale timeseries
+
+
+# # Save them
+surf_sal_monthly_shifts <- read_csv(here::here("rstars_results/lobecol_ssal_monthly_shifts_detrended.csv")) %>% 
+  mutate(Var = "Surface Salinity") 
+bot_sal_monthly_shifts <- read_csv(here::here("rstars_results/lobecol_bsal_monthly_shifts_detrended.csv"))  %>% 
+  mutate(Var = "Bottom Salinity")
+surf_temp_monthly_shifts <- read_csv(here::here("rstars_results/lobecol_stemp_monthly_shifts_detrended.csv"))  %>% 
+  mutate(Var = "Surface Temperature") 
+bot_temp_monthly_shifts <- read_csv(here::here("rstars_results/lobecol_btemp_monthly_shifts_detrended.csv"))  %>% 
+  mutate(Var = "Bottom Temperature") 
+
+# Put them together
+tempsal <- bind_rows(list(surf_sal_monthly_shifts, bot_sal_monthly_shifts, surf_temp_monthly_shifts, bot_temp_monthly_shifts)) %>% 
+  mutate(shift_direction = case_when(
+          RSI > 0 ~ "Shift Up", 
+          RSI < 0 ~ "Shift Down",
+          TRUE ~ NA),
+         area_id = factor(area_id, levels = areas_northsouth))
+offshore_tempsal <- tempsal %>% filter(area_id %in% c("GOM_GBK", "SNE"))
+inshore_tempsal <- tempsal %>% filter(area_id %in% c("GOM_GBK", "SNE") == FALSE)
+
+
+# Pull the shift points
+offshore_tempsal_shifts <- offshore_tempsal %>% 
+  filter(RSI != 0) %>% 
+  dplyr::select(time, Var, area_id, shift_direction)
+inshore_tempsal_shifts <- inshore_tempsal %>% 
+  filter(RSI != 0) %>% 
+  dplyr::select(time, Var, area_id, shift_direction)
+```
+
+
+```{r}
+#| fig.height: 5
+# Plot the offshore shifts
+
+
+# Plot the breaks over the monthly data
+ggplot() +
+   geom_vline(
+    data = offshore_tempsal_shifts,
+    aes(
+      xintercept = time,
+      color = shift_direction),
+    linewidth = 1.5) +
+  geom_line(
+    data = offshore_tempsal,
+     aes(time, model_resid),
+    linewidth = 0.4, alpha = 0.5) +
+  scale_color_gmri() +
+  facet_grid(area_id * Var~., labeller = label_wrap_gen(width = 8), scales = "free") +
+  scale_x_date(
+    breaks = seq.Date(
+      from = as.Date("1950-01-01"),
+      to = as.Date("2020-01-01") ,
+      by = "10 year"),
+     limits = as.Date(c("1978-01-01", "2020-01-01")),
+    labels = scales::label_date_short()) +
+  theme(
+    legend.position = "bottom",
+    strip.text.y = element_text(angle = 0)) + 
+  labs(color = "",
+       y = "Measurement",
+       x = "Date",
+       title = "FVCOM EPU Scale Temp/Sal Metrics",
+       subtitle = "STARS Regime Shifts")
+```
+
+
+A change in SNE salinity appears to have occured around 1992.
+
+Surface temperatures fell in SNE around 2002, but they rose again in 2011 along with GOM+GBK the same year.
+
+```{r}
+offshore_tempsal_shifts %>% 
+  group_by(Var) %>% 
+  arrange(time, area_id) %>% 
+  gt::gt() %>% 
+  gt::tab_header(title = "EPU Scale Temp+Sal Breaks")
+```
+
+
+
+### CPR Community PCA Index
+
+
+```{r}
+# From Pershing & Kemberling
+# PC1 explains 53.62% of variance
+# PC2 explains 27.9%
+# PC1 is associated with centropages, oithona, para-pseudocalanus
+# PC2 is C. Fin, Metridia, & Euphausiacea
+
+# Load the CPR data
+cpr_community <- read_csv(here::here("local_data", "cpr_focal_pca_timeseries_period_1961-2017.csv")) %>% 
+  rename(
+    PC1_small_zoo = `First Mode`,
+    PC2_large_zoo = `Second Mode`) %>% 
+  select(-c(pca_period, taxa_used)) %>% 
+  pivot_longer(cols = starts_with("PC"), names_to = "Var", values_to = "value")
+
+```
+
+
+
+```{r}
+# Run breakpoints in CPR PCA
+
+
+# Run the regime shift test
+cpr_indices_rstars <- cpr_community %>%
+  filter(year > 1976) %>% 
+  mutate(EPU = "GOM",
+         var_epu = str_c(Var, "X", EPU)) %>% 
+  split(.$var_epu) %>%
+  map_dfr(function(.x){
+    
+    # detrend
+    trend_mod <- lm(value ~ year, data = .x)
+    .x$trend_resid <- resid(trend_mod)
+    
+    # cutoff length
+    cutoff_length <- 7
+    
+    # Get the results from that
+    x_rstars <- rstars(
+      data.timeseries = as.data.frame(
+        .x[,c("year", "trend_resid")]),
+      l.cutoff = cutoff_length,
+      pValue = 0.05,
+      Huber = 1,
+      Endfunction = T,
+      preWhitening = T,
+      OLS = F,
+      MPK = T,
+      IP4 = F,
+      SubsampleSize = (cutoff_length + 1)/3,
+      returnResults = T) %>% 
+      mutate(
+        Value = .x$value,
+        shift_direction = case_when(
+          RSI > 0 ~ "Shift Up", 
+          RSI < 0 ~ "Shift Down",
+          TRUE ~ NA))
+    
+    },
+    
+    .id = "var_epu"
+  ) %>% 
+  separate(var_epu, into = c("Var", "EPU"), sep = "X") %>% 
+  mutate(time = as.Date(str_c(year, "-01-01")))
+
+```
+
+
+```{r}
+
+# Summarise the breakpoint locations
+cpr_shift_points <- cpr_indices_rstars %>% 
+  filter(RSI != 0) %>% 
+  dplyr::select(time, Var, EPU, shift_direction)
+
+
+# Plot the breaks over the monthly data
+ggplot() +
+   geom_vline(
+    data = cpr_shift_points,
+    aes(
+      xintercept = time,
+      color = shift_direction),
+    linewidth = 1.5) +
+  geom_line(
+    data = cpr_indices_rstars,
+     aes(time, trend_resid),
+    linewidth = 0.4, alpha = 0.5) +
+  scale_color_gmri() +
+  facet_grid(EPU ~ Var, labeller = label_wrap_gen(width = 8), scales = "free") +
+  scale_x_date(
+    breaks = seq.Date(
+      from = as.Date("1950-01-01"),
+      to = as.Date("2020-01-01") ,
+      by = "10 year"),
+     limits = as.Date(c("1970-01-01", "2020-01-01")),
+    labels = scales::label_date_short()) +
+  theme(
+    legend.position = "bottom",
+    strip.text.y = element_text(angle = 0)) + 
+  labs(color = "",
+       y = "Measurement",
+       x = "Date",
+       title = "CPR Zooplankton Community Metrics",
+       subtitle = "STARS Regime Shifts")
+```
+
+
+
+
+
+### ECOMON Community PCA Index
+
+
+```{r}
+# Abundance per 100m3 for different taxa
+# ecodata::zoo_regime %>% distinct(Var) %>% pull() %>% sort()
+ecomon_zoo <- ecodata::zoo_regime
+ecomon_zoo %>% 
+  filter(!str_detect(Var, "fish|clauso|gas")) %>% 
+  ggplot(aes(Time, Value)) +
+  geom_line() +
+  facet_grid(Var ~ EPU)
+
+
+# We might be able to just pull out the seven focal species and then repeat the PCA process...
+# Issues:
+# ecomon doesn't split the calanus into adult/juvenile
+# Para and Pseaudocalana are split
+# Euph also has a Euph1
+```
+
+
+### Large and Small Copepod Index
+
+https://noaa-edab.github.io/tech-doc/zoo_abundance_anom.html?q=zoopl#copepod
+
+> Abundance anomalies are computed from the expected abundance on the day of sample collection. Abundance anomaly time series are constructed for Centropages typicus, Pseudocalanus spp., Calanus finmarchicus, and total zooplankton biovolume. The small-large copepod size index is computed by averaging the individual abundance anomalies of Pseudocalanus spp., Centropages hamatus, Centropages typicus, and Temora longicornis, and subtracting the abundance anomaly of Calanus finmarchicus. This index tracks the overall dominance of the small bodied copepods relative to the largest copepod in the Northeast U.S. region, Calanus finmarchicus.
+
+```{r}
+# This has "LgCopepods" & "SmCopepods", which could produce large/small index
+# ecodata::zoo_abundance_anom %>% distinct(Var) %>% pull() %>% sort()
+
+
+zoo_lg_small <- ecodata::zoo_abundance_anom %>% 
+  filter(Var %in% c("LgCopepods", "SmCopepods")) %>%
+  mutate(Value = as.numeric(Value)) %>% 
+  pivot_wider(values_from = "Value", names_from = "Var") %>% 
+  mutate(small_large_index =  SmCopepods - LgCopepods)
+
+
+
+ggplot(zoo_lg_small, aes(Time, small_large_index)) +
+  geom_line() +
+  geom_hline(yintercept = 0) +
+  facet_grid(EPU~., scales = "free") +
+  labs(
+    y = "Small-Large Copepod Index\n(More Large Copepods  <----->  More Small Copepods)")
+  
+```
+
+
+
+
+```{r}
+#| label: zooplankton, not used
+
+
+# # This is too many vars
+# ecodata::zooplankton_index %>% distinct(Var) %>% pull()
+# 
+# # Not informative mechanistically
+# ecodata::zoo_diversity
+# 
+# # BOLD move on absolute abundances
+# ecodata::zoo_strat_abun
+
+```
+
+
+
+### NEEDS: MCC & Lobster Predator Indices
+
+There are two EPU-Scale indices that we need to develop. This is the MCC index, and a lobster predator abundance index.
+
+The Gulf of Maine Coastal Current plays an important role in transporting lobster larva and their recruitment form year-to-year. The degree of "connected-ness" of the Western and Eastern portions of this current have been used in the past to inform expectations of lobster recruitment.
+
+
+## Local/Nearshore Shifts
+
+
+###  Temperature and Salinity
+
+```{r}
+#| fig.height: 8
+
+# Plot the breaks over the monthly data
+ggplot() +
+   geom_vline(
+    data = filter(inshore_tempsal_shifts, str_detect(Var, "Salinity")),
+    aes(
+      xintercept = time,
+      color = shift_direction),
+    linewidth = 1.5) +
+  geom_line(
+    data = filter(inshore_tempsal, str_detect(Var, "Salinity")),
+     aes(time, model_resid),
+    linewidth = 0.4, alpha = 0.5) +
+  scale_color_gmri() +
+  facet_grid(area_id~Var, labeller = label_wrap_gen(width = 8), scales = "free") +
+  scale_x_date(
+    breaks = seq.Date(
+      from = as.Date("1950-01-01"),
+      to = as.Date("2020-01-01") ,
+      by = "10 year"),
+     limits = as.Date(c("1978-01-01", "2020-01-01")),
+    labels = scales::label_date_short()) +
+  theme(
+    legend.position = "bottom",
+    strip.text.y = element_text(angle = 0)) + 
+  labs(color = "",
+       y = "Measurement",
+       x = "Date",
+       title = "FVCOM Inshore Scale Sal Metrics",
+       subtitle = "STARS Regime Shifts")
+```
+
+
+
+```{r}
+
+ggplot() +
+  geom_sf(data = filter(
+    study_regions, 
+    SHORT_NAME %in% 
+      (dplyr::filter(inshore_tempsal_shifts, str_detect(Var, "Salinity")) %>% 
+      pull(area_id))
+    ),
+    fill = gmri_cols("gmri blue"), alpha = 0.4) +
+  geom_sf(data = new_england) +
+  geom_sf(data = canada) +
+  
+  coord_sf(xlim = c(-78, -66), ylim = c(35.5, 45)) +
+  labs(title = "Affected Areas")
+```
+
+
+
+```{r}
+#| fig.height: 8
+
+# Plot the breaks over the monthly data
+ggplot() +
+   geom_vline(
+    data = filter(inshore_tempsal_shifts, !str_detect(Var, "Salinity")),
+    aes(
+      xintercept = time,
+      color = shift_direction),
+    linewidth = 1.5) +
+  geom_line(
+    data = filter(inshore_tempsal, !str_detect(Var, "Salinity")),
+     aes(time, model_resid),
+    linewidth = 0.4, alpha = 0.5) +
+  scale_color_gmri() +
+  facet_grid(area_id~Var, labeller = label_wrap_gen(width = 8), scales = "free") +
+  scale_x_date(
+    breaks = seq.Date(
+      from = as.Date("1950-01-01"),
+      to = as.Date("2020-01-01") ,
+      by = "10 year"),
+     limits = as.Date(c("1978-01-01", "2020-01-01")),
+    labels = scales::label_date_short()) +
+  theme(
+    legend.position = "bottom",
+    strip.text.y = element_text(angle = 0)) + 
+  labs(color = "",
+       y = "Measurement",
+       x = "Date",
+       title = "FVCOM Inshore Scale Temperature Metrics",
+       subtitle = "STARS Regime Shifts")
+```
+
+
+```{r}
+ggplot() +
+  geom_sf(data = filter(
+    study_regions, 
+    SHORT_NAME %in% 
+      (dplyr::filter(inshore_tempsal_shifts, !str_detect(Var, "Salinity")) %>% 
+      pull(area_id))
+    ),
+    fill = gmri_cols("lv orange"), alpha = 0.4) +
+  geom_sf(data = new_england) +
+  geom_sf(data = canada) +
+  
+  coord_sf(xlim = c(-78, -66), ylim = c(35.5, 45)) +
+  labs(title = "Affected Areas")
+```
+
+
+
+```{r}
+inshore_tempsal_shifts %>% 
+  filter(str_detect(Var, "Salinity")) %>% 
+  group_by(Var) %>% 
+  arrange(time, area_id) %>% 
+  gt::gt() %>% 
+  gt::tab_header(title = "Inshore Scale Temp+Sal Breaks")
+```
+
+```{r}
+inshore_tempsal_shifts %>% 
+  filter(!str_detect(Var, "Salinity")) %>% 
+  group_by(Var) %>% 
+  arrange(time, area_id) %>% 
+  gt::gt() %>% 
+  gt::tab_header(title = "Inshore Scale Temp+Sal Breaks")
+```
+
+
+### Days in Key Temperature Ranges
+
+In addition to breaks in absolute temperatures, there is interest in the amount of time spent in favorable (12-18C) and unfavorable conditions (20C).
+
+These use daily bottom temperatures:
+
+```{r}
+daily_fvcom_temps <- read_csv(
+  str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_temperatures_daily.csv")) %>% 
+  mutate(depth_type = if_else(area_id %in% c("GOM_GBK", "SNE"), "offshore", "nearshore"))
+
+
+# The degday functions were built with the ability to model daily cycles
+# the sine and triangle methods accomodate this
+# since we only have daily data the simple average is probably the way to do it
+thresh_low <- 10
+thresh_up  <- 18
+
+# library(degday)
+# Get Monthly Totals in Ranges
+dd_monthly <- daily_fvcom_temps %>%
+  mutate(
+    year = lubridate::year(time),
+    month = lubridate::month(time),
+    opt_btemp     = if_else(between(bottom_t, 10,18), 1, 0),
+    stress_btemp  = if_else(bottom_t > 18, 1, NA),
+    cold_btemp     = if_else(bottom_t < 10, 1, NA)) %>% 
+  group_by(area_id, year, month) %>% 
+  summarise(
+    across(
+      ends_with("temp"), 
+      ~sum(.x, na.rm = T)),
+    .groups = "drop") %>% 
+  pivot_longer(
+    cols = ends_with("temp"), 
+    names_to = "var", 
+    values_to = "totals") %>% 
+  mutate(
+    time = as.Date(str_c(year,"-01-01")) + months(month-1),
+    area_id = factor(area_id, levels = areas_northsouth),
+    var = case_match(
+      var,
+      "opt_btemp" ~ "Preferred Bottom Temperatures 10-18C", 
+      "stress_btemp" ~ "Heat Stress Conditions >18C",
+      "cold_btemp" ~ "Below Preferred Conditions <10C")
+  )
+
+# Plot them
+dd_monthly %>%
+  filter(area_id %in% c("GOM_GBK", "SNE")) %>%
+  ggplot() +
+  geom_point(
+    aes(time, y = totals, color = var),
+    linewidth = 0.6) +
+  geom_smooth(
+    aes(time, y = totals, color = var),
+    method = "loess") +
+  scale_color_manual(values = c("lightblue",  "#ea4f12", "#057872")) +
+  facet_grid(area_id~.) +
+  
+  theme(strip.text.y = element_text(angle = 0),
+      legend.position = "bottom") +
+  guides(fill = guide_legend(
+    nrow = 2,
+    title.position = "top",
+    title.hjust = 0.5))+
+  labs(y = "Days in Range",
+       fill = "Daily Temperature Conditions", color = "",
+       title = "FVCOM Bottom Temperature Degree-Days")
+```
+
+
+
+```{r}
+# Do annual, Monthly values looked insane
+dd_annual <- dd_monthly %>%
+  group_by(year, area_id, var) %>% 
+  summarise(across(totals, mean)) %>%
+  mutate(var_area = str_c(var, area_id, sep = "X"),
+         time = as.Date(str_c(year, "-01-01")))
+
+# Plot them
+dd_annual %>% 
+  ggplot() +
+  geom_area(
+    aes(year, y = totals, fill = var)) +
+  scale_fill_manual(values = c("lightblue",  "#ea4f12", "#057872")) +
+  facet_grid(area_id~.) +
+  
+  theme(strip.text.y = element_text(angle = 0),
+      legend.position = "bottom") +
+  guides(fill = guide_legend(
+    nrow = 2,
+    title.position = "top",
+    title.hjust = 0.5))+
+  labs(y = "Days in Range",
+       fill = "Daily Temperature Conditions", color = "",
+       title = "FVCOM Bottom Temperature Degree-Days")
+```
+
+
+
+```{r}
+# # Remove monthly averages, and trends
+dd_annual_detrended <-  dd_annual  %>%
+  split(.$var_area) %>%
+  map_dfr(function(.x){
+
+    # Detrend
+    .x <- .x %>%
+      arrange(year) %>%
+      mutate(yr_num = as.numeric(year))
+
+    # annual trend
+    # trend_mod <- lm(totals ~ yr_num, data = .x)
+
+    # annual trend + monthly average
+    trend_mod <- lm(totals ~ yr_num, data = .x)
+
+    # save the results
+    .x <- broom::augment(x = trend_mod) %>%
+      rename(
+        trend_fit = .fitted,
+        trend_resid = .resid) %>%
+      full_join(.x, join_by(yr_num, totals)) %>%
+      mutate(trend_resid = if_else(is.na(totals), NA, trend_resid))
+
+    return(.x)}) %>% 
+  mutate(time = as.Date(str_c(year, "-01-01")))
+
+
+
+# Plot
+dd_annual_detrended %>% 
+  filter(area_id %in% c("GOM_GBK", "SNE")) %>%
+  ggplot(aes(time, trend_resid, color = var)) +
+  geom_point() +
+  geom_smooth(method = "loess", linewidth = 0.6) +
+  scale_color_manual(values = c("lightblue",  "#ea4f12", "#057872")) +
+  facet_grid(area_id ~ ., scales = "free", labeller = label_wrap_gen(width= 8)) +
+  guides(color = guide_legend(nrow = 3)) +
+  labs(title = "EPU Scale Ocean/Climate Metrics - Detrended")
+```
+
+
+```{r}
+# Run the regime shift test
+temp_range_rstars <- dd_annual_detrended %>%
+# temp_range_rstars <-   dd_annual %>% 
+  split(.$var_area) %>%
+  map_dfr(function(.x){
+    
+    # Seven years
+    cutoff_length <- 7
+    
+    
+    # Get the results from that
+    x_rstars <- rstars(
+      data.timeseries = as.data.frame(
+        .x[,c("time", "trend_resid")]),
+        # .x[,c("time", "totals")]),
+      l.cutoff = cutoff_length,
+      pValue = 0.05,
+      Huber = 1,
+      Endfunction = T,
+      preWhitening = T,
+      OLS = F,
+      MPK = T,
+      IP4 = F,
+      SubsampleSize = (cutoff_length + 1)/3,
+      returnResults = T) %>% 
+      mutate(
+        Value = .x$totals,
+        shift_direction = case_when(
+          RSI > 0 ~ "Shift Up", 
+          RSI < 0 ~ "Shift Down",
+          TRUE ~ NA))
+    
+    },
+    .id = "Var"
+  )%>% 
+  separate(Var, into = c("Var", "area_id"), sep = "X") %>% 
+  mutate(area_id = factor(area_id, levels = areas_northsouth))
+
+```
+
+
+### Temperature Suitability Shifts
+
+The results can be seen below:
+
+```{r}
+#| fig.height: 8
+
+# Summarise the breakpoint locations
+temp_suit_shift_points <- temp_range_rstars %>% 
+  filter(RSI != 0) %>% 
+  dplyr::select(time, Var, area_id, shift_direction)
+
+
+# Plot the breaks over the monthly data
+ggplot() +
+   geom_vline(
+    data = temp_suit_shift_points,
+    aes(
+      xintercept = time,
+      color = shift_direction),
+    linewidth = 1.5) +
+  geom_line(
+    data = temp_range_rstars,
+     aes(time, Value),
+    linewidth = 0.4, alpha = 0.5) +
+  scale_color_gmri() +
+  facet_grid(area_id ~ Var, labeller = label_wrap_gen(width = 8), scales = "free") +
+  scale_x_date(
+    breaks = seq.Date(
+      from = as.Date("1950-01-01"),
+      to = as.Date("2020-01-01") ,
+      by = "10 year"),
+     limits = as.Date(c("1970-01-01", "2020-01-01")),
+    labels = scales::label_date_short()) +
+  theme(
+    legend.position = "bottom",
+    strip.text.y = element_text(angle = 0)) + 
+  labs(color = "",
+       y = "Measurement",
+       x = "Date",
+       title = "Lobster Thermal Preferences - Detrended",
+       subtitle = "STARS Regime Shifts")
+```
+
+Based on the annual totals, we see limited breakpoints in suitable thermal habitat.
+
+```{r}
+temp_suit_shift_points %>% 
+  group_by(Var) %>% 
+  arrange(time, area_id) %>% 
+  gt::gt() %>% 
+  gt::tab_header(title = "Temperature Suitability Scale Breaks")
+```
+
+And restricted to these areas
+
+
+
+```{r}
+ggplot() +
+  geom_sf(data = filter(
+    study_regions, 
+    SHORT_NAME %in% temp_suit_shift_points$area_id),
+    fill = gmri_cols("lv orange"), alpha = 0.4) +
+  geom_sf(data = new_england) +
+  geom_sf(data = canada) +
+  
+  coord_sf(xlim = c(-78, -66), ylim = c(35.5, 45)) +
+  labs(title = "Affected Areas")
+```
+
+
+
+
+## Summary Figures
+

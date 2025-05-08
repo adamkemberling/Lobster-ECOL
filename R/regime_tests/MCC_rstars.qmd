@@ -103,7 +103,20 @@ Relevant Literature:
 fvcom_processed_path <- cs_path("mills", "Projects/Lobster ECOL/FVCOM_processed/MaineCoastalCurrent")
 
 # Load the daily surface currents (u,v)
-daily_mcc_sc <- read_csv(here::here("local_data/MCC_PC_timeseries/MCC_daily_surface_velocities.csv"))
+daily_mcc_sc <- read_csv(here::here("local_data/MCC_PC_timeseries/MCC_daily_surface_velocities.csv"))  %>% 
+  mutate(
+    time = as.Date(time),
+    label = time,
+    year = str_sub(label, 1,4),
+    month = as.numeric(str_sub(label, 6, 7)))
+
+# And the expanded area
+expanded_sc <- read_csv(here::here("data/expanded_daily_surface_currents_vectors.csv"))  %>% 
+  mutate(
+    time = as.Date(time),
+    label = time,
+    year = str_sub(label, 1,4),
+    month = as.numeric(str_sub(label, 6, 7)))
 
 # Load the PCA Timeseries
 mcc_pc_monthly <- read_csv(here::here("local_data/MCC_PC_timeseries/monthly_surface_velocities_PCA_timeseries.csv"))
@@ -135,6 +148,10 @@ gom3_mesh <- get_mesh_geometry(gom3_early, what = 'lonlat')
 ```{r}
 #| label: assemble the mcc mesh area for mapping
 
+# Turn off s2
+sf::sf_use_s2(FALSE)
+
+
 #Original Area
 mcc_turnoff_coords <- tribble(
   ~"lon", ~"lat",
@@ -146,6 +163,7 @@ mcc_turnoff_coords <- tribble(
 )
 
 
+
 # Make it a polygon
 mcc_turnoff_poly <- st_polygon(
     list(cbind(mcc_turnoff_coords$lon, mcc_turnoff_coords$lat))) %>% 
@@ -154,16 +172,48 @@ mcc_turnoff_poly <- st_polygon(
   mutate(area = "Maine Coastal Current Region") 
 st_geometry(mcc_turnoff_poly) <- "geometry"
 
+
+write_sf(mcc_turnoff_poly, here::here("data/MCC_turnoff_area_poly_small.geojson"))
+write_sf(mcc_turnoff_poly, here::here("data/MCC_turnoff_area_poly_small.shp"))
+
+
+
+# Expanded Area?
+expanded_mcc_turnoff_coords <- tribble(
+  ~"lon", ~"lat",
+  -69.85, 42.85,      # Bottom Left
+  -70,    43.65,       # Top Left
+  -67.25, 44.5,    # Off Jonesport
+  -66.45, 43.8,    # Bottom right
+  -69.85, 42.85,    # Bottom left again
+)
+
+
+# Make it a polygon
+expanded_turnoff_poly <- st_polygon(
+  list(cbind(expanded_mcc_turnoff_coords$lon, 
+             expanded_mcc_turnoff_coords$lat))) %>% 
+  st_sfc(crs = 4326) %>% 
+  st_as_sf() %>% 
+  mutate(area = "Maine Coastal Current Region") 
+st_geometry(mcc_turnoff_poly) <- "geometry"
+
+
+
 # Project polygon
 poly_projected <- st_transform(mcc_turnoff_poly, st_crs(gom3_mesh)) 
+expanded_poly_projected <- st_transform(mcc_turnoff_poly, st_crs(gom3_mesh)) 
 
-# Turn off s2
-sf::sf_use_s2(FALSE)
+
 
 # Trim it
 mcc_studyarea_mesh <- mesh_trim(
   mesh = gom3_mesh, 
   domain = st_as_sf(poly_projected) )
+
+expanded_studyarea_mesh <- mesh_trim(
+  mesh = gom3_mesh, 
+  domain = st_as_sf(expanded_poly_projected) )
 ```
 
 
@@ -176,9 +226,9 @@ Before proceeding too far, here is what the average flow direction is across the
 #| fig-height: 10
 
 # Quick verification that directions make sense
-average_directions <-  daily_mcc_sc %>% 
+average_directions <-  expanded_sc %>% 
   mutate(period = lubridate::month(time, label = TRUE)) %>% 
-  bind_rows(mutate(daily_mcc_sc, period = "Year Round")) %>% 
+  bind_rows(mutate(expanded_sc, period = "Year Round")) %>% 
   mutate(period = factor(period, levels = c(month.abb, "Year Round"))) %>% 
   group_by(period, lonc, latc) %>% 
   summarise(
@@ -381,6 +431,27 @@ summer_sc <- daily_mcc_sc %>%
             .groups = "drop") %>% 
   mutate(time = as.Date(time))
 
+# Expanded area for maps
+summer_sc_expanded <- expanded_sc %>% 
+  filter(month %in% c(6:8)) %>% 
+  group_by(time = str_c(year, "-07-15"), elem, lonc, latc) %>% 
+  summarise(across(c(u,v), ~mean(.x, na.rm = T)),
+            .groups = "drop") %>% 
+  mutate(time = as.Date(time))
+
+
+
+# The matrix that will go to the PCA
+summer_pca_mat <- summer_sc %>% 
+  select(time, elem, u, v) %>% 
+  pivot_wider(
+    names_from = elem, 
+    values_from = c(u, v)) %>% 
+  column_to_rownames("time")
+
+
+
+
 # The matrix that will go to the PCA
 summer_pca_mat <- summer_sc %>% 
   select(time, elem, u, v) %>% 
@@ -485,100 +556,32 @@ summer_mcc_pc %>%
     1998 ~ "Closed",
     2000 ~ "Open",
     2001 ~ "Mixed",
+    2002 ~ "Closed",
+    2003 ~ "Mixed",
+    2004 ~ "Open",
     TRUE ~ NA_character_)) %>% 
   ggplot() +
   geom_line(
     aes(date, vals, color = `Principal Component`),
-    linewidth = 0.4, alpha = 0.4) +
-  geom_line(
-    aes(date, vals_rollmean, color = `Principal Component`),
     linewidth = 1) +
-  geom_point(aes(date, vals, shape = gate_position), size = 2) +
-  #geom_point(aes(date, vals_rollmean, shape = gate_position), size = 2) +
+  geom_hline(yintercept = 0, linetype = 2, color = "gray20") +
+  # geom_line(
+  #   aes(date, vals_rollmean, color = `Principal Component`),
+  #   linewidth = 1) +
+  geom_point(aes(date, vals, shape = gate_position, fill = `Principal Component`), size = 4) +
+  scale_shape_manual(values = c(21,22, 23), na.translate = F) +
   rcartocolor::scale_color_carto_d() + 
+  rcartocolor::scale_fill_carto_d() + 
+  facet_wrap(~`Principal Component`, ncol = 1) +
+  guides(fill = "none") +
   labs(
     title = "Summer Surface Current PCA Timeseries",
     y = "Principal Component Value",
     x = "Date",
-    color = "5-Year Average")
+    shape = "Reported MCC Connectivity")
 
 ```
 
-
-### Validation Exercise: Pettigrew 2005 Years
-
-I need to figure out how to relate the principal components to the open/closed gate language of pettigrew 2005.
-
-Their study used 1998-2001 as the study years, and characterized strong offshore veering in 1998 and strong continuous flow in 2000.
-
-These years may be useful for characterizing the relationship between the current principal components. Here is what the current directions were like during those years:
-
-```{r}
-
-# Quick verification that directions make sense
-pettigrew_directions <-  summer_sc %>% 
-  filter(between(time, as.Date("1998-01-01"), as.Date("2001-12-31"))) %>% 
-  mutate(year = lubridate::year(time)) %>% 
-  filter(year != 1999) %>% 
-  mutate(
-    gate_position = case_match(
-      year, 
-      1998~"Gate Closed", 
-      2000~"Gate Open", 
-      2001~"Mixed")) %>% 
-  group_by(gate_position, year, lonc, latc) %>% 
-  summarise(
-    across(.cols = c(u,v), .fns = ~mean(.x, na.rm = T)),
-    .groups = "drop") %>% 
-  mutate(
-    # Radian to degree conversion
-    angle = atan2(v, u) * 180 / pi,   # Convert from radians to degrees
-    angle = if_else(angle<0, angle+360, angle),
-    speed = sqrt(u^2 + v^2),          # Compute speed (magnitude)
-    dx = u / speed * 0.05,            # Scale x-component for visualization
-    dy = v / speed * 0.05)            # Scale y-component for visualization
-
-
-
-# Map them
-ggplot(pettigrew_directions) +
-  geom_sf(data = new_england) +
-  geom_segment(
-    aes(
-      lonc, 
-      latc, 
-      xend = lonc + dx, 
-      yend = latc + dy,
-      color = angle),
-    arrow = arrow(length = unit(0.05, "cm")),
-    linewidth = 0.5) +
-  theme_classic() +
-  theme(
-    legend.position = "inside",
-    legend.position.inside = c(0.75, 0.25)) +
-  coord_sf(
-    xlim = c(-70.2, -67.1), 
-    ylim = c(43.2, 44.7), 
-    expand = F) +
-  facet_wrap(~gate_position*year, ncol = 2) +
-  scale_color_scico(
-    palette = 'romaO',
-    breaks = c(45, 90, 135, 180, 225, 270, 315, 360),
-    labels = c("NE", "N", "NW", "W", "SW", "S", "SE", "E"),
-    limits = c(0,360)) +
-  guides(color = guide_colring(
-    reverse = T, 
-    start = pi/2)) +
-  labs(
-    title = "Average Summer Surface Current Direction", 
-    subtitle = "MCC Pettigrew 2025: Gate Open/Closed/Mixed Example Years",
-    x = "Longitude", 
-    y = "Latitude",
-    color = "Current Direction")
-
-```
-
-Mapping the summertime current directions show some correspondence, but maybe not the clear 1:1 match we may have hoped for.
 
 
 ### Validation Exercise: PC Timeseries Peaks
@@ -738,6 +741,194 @@ PC2_peak_direction_maps <- peak_directions %>%
   
 ```
 
+
+### Validation Exercise: Pettigrew 2005 Years
+
+I need to figure out how to relate the principal components to the open/closed gate language of pettigrew 2005.
+
+Their study used 1998-2001 as the study years, and characterized strong offshore veering in 1998 and strong continuous flow in 2000.
+
+These years may be useful for characterizing the relationship between the current principal components. Here is what the current directions were like during those years:
+
+```{r}
+
+
+# Quick verification that directions make sense
+pettigrew_directions <-  summer_sc_expanded %>% 
+  filter(between(time, as.Date("1998-01-01"), as.Date("2001-12-31"))) %>% 
+  mutate(year = lubridate::year(time)) %>% 
+  filter(year != 1999) %>% 
+  mutate(
+    gate_position = case_match(
+      year, 
+      1998~"Gate Closed", 
+      2000~"Gate Open", 
+      2001~"Mixed")) %>% 
+  group_by(gate_position, year, lonc, latc) %>% 
+  summarise(
+    across(.cols = c(u,v), .fns = ~mean(.x, na.rm = T)),
+    .groups = "drop") %>% 
+  mutate(
+    # Radian to degree conversion
+    angle = atan2(v, u) * 180 / pi,   # Convert from radians to degrees
+    angle = if_else(angle<0, angle+360, angle),
+    speed = sqrt(u^2 + v^2),          # Compute speed (magnitude)
+    dx = u / speed * 0.05,            # Scale x-component for visualization
+    dy = v / speed * 0.05)            # Scale y-component for visualization
+
+
+
+# Map them
+ggplot(pettigrew_directions) +
+  geom_sf(data = new_england) +
+  geom_segment(
+    aes(
+      lonc, 
+      latc, 
+      xend = lonc + dx, 
+      yend = latc + dy,
+      color = angle),
+    arrow = arrow(length = unit(0.05, "cm")),
+    linewidth = 0.5) +
+  geom_sf(
+    data = mcc_turnoff_poly, 
+    fill = "transparent", color = "black",
+    linewidth = 1) +
+  theme_classic() +
+  theme(
+    legend.position = "inside",
+    legend.position.inside = c(0.75, 0.25)) +
+  # coord_sf(
+  #   xlim = c(-70.2, -67.1), 
+  #   ylim = c(43.2, 44.7), 
+  #   expand = F) +
+  coord_sf(
+    xlim = c(-71, -66), 
+    ylim = c(43, 44.7), 
+    expand = T) +
+  facet_wrap(~gate_position*year, ncol = 2) +
+  scale_color_scico(
+    palette = 'romaO',
+    breaks = c(45, 90, 135, 180, 225, 270, 315, 360),
+    labels = c("NE", "N", "NW", "W", "SW", "S", "SE", "E"),
+    limits = c(0,360)) +
+  guides(color = guide_colring(
+    reverse = T, 
+    start = pi/2)) +
+  labs(
+    title = "Average Summer Surface Current Direction", 
+    subtitle = "MCC Pettigrew 2005: Gate Open/Closed/Mixed Example Years",
+    x = "Longitude", 
+    y = "Latitude",
+    color = "Current Direction")
+
+```
+
+Mapping the summertime current directions show some correspondence, but maybe not the clear 1:1 match we may have hoped for.
+
+
+
+### Validation Exercise: Xue Years
+
+In a series of papers, Xue et al (2008 & 2010) published a series of findings on larval dispersal patterns in the Gulf of Maine using a coupled bio-physical model (Individual based model + Regional ocean circulation model).
+
+In their 2008 paper, they highlighed differential GMCC behavior in the three years 2002-2004, and reported the following current behavior (heavily paraphrasing).
+
+2002 offshore turning
+2003 mixed
+2004 along shore
+
+> The coupled biophysical model was run for the years 2002, 2003 and 2004, which offered contrasting flow conditions of the GMCC as follows: a strong discontinuity between east and west; high flow-through, or continuity from east to west; and intermediate conditions, respectively (Fig. 4).
+
+For their experiment super-particles were released on June 11th. They were allowed to move in the modeled environment, and then had their daily locations retrieved for dates between June 11th and August 10th.
+
+
+```{r}
+
+# Expanded area for maps
+july_sc_xue <- expanded_sc %>% 
+  filter(
+    month %in% c(7),
+    year %in% c(2002:2004)) %>% 
+  group_by(time = str_c(year, "-07-15"), elem, lonc, latc) %>% 
+  summarise(across(c(u,v), ~mean(.x, na.rm = T)),
+            .groups = "drop") %>% 
+  mutate(time = as.Date(time))
+
+# Quick verification that directions make sense
+#xue_directions <-  summer_sc_expanded %>% 
+  # filter(between(time, as.Date("2002-01-01"), as.Date("2004-12-31"))) %>% 
+xue_directions <- july_sc_xue %>% 
+  mutate(
+    year = year(time),
+    gate_position = case_match(
+      year, 
+      2002 ~ "Offshore Turning", 
+      2003 ~ "Mixed", 
+      2004 ~ "Along Shore Transport"),
+    gate_position = fct_reorder(gate_position, year, .fun = median)) %>% 
+  group_by(gate_position, year, lonc, latc) %>% 
+  summarise(
+    across(.cols = c(u,v), .fns = ~mean(.x, na.rm = T)),
+    .groups = "drop") %>% 
+  mutate(
+    # Radian to degree conversion
+    angle = atan2(v, u) * 180 / pi,   # Convert from radians to degrees
+    angle = if_else(angle<0, angle+360, angle),
+    speed = sqrt(u^2 + v^2),          # Compute speed (magnitude)
+    dx = u / speed * 0.05,            # Scale x-component for visualization
+    dy = v / speed * 0.05)            # Scale y-component for visualization
+
+
+summer_mcc_pc %>% 
+  filter(between(year(date), 2000, 2006)) %>% 
+  ggplot() +
+  geom_line(aes(date - months(6), vals, color = `Principal Component`)) +
+  rcartocolor::scale_color_carto_d() + 
+  labs(x = "Year")
+
+
+# Map them
+ggplot(xue_directions) +
+  geom_sf(data = new_england) +
+  geom_segment(
+    aes(
+      lonc, 
+      latc, 
+      xend = lonc + dx, 
+      yend = latc + dy,
+      color = angle),
+    arrow = arrow(length = unit(0.05, "cm")),
+    linewidth = 0.5) +
+  geom_sf(data = mcc_turnoff_poly, fill = "transparent", color = "black", linewidth = 1) +
+  theme_classic() +
+  theme(
+    legend.position = "inside",
+    legend.position.inside = c(0.75, 0.25)) +
+  # coord_sf(
+  #   xlim = c(-70.2, -67.1), 
+  #   ylim = c(43.2, 44.7), 
+  #   expand = F) +
+  coord_sf(
+    xlim = c(-71, -66), 
+    ylim = c(43, 44.7), 
+    expand = T) +
+  facet_wrap(~gate_position*year, ncol = 2) +
+  scale_color_scico(
+    palette = 'romaO',
+    breaks = c(45, 90, 135, 180, 225, 270, 315, 360),
+    labels = c("NE", "N", "NW", "W", "SW", "S", "SE", "E"),
+    limits = c(0,360)) +
+  guides(color = guide_colring(
+    reverse = T, 
+    start = pi/2)) +
+  labs(
+    title = "Average Summer Surface Current Direction", 
+    subtitle = "Xue 2008: Gate Open/Closed/Mixed Example Years",
+    x = "Longitude", 
+    y = "Latitude",
+    color = "Current Direction")
+```
 
 
 

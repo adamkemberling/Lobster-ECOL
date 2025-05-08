@@ -1,0 +1,332 @@
+---
+title: "Maine Coastal Current bslib"
+author: "Adam Kemberling"
+url: "https://github.com/adamkemberling"
+affiliation: "Gulf of Maine Research Institute"
+affiliation_url: "https://www.gmri.org"
+description: | 
+  Testing html display for MCC content
+date: "Updated on: `r Sys.Date()`"
+format: 
+  html:
+    toc: true
+    self-contained: true
+    bslib: true
+    fig-dpi: 300
+execute: 
+  echo: false
+  warning: false
+  message: false
+  comment: ""
+  fig.align: center
+---
+
+## About:
+
+This is a quick demo of creating a content card to showcase the Maine Coastal Current using a bslib:card()
+
+
+```{r}
+
+{
+  library(sf) 
+  library(fvcom) 
+  library(tidyverse)
+  library(gmRi)
+  library(patchwork)
+  library(rnaturalearth)
+  library(showtext)
+  library(ncdf4)
+  # Cyclic color palettes in scico
+  # From: https://www.fabiocrameri.ch/colourmaps/
+  library(scico)
+  library(legendry)
+}
+
+# namespace conflicts
+conflicted::conflict_prefer("select", "dplyr")
+conflicted::conflict_prefer("filter", "dplyr")
+
+
+# Set the theme
+theme_set(theme_classic() + map_theme())
+
+# Project paths
+lob_ecol_path <- cs_path("mills", "Projects/Lobster ECOL")
+fvcom_path    <- cs_path("res", "FVCOM/Lobster-ECOL")
+poly_paths    <- cs_path("mills", "Projects/Lobster ECOL/Spatial_Defs")
+
+# Shapefiles
+new_england <- ne_states("united states of america", returnclass = "sf") %>% 
+  filter(postal %in% c("VT", "ME", "RI", "MA", "CT", "NH", "NY", "MD", "VA", "NJ", "DE", "NC", "PA", "WV"))
+canada <- ne_states("canada", returnclass = "sf")
+
+# # # Support functions for FVCOM
+source(here::here("R/FVCOM_Support.R"))
+```
+
+
+```{r}
+#| label: style-sheet
+#| results: asis
+
+# Use GMRI style
+use_gmri_style_rmd()
+```
+
+
+```{r}
+#| label: fonts-config
+#| echo: false
+
+
+# Path to the directory containing the font file (replace with your actual path)
+font_dir <- paste0(system.file("stylesheets", package = "gmRi"), "/GMRI_fonts/Avenir/")
+
+# Register the font
+font_add(
+  family = "Avenir",
+  file.path(font_dir, "LTe50342.ttf"),
+  bold = file.path(font_dir, "LTe50340.ttf"),
+  italic = file.path(font_dir, "LTe50343.ttf"),
+  bolditalic = file.path(font_dir, "LTe50347.ttf"))
+
+# Load the font
+showtext::showtext_auto()
+
+```
+
+
+```{r}
+
+# Load the daily surface currents (u,v) for the expanded area
+expanded_sc <- read_csv(here::here("data/expanded_daily_surface_currents_vectors.csv"))  %>% 
+  mutate(
+    time = as.Date(time),
+    label = time,
+    year = str_sub(label, 1,4),
+    month = as.numeric(str_sub(label, 6, 7)))
+```
+
+
+```{r}
+#| label: load-daily-fvcom
+# Loading FVCOM
+
+
+# Get some file names
+fvcom_surfbot_files <- setNames(
+  list.files(fvcom_path, full.names = T, pattern = ".nc"),
+  str_remove(list.files(fvcom_path, full.names = F, pattern = ".nc"), ".nc"))
+
+# Open one
+gom3_early <- nc_open(fvcom_surfbot_files[[1]])
+
+# Get the mesh itself as a simple feature collection
+gom3_mesh <- get_mesh_geometry(gom3_early, what = 'lonlat') 
+
+```
+
+
+
+```{r}
+#| label: assemble the mcc mesh area for mapping
+
+# Turn off s2
+sf::sf_use_s2(FALSE)
+
+
+
+
+# Expanded Area?
+expanded_mcc_turnoff_coords <- tribble(
+  ~"lon", ~"lat",
+  -69.85, 42.85,      # Bottom Left
+  -70,    43.65,       # Top Left
+  -67.25, 44.5,    # Off Jonesport
+  -66.45, 43.8,    # Bottom right
+  -69.85, 42.85,    # Bottom left again
+)
+
+
+# Make it a polygon
+expanded_turnoff_poly <- st_polygon(
+  list(cbind(expanded_mcc_turnoff_coords$lon, 
+             expanded_mcc_turnoff_coords$lat))) %>% 
+  st_sfc(crs = 4326) %>% 
+  st_as_sf() %>% 
+  mutate(area = "Maine Coastal Current Region") 
+st_geometry(expanded_turnoff_poly) <- "geometry"
+
+
+
+# Project polygon
+expanded_poly_projected <- st_transform(expanded_turnoff_poly, st_crs(gom3_mesh)) 
+
+
+
+# Trim it
+expanded_studyarea_mesh <- mesh_trim(
+  mesh = gom3_mesh, 
+  domain = st_as_sf(expanded_poly_projected) )
+```
+
+
+
+#### Long-term Monthly Current Directions
+
+Before proceeding too far, here is what the average flow direction is across the domain of interest to us:
+
+```{r}
+#| label: plot current direction
+#| fig-height: 10
+
+# Quick verification that directions make sense
+average_directions <-  expanded_sc %>% 
+  mutate(period = lubridate::month(time, label = TRUE)) %>% 
+  bind_rows(mutate(expanded_sc, period = "Year Round")) %>% 
+  mutate(period = factor(period, levels = c(month.abb, "Year Round"))) %>% 
+  group_by(period, lonc, latc) %>% 
+  summarise(
+    across(.cols = c(u,v), .fns = ~mean(.x, na.rm = T))) %>% 
+  mutate(
+    # Radian to degree conversion
+    angle = atan2(v, u) * 180 / pi,   # Convert from radians to degrees
+    angle = if_else(angle<0, angle+360, angle),
+    speed = sqrt(u^2 + v^2),          # Compute speed (magnitude)
+    dx = u / speed * 0.05,            # Scale x-component for visualization
+    dy = v / speed * 0.05)            # Scale y-component for visualization
+
+
+
+# Map them
+yr_round_map <- average_directions %>% 
+  filter(period == "Year Round") %>% 
+  ggplot() +
+  geom_sf(data = new_england) +
+  geom_segment(
+    aes(lonc, latc, xend = lonc + dx, yend = latc + dy, color = angle),
+    arrow = arrow(length = unit(0.075, "cm")),
+    linewidth = 0.5) +
+  facet_wrap(~period, ncol = 4) +
+  scale_color_scico(
+    palette = 'romaO',
+    breaks = c(45, 90, 135, 180, 225, 270, 315, 360),
+    labels = c("NE", "N", "NW", "W", "SW", "S", "SE", "E"),
+    limits = c(0,360)) +
+  coord_sf(
+    xlim = c(-70.4, -66.6), 
+    ylim = c(43, 44.8), 
+    expand = T) +
+  scale_y_continuous(breaks = seq(43, 45, .5)) +
+  scale_x_continuous(breaks = seq(-71, -67, 1)) +
+  guides(color = guide_colring(
+    reverse = T, 
+    start = pi/2,
+    frame.colour = "black"), tick.color = "black") +
+  theme(
+    legend.position = "right", 
+    legend.title.position = "top", 
+    plot.background = element_rect(color = "black"), 
+    panel.background = element_rect(color = "black"),
+    text = element_text(family = "Avenir"),
+    plot.title = element_text(face = "bold")) +
+  labs(
+    x = "Longitude", 
+    y = "Latitude",
+    color = "Flow Direction of\nSurface Currents",
+    title = "Maine Coastal Current Data Exploration",
+    subtitle = "Current data from FVCOM Ocean Hindcast")
+
+
+yr_round_map
+```
+
+
+
+```{r}
+# Prep the current data
+# yearly currents, or maybe spring fall
+
+
+
+```
+
+
+
+```{r}
+# Saving the kimage to show with the card
+
+
+# showtext::showtext_opts(dpi=300)
+# ggsave(
+#   plot = mcc_map,
+#   filename = here::here("R/FVCOM_prep/card_images/mcc_map_dark.png"),
+#   dpi = 300,
+#   bg = "white",
+#   width = 5.4,
+#   height = 2.5,
+#   units = "in", scale = 2)
+```
+
+
+
+```{r}
+
+
+# 1. Content Card from shiny modules:
+setwd(here::here("R/FVCOM_prep/")) # Only need this when working in the script
+
+# Build the card to contain everything
+  card(
+
+    # Card Header Contents
+    card_header(
+      class = "bg-dark",
+      "Understanding Community Climate Trends"),
+
+    # Card Body Content
+    card_body(
+
+      # Headline text above the plot -
+      #can be swapped with textoutput to be reactive
+      markdown("CMIP6 scenario projections for the Northeastern US:"),
+
+      # This is where the focal element goes:
+      card_body(
+        p("
+          In the research presented here, we used future sea surface
+          and bottom temperature data from multiple global climate
+          models run under two scenarios reflecting low (SSP1-2.6) and
+          high greenhouse gas emissions (SSP5-8.5). A prediction
+          ensemble of many model runs was prepared for each
+          scenario."),
+          
+        p("
+          The chart below shows the projected SST for the Northeast
+          U.S. region as a whole. The breadth of uncertainty between
+          model runs can be seen in the prediction range when taking
+          the 5th and 95th percentiles of the model runs used in each 
+          ensemble."),
+        p("
+          The projected Oceanographic responses under these scenarios
+          and their uncertainties begin to diverge by mid-century
+          (2040-2069), but the differences are most apparent at the 
+          end of the century (2070-2099)."),
+
+        # Central Display - takes html:
+        card_image(file = "card_images/mcc_map_dark.png")
+
+      ) # Close cardbody
+    ), # Close cardbody
+
+    # Footer information should be a module if dynamic
+    card_footer(
+      class = "fs-6",
+      "Projected distributions not based on stock recovery status
+      or any ecological interactions.")
+  ) # Close the card
+
+```
+
+

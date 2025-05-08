@@ -21,9 +21,9 @@
 
 ### LOB-ECOL Data Processing
 
-[Maine Coastal Current Exploratory Monthly PCA](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/MaineCoastalCurrent_Exploratory_PCA.html)
+[Maine Coastal Current Exploratory Monthly PCA](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/MaineCoastalCurrent/MaineCoastalCurrent_Exploratory_PCA.html)
 
-[Maine Coastal Current Daily](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/MCC_Daily_PCA.html)
+[Maine Coastal Current Daily](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/MaineCoastalCurrent/MCC_Daily_PCA.html)
 
 [Processing Regional Daily Surface/Bottom Temperature Timeseries](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/FVCOM_Regional_Temperature_Timeseries.html)
 

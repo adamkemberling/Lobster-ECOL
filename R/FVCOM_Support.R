@@ -8,7 +8,8 @@ mesh_trim <- function(mesh, domain){
   new_mesh <- mesh %>%
     st_join(domain, join = st_within) %>% 
     drop_na() %>% 
-    dplyr::select(-all_of(names_drop)) 
+    #dplyr::select(-all_of(names_drop)) 
+    dplyr::select(elem, p1, p2, p3, geometry)
   return(new_mesh)
 }
 
