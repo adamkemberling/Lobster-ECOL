@@ -113,8 +113,8 @@ offshore_areas <- read_sf(str_c(poly_paths,"spatial_defs_2025/sne_gom_tocoast.sh
 
 # Combine them
 all_areas <- bind_rows(
-  st_transform(select(inshore_areas, area_id, geometry), st_crs(offshore_areas)), 
-  select(offshore_areas, area_id, geometry)
+  st_transform(dplyr::select(inshore_areas, area_id, geometry), st_crs(offshore_areas)), 
+  dplyr::select(offshore_areas, area_id, geometry)
 )
 
 

@@ -40,43 +40,60 @@ lob_ecol_path <- cs_path("mills", "Projects/Lobster ECOL")
 
 
 # Plot theme
-theme_set(theme_gmri())
+theme_set(theme_gmri_simple(legend.position = "bottom"))
 
 
 # Factor Levels
+
+# # Old region order
+# areas_northsouth <- c(
+#   "Eastern Maine",  
+#   "Western Maine",  
+#   "Central Maine",  
+#   "Eastern Mass",
+#   "W South Channel",
+#   "Nantucket Shoals",  
+#   "Off No Mans Land",  
+#   "Southern Mass",  
+#   "Rhode Island Shore",
+#   "Long Island Sound", 
+#   "Cholera Bank",
+#   "Off Long Island",   
+#   "New Jersey Shore",  
+#   "Barnegat Ridge",  
+#   "Five Fathom Bank",  
+#   "Virginia Shore",
+#   "GOM_GBK",         
+#   "SNE")
+
+# New areas
 areas_northsouth <- c(
-  "Eastern Maine",  
-  "Western Maine",  
-  "Central Maine",  
-  "Eastern Mass",
-  "W South Channel",
-  "Nantucket Shoals",  
-  "Off No Mans Land",  
-  "Southern Mass",  
-  "Rhode Island Shore",
-  "Long Island Sound", 
-  "Cholera Bank",
-  "Off Long Island",   
-  "New Jersey Shore",  
-  "Barnegat Ridge",  
-  "Five Fathom Bank",  
-  "Virginia Shore",
-  "GOM_GBK",         
-  "SNE")
+  "eastern maine",  
+  "central maine",  
+  "western maine",  
+  "eastern mass",
+  "southern mass",  
+  "rhode island shore",
+  "long island sound", 
+  "new jersey shore",  
+  "five fathom bank",  
+  "virginia shore",
+  "gom_gbk",         
+  "sne")
 
-area_subset <- c(
-  "Eastern Maine",
-  "Central Maine",
-  "Western Maine",
-  "Eastern Mass",
-  "Southern Mass",
-  "W South Channel",
-  "Nantucket Shoals",
-  "Off No Mans Land",
-  "GOM_GBK",
-  "SNE"
-
-)
+# area_subset <- c(
+#   "Eastern Maine",
+#   "Central Maine",
+#   "Western Maine",
+#   "Eastern Mass",
+#   "Southern Mass",
+#   "W South Channel",
+#   "Nantucket Shoals",
+#   "Off No Mans Land",
+#   "GOM_GBK",
+#   "SNE"
+# 
+# )
 ```
 
 
@@ -117,14 +134,35 @@ showtext::showtext_auto()
 
 # Load and add inshore/offshore labels on the daily data:
 
-# daily temperatures
-daily_fvcom_temps <- read_csv(
-  str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_temperatures_daily.csv")) %>% 
-  mutate(depth_type = if_else(area_id %in% c("GOM_GBK", "SNE"), "offshore", "nearshore"))
+# # daily temperatures
+# daily_fvcom_temps <- read_csv(
+#   str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_temperatures_daily.csv")) %>% 
+#   mutate(depth_type = if_else(area_id %in% c("GOM_GBK", "SNE"), "offshore", "nearshore"))
 
-# monthly salinities
+# 
+# # monthly salinities
+# monthly_fvcom_sal <- read_csv(
+#   str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_salinity_monthly_gom3.csv"))
+
+# ------- New Regions
+
+
+# Load the data for the new regions
+daily_fvcom_temps <- read_csv(
+  str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/new_regions_fvcom_temperatures_daily.csv")
+) %>% 
+  mutate(
+    depth_type = if_else(area_id %in% c("gom_gbk", "SNE"), "offshore", "nearshore"),
+    area_id = factor(area_id, levels = areas_northsouth)
+  )
+
+# Monthly Salinity
 monthly_fvcom_sal <- read_csv(
-  str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_salinity_monthly_gom3.csv"))
+  str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/new_regions_fvcom_salinity_monthly_gom3.csv")) %>% 
+  mutate(
+    depth_type = if_else(area_id %in% c("gom_gbk", "SNE"), "offshore", "nearshore"),
+    area_id = factor(area_id, levels = areas_northsouth)
+  )
 
 
 
@@ -161,9 +199,9 @@ The other additional pre-processing step is the removal of the long-term trend. 
 
 ```{r}
 # Test timeseries
-#test_area <- "Southern Mass"
-test_area <- "GOM_GBK"
+test_area <- "gom_gbk"
 tester <- filter(daily_fvcom_temps, area_id == test_area) 
+
 # Make a day of year value to cycle over
 tester <- tester %>% 
   mutate(yday = lubridate::yday(time),
@@ -181,7 +219,10 @@ ggplot(tester, aes(time)) +
   labs(y = "Temperature", title = str_c(test_area, " FVCOM Temperatures"))
 ```
 
-As expected, ocean temperatures in Southern Mass. follow a pronounced seasonal cycle.
+As expected, ocean temperatures in Gulf of Maine follow a pronounced seasonal cycle.
+
+
+For other variables like salinity, the seasonality can be less obvious. Salinity changes over the same period show more meandering at longer time scales.
 
 ```{r}
 ggplot(test_sal, aes(time)) +
@@ -193,13 +234,9 @@ ggplot(test_sal, aes(time)) +
 ```
 
 
-For other variables like salinity, the seasonality can be less obvious.
-
-
-
 ### Removing Seasonalilty
 
- We can model this periodicity to get a sense of the average temperature based on the day of the year.
+We can model this periodicity to get a sense of the average temperature based on the day of the year.
 
 
 ```{r}
@@ -234,7 +271,7 @@ p1 <- ggplot(tester, aes(x = yday)) +
   labs(color = "Data",
        y = "Bottom Temperature",
        x = "Day of Year",
-       title = str_c(test_area, " Daily SST Seasonality"))
+       title = str_c(test_area, " Daily BT Seasonality"))
 
 p2 <- tester  %>% 
   ggplot(aes(month, bottom_t)) +
@@ -247,7 +284,7 @@ p2 <- tester  %>%
   labs(color = "Data",
        y = "Bottom Temperature",
        x = "Day of Year",
-       title = str_c(test_area, " Monthly SST Seasonality"))
+       title = str_c(test_area, " Monthly BT Seasonality"))
 
 p1/p2
 ```
@@ -284,7 +321,7 @@ tester %>%
   geom_hline(yintercept = 0, aes(color = "Seasonal Mean Temeprature"), linewidth = 2, alpha = 0.75) +
   labs(
     y = "Seasonal Temperature Anomaly",
-    title = "Removal of Long-Term Monthly Mean SST")
+    title = "Removal of Long-Term Monthly Mean BT")
 
 
 
@@ -331,16 +368,22 @@ trend_tester <- broom::augment(x = tester_trend_mod) %>%
 # Plot detrended timeseries
 trend_tester %>%
   ggplot() +
-  geom_line(aes(time, bottom_t, color = "Bottom Temperature"), alpha = 0.5) +
+  geom_line(
+    aes(time, bottom_t, color = "Bottom Temperature"), 
+    alpha = 0.45) +
   geom_smooth(
     aes(time, bottom_t, color = "Bottom Temperature"),
     method = "lm", se = F) +
   geom_line(
-    aes(time, trend_resid + coef(tester_trend_mod)[[1]], color = "Trend-Removed"), alpha = 0.5) +
+    aes(time, trend_resid + coef(tester_trend_mod)[[1]], 
+        color = "Trend-Removed"), 
+    alpha = 0.65) +
+  
   geom_smooth(
     method = "lm", se = F,
     aes(time, trend_resid + coef(tester_trend_mod)[[1]], color = "Trend-Removed")) +
-  labs(title = "Detrended Daily Timeseries", color = "Data")
+  scale_color_grey(start = 0.8, end = 0.3) +
+  labs(title = "Detrending Daily Timeseries", color = "Data")
 
 
 ```
@@ -446,47 +489,47 @@ If we apply the above steps to each daily bottom temperature timeseries we can r
 #| eval: false
 #| label: bottom temperature processing
 
-# # Run them all
-# bot_temp_shifts <- daily_fvcom_temps %>%
-#   mutate(yday = lubridate::yday(time)) %>% 
-#   split(.$area_id) %>%
-#   map_dfr(function(.x){
-#     
-#     # Fit the model to detrend and remove seasons
-#     # Model a linear trend and the seasonal cycle
-#     season_trend_model <- gam(
-#       bottom_t ~ s(yday, bs = "cc") + time, 
-#       data = .x,
-#       method = "REML")
-#     
-#     # save the results
-#     preprocessed_results <- broom::augment(x = season_trend_model) %>% 
-#       rename(
-#         model_fit = .fitted,
-#         model_resid = .resid) 
-#     
-#     
-#     # Get the results from that
-#     x_rstars <- rstars(
-#       data.timeseries = as.data.frame(preprocessed_results[,c("time", "model_resid")]), 
-#       l.cutoff = 365*7,
-#       pValue = 0.05,
-#       Huber = 1,
-#       Endfunction = T,
-#       preWhitening = T,
-#       OLS = F,
-#       MPK = T,
-#       IP4 = F,
-#       SubsampleSize = (365*7 + 1)/3,
-#       returnResults = T)
-#     
-#     return(x_rstars)
-# 
-#     }, .id = "area_id")
-# 
-# 
-# # Save it
-# write_csv(bot_temp_shifts, here::here("rstars_results/lobecol_btemp_shifts_detrended.csv"))
+# Run them all
+bot_temp_shifts <- daily_fvcom_temps %>%
+  mutate(yday = lubridate::yday(time)) %>%
+  split(.$area_id) %>%
+  map_dfr(function(.x){
+
+    # Fit the model to detrend and remove seasons
+    # Model a linear trend and the seasonal cycle
+    season_trend_model <- gam(
+      bottom_t ~ s(yday, bs = "cc") + time,
+      data = .x,
+      method = "REML")
+
+    # save the results
+    preprocessed_results <- broom::augment(x = season_trend_model) %>%
+      rename(
+        model_fit = .fitted,
+        model_resid = .resid)
+
+
+    # Get the results from that
+    x_rstars <- rstars(
+      data.timeseries = as.data.frame(preprocessed_results[,c("time", "model_resid")]),
+      l.cutoff = 365*7,
+      pValue = 0.05,
+      Huber = 1,
+      Endfunction = T,
+      preWhitening = T,
+      OLS = F,
+      MPK = T,
+      IP4 = F,
+      SubsampleSize = (365*7 + 1)/3,
+      returnResults = T)
+
+    return(x_rstars)
+
+    }, .id = "area_id")
+
+
+# Save it
+write_csv(bot_temp_shifts, here::here("rstars_results/lobecol_btemp_shifts_detrended.csv"))
 ```
 
 
@@ -537,27 +580,27 @@ Repeating the process for daily sea surface temperatures gives us these RSI resu
 
 # # Run them all
 # surf_temp_shifts <- daily_fvcom_temps %>%
-#   mutate(yday = lubridate::yday(time)) %>% 
+#   mutate(yday = lubridate::yday(time)) %>%
 #   split(.$area_id) %>%
 #   map_dfr(function(.x){
-#     
+# 
 #     # Fit the model to detrend and remove seasons
 #     # Model a linear trend and the seasonal cycle
 #     season_trend_model <- gam(
-#       surface_t ~ s(yday, bs = "cc") + time, 
+#       surface_t ~ s(yday, bs = "cc") + time,
 #       data = .x,
 #       method = "REML")
-#     
+# 
 #     # save the results
-#     preprocessed_results <- broom::augment(x = season_trend_model) %>% 
+#     preprocessed_results <- broom::augment(x = season_trend_model) %>%
 #       rename(
 #         model_fit = .fitted,
-#         model_resid = .resid) 
-#     
-#     
+#         model_resid = .resid)
+# 
+# 
 #     # Get the results from that
 #     x_rstars <- rstars(
-#       data.timeseries = as.data.frame(preprocessed_results[,c("time", "model_resid")]), 
+#       data.timeseries = as.data.frame(preprocessed_results[,c("time", "model_resid")]),
 #       l.cutoff = 365*7,
 #       pValue = 0.05,
 #       Huber = 1,
@@ -568,7 +611,7 @@ Repeating the process for daily sea surface temperatures gives us these RSI resu
 #       IP4 = F,
 #       SubsampleSize = (365*7 + 1)/3,
 #       returnResults = T)
-#     
+# 
 #     return(x_rstars)
 # 
 #     }, .id = "area_id")
@@ -622,15 +665,18 @@ surf_temp_shifts %>%
 
 
 
-# Processing Monthly Means
+# Processing Monthly Timeseries Breaks
 
-Other than temperature we have very few daily environmental timeseries. We also are less interested in the time within a year that changes ocurred, and more interested in the general year/month that changes are ocurring in. 
+Other than temperature we have very few daily environmental timeseries. 
+
+We also are less interested in the time within a year that changes ocurred, and more interested in the general year/month that changes are ocurring in. 
 
 For these reasons and for consistency with the other environmental drivers, I will repeat these steps using monthly mean SSt & BT.
 
 
 
 ## Monthly Temperature RSI
+
 
 
 
@@ -644,25 +690,30 @@ For these reasons and for consistency with the other environmental drivers, I wi
 
 
 # Run the monthly versions
-
+monthly_fvcom_temps <- daily_fvcom_temps %>%
+  mutate(
+    year = lubridate::year(time),
+    month = lubridate::month(time)) %>%
+  group_by(area_id, year, month) %>%
+  summarise(
+    surface_t = mean(surface_t, na.rm = T),
+    bottom_t  = mean(bottom_t, na.rm = T),
+    .groups = "drop") %>%
+  mutate(
+    month = factor(month),
+    yr_num = as.numeric(as.character(year)),
+    time = as.Date(
+      str_c(
+        year,
+        str_pad(month, side = "left", pad = "0", width = 2),
+        "15", sep = "-")))
+# 
+# 
+# 
 # # Run them all
-# surf_temp_monthly_shifts <- daily_fvcom_temps %>%
-#   mutate(
-#     year = lubridate::year(time),
-#     month = lubridate::month(time)) %>%
+# surf_temp_monthly_shifts <- monthly_fvcom_temps %>%
 #   split(.$area_id) %>%
-#   map_dfr(function(.x){
-#     
-#     # Make it monthly
-#     .x_monthly <- .x %>% 
-#       group_by(year, month) %>% 
-#       summarise(
-#         surface_t = mean(surface_t, na.rm = T),
-#         bottom_t  = mean(bottom_t, na.rm = T),
-#         .groups = "drop") %>% 
-#       mutate(month = factor(month),
-#              yr_num = as.numeric(as.character(year)))
-#     
+#   map_dfr(function(.x_monthly){
 # 
 #     # Fit the model to detrend and remove seasons
 #     # Model a linear trend and the seasonal cycle
@@ -675,14 +726,14 @@ For these reasons and for consistency with the other environmental drivers, I wi
 #     preprocessed_results <- broom::augment(x = season_trend_model) %>%
 #       rename(
 #         model_fit = .fitted,
-#         model_resid = .resid) %>% 
+#         model_resid = .resid) %>%
 #       # Rebuild a "date" column to pass to the function
 #       mutate(time = as.Date(
 #         str_c(
-#           yr_num, 
+#           yr_num,
 #           str_pad(month, side = "left", pad = "0", width = 2),
 #           "15", sep = "-")))
-#     #return(preprocessed_results) #check 
+#     #return(preprocessed_results) #check
 # 
 # 
 #     # Get the results from that
@@ -707,23 +758,10 @@ For these reasons and for consistency with the other environmental drivers, I wi
 # 
 # 
 # #Bottom temperature
-# bot_temp_monthly_shifts <- daily_fvcom_temps %>%
-#   mutate(
-#     year = lubridate::year(time),
-#     month = lubridate::month(time)) %>%
+# bot_temp_monthly_shifts <- monthly_fvcom_temps %>%
 #   split(.$area_id) %>%
-#   map_dfr(function(.x){
-#     
-#     # Make it monthly
-#     .x_monthly <- .x %>% 
-#       group_by(year, month) %>% 
-#       summarise(
-#         surface_t = mean(surface_t, na.rm = T),
-#         bottom_t  = mean(bottom_t, na.rm = T),
-#         .groups = "drop") %>% 
-#       mutate(month = factor(month),
-#              yr_num = as.numeric(as.character(year)))
-#     
+#   map_dfr(function(.x_monthly){
+# 
 # 
 #     # Fit the model to detrend and remove seasons
 #     # Model a linear trend and the seasonal cycle
@@ -736,14 +774,14 @@ For these reasons and for consistency with the other environmental drivers, I wi
 #     preprocessed_results <- broom::augment(x = season_trend_model) %>%
 #       rename(
 #         model_fit = .fitted,
-#         model_resid = .resid) %>% 
+#         model_resid = .resid) %>%
 #       # Rebuild a "date" column to pass to the function
 #       mutate(time = as.Date(
 #         str_c(
-#           yr_num, 
+#           yr_num,
 #           str_pad(month, side = "left", pad = "0", width = 2),
 #           "15", sep = "-")))
-#     #return(preprocessed_results) #check 
+#     #return(preprocessed_results) #check
 # 
 # 
 #     # Get the results from that
@@ -794,7 +832,7 @@ surf_temp_monthly_shifts %>%
   labs(
     x = "Time",
     y = "RSI",
-    title = "Monthly Surface Temperature RSI")
+    title = "Monthly Surface Temperature Breakpoints")
 ```
 
 
@@ -833,19 +871,28 @@ bot_temp_monthly_shifts %>%
 ```{r}
 #| label: plotting the shifts in line by area
 p1 <- surf_temp_monthly_shifts %>% 
-  mutate(RSI = if_else(RSI == 0, NA, RSI),
-         RSI_col = if_else(RSI>0, "orange", "royalblue")) %>% 
-  ggplot(aes(x = time, y = area_id)) +
+  mutate(
+    area_id = factor(area_id, levels = areas_northsouth),
+    RSI = if_else(RSI == 0, NA, RSI),
+    RSI_col = if_else(RSI>0, "orange", "royalblue")) %>% #drop_na(RSI)
+  ggplot(aes(x = time, y = fct_rev(area_id))) +
   geom_point(aes(size = abs(RSI), color = I(RSI_col))) +
-  labs(title = "Monthly Surface Temperature RSI")
+  labs(
+    title = "Monthly Surface Temperature RSI",
+    size = "Regime Shift Index (abs)")
 
 
 p2 <- bot_temp_monthly_shifts %>% 
-  mutate(RSI = if_else(RSI == 0, NA, RSI),
-         RSI_col = if_else(RSI>0, "orange", "royalblue")) %>% 
-  ggplot(aes(x = time, y = area_id)) +
+  mutate(
+    area_id = factor(area_id, levels = areas_northsouth),
+    RSI = if_else(RSI == 0, NA, RSI),
+    RSI_col = if_else(RSI>0, "orange", "royalblue")) %>% 
+  #drop_na(RSI) %>% 
+  ggplot(aes(x = time, y = fct_rev(area_id))) +
   geom_point(aes(size = abs(RSI), color = I(RSI_col)))  +
-  labs(title = "Monthly Bottom Temperature RSI")
+  labs(
+    title = "Monthly Bottom Temperature RSI",
+    size = "Regime Shift Index (abs)")
 
 
 
@@ -871,58 +918,35 @@ bot_temp_monthly_shifts %>% filter(RSI>0)
 
 # Summarise them and put them together
 dst <- surf_temp_shifts %>% filter(RSI != 0) %>% 
-  mutate(
-    shift_direction = if_else(RSI>0, "Shift to Warm", "Shift to Cool"),   
-    var = "daily surface temperature") %>% 
-  dplyr::select(area_id, time, RSI, shift_direction, var)
+  mutate(var = "daily surface temperature") %>% 
+  dplyr::select(area_id, time, RSI, var)
 dbt <- surf_temp_shifts %>% filter(RSI != 0) %>% 
-  mutate(
-    shift_direction = if_else(RSI>0, "Shift to Warm", "Shift to Cool"),   
-    var = "daily bottom temperature") %>% 
-  dplyr::select(area_id, time, RSI, shift_direction, var)
+  mutate(var = "daily bottom temperature") %>% 
+  dplyr::select(area_id, time, RSI, var)
 mst <- surf_temp_monthly_shifts %>% filter(RSI != 0) %>% 
-  mutate(
-    shift_direction = if_else(RSI>0, "Shift to Warm", "Shift to Cool"),   
-    var = "monthly surface temperature") %>% 
-  dplyr::select(area_id, time, RSI, shift_direction, var)
+  mutate(var = "monthly surface temperature") %>% 
+  dplyr::select(area_id, time, RSI, var)
 mbt <- bot_temp_monthly_shifts %>% filter(RSI != 0) %>% 
-  mutate(
-    shift_direction = if_else(RSI>0, "Shift to Warm", "Shift to Cool"),   
-    var = "monthly bottom temperature") %>% 
-  dplyr::select(area_id, time, RSI, shift_direction, var)
+  mutate(var = "monthly bottom temperature") %>% 
+  dplyr::select(area_id, time, RSI, var)
 
 
 # Combine results for plotting
 stars_results_summ <- bind_rows(list(dst, dbt, mst, mbt)) %>% 
-  mutate(area_id = factor(area_id, levels = areas_northsouth),
-         year = year(time))
-
-
-# # Cold Regimes, Monthly
-# stars_results_summ %>% filter(RSI<0, str_detect(var, "monthly")) %>% count(year(time))
-# # Warm Regimes, Monthly
-# stars_results_summ %>% filter(RSI>0, str_detect(var, "monthly")) %>% count(year(time))
+  mutate(
+    shift_direction = if_else(RSI>0, "Shift to Warm", "Shift to Cool"), 
+    area_id = factor(area_id, levels = areas_northsouth),
+    year = year(time))
 ```
+
+
+### Plotting Temperature Shifts
+
 
 ```{r}
 
-# Get Monthly temperatures
-temps_monthly <- daily_fvcom_temps %>%
-  mutate(
-    year = lubridate::year(time),
-    month = lubridate::month(time)) %>% 
-  group_by(area_id, year, month) %>% 
-  summarise(
-    surface_t = mean(surface_t, na.rm = T),
-    bottom_t = mean(bottom_t, na.rm = T),
-    .groups = "drop") %>% 
-  mutate(
-    area_id = factor(area_id, levels = areas_northsouth),
-    time = as.Date(
-      str_c(
-        year,
-        str_pad(month, side = "left", pad = "0", width = 2),
-        "15", sep = "-"))) %>% 
+# Get Monthly temperatures in long form
+temps_monthly_long <- monthly_fvcom_temps %>%
   rename(
     `monthly surface temperature` = surface_t,
     `monthly bottom temperature` = bottom_t) %>% 
@@ -930,129 +954,51 @@ temps_monthly <- daily_fvcom_temps %>%
     names_to = "var", 
     values_to = "temperature", cols = ends_with("temperature"))
 
-# Pivot daily
-temps_daily <- daily_fvcom_temps %>% 
-  rename(
-    `daily surface temperature` = surface_t,
-    `daily bottom temperature` = bottom_t) %>% 
-  pivot_longer(
-    names_to = "var", 
-    values_to = "temperature", 
-    cols = ends_with("temperature")) %>% 
-  mutate(area_id = factor(area_id, levels = areas_northsouth))
-
 
 
 # Plot the breaks over the
 deg_c <- "\u00b0C"
 ggplot() +
-  # geom_line(
-  #   data = temps_daily,
-  #   aes(time, temperature),
-  #   linewidth = 0.2, alpha = 0.5) +
   geom_line(
-    data = temps_monthly,
-    # data = filter(temps_monthly, area_id %in% area_subset),
+    data = temps_monthly_long,
     aes(time, temperature),
     linewidth = 0.2, alpha = 0.5) +
-  geom_vline(
-    data = filter(stars_results_summ, str_detect(var, "monthly")),
-    # data = filter(stars_results_summ,
-    #               area_id %in% area_subset,
-    #               str_detect(var, "monthly")),
-    aes(
-      xintercept = time,
-      color = shift_direction),
-    linewidth = 1.5) +
+  # Add a vertical line using geom_segment with an arrow
+  geom_segment(
+    data = filter(
+      stars_results_summ, 
+      str_detect(var, "monthly"),
+      str_detect(shift_direction, "Warm")),
+    linewidth = 0.8,
+    aes(x = time, xend = time, y = -Inf, , yend = Inf, 
+        color = shift_direction),  
+    arrow = arrow(length = unit(0.3, "cm"), ends = "last")) +
+  geom_segment(
+    data = filter(
+      stars_results_summ, 
+      str_detect(var, "monthly"),
+      !str_detect(shift_direction, "Warm")),
+    linewidth = 0.8,
+    aes(x = time, xend = time, y = -Inf, , yend = Inf, 
+        color = shift_direction),  
+    arrow = arrow(length = unit(0.3, "cm"), ends = "first")) +
   scale_color_gmri() +
-  scale_y_continuous(labels = scales::label_number(suffix = deg_c)) +
-  facet_grid(area_id~var, labeller = label_wrap_gen()) +
+  scale_y_continuous(
+    labels = scales::label_number(suffix = deg_c)) +
+  facet_grid(
+    area_id~var, 
+    labeller = label_wrap_gen(),
+    scales = "free") +
   theme(
     legend.position = "bottom",
     strip.text.y = element_text(angle = 0)) + 
-  labs(color = "",
-       y = "Temperature",
-       title = "STARS Regime Shifts from FVCOM Temperatures")
+  labs(
+    title = "FVCOM Hindcast Temperatures",
+    subtitle = "STARS Regime Shift Testing",
+    y = "Temperature",
+    color = "")
 
 ```
-
-
-
-
-## Days In/Out Temperature Preferences
-
-Things we were thinking about
-
-days over 20 is too high for
-12 degrees is the magic number for larvae
-
-Metabolism/Stress at 18C
-
-
-```{r}
-
-
-# The degday functions were built with the ability to model daily cycles
-# the sine and triangle methods accomodate this
-# since we only have daily data the simple average is probably the way to do it
-thresh_low <- 10
-thresh_up  <- 18
-lobecol_dd <- daily_fvcom_temps %>%
-  group_by(area_id) %>% 
-  mutate(
-    opt_btemp_dd = dd_calc(
-      daily_min = bottom_t, 
-      daily_max = bottom_t, 
-      thresh_low = thresh_low, 
-      thresh_up = thresh_up, 
-      method = "simp_avg"),
-    opt_btemp  = if_else(between(bottom_t, 10,18), 1, 0),
-    stress_btemp  = if_else(bottom_t > 18, 1, NA),
-    cold_btemp  = if_else(bottom_t < 10, 1, NA))
-
-
-lobecol_dd %>% 
-  mutate(year = lubridate::year(time)) %>% 
-  group_by(area_id, year) %>% 
-  summarise(
-    across(
-      ends_with("temp"), 
-      ~sum(.x, na.rm = T)),
-    .groups = "drop") %>% 
-  pivot_longer(
-    cols = ends_with("temp"), 
-    names_to = "var", 
-    values_to = "totals") %>% 
-  filter(area_id %in% area_subset) %>% 
-  mutate(area_id = factor(area_id, levels = areas_northsouth),
-         var = case_when(
-           var == "opt_btemp" ~ "Preferred Bottom Temperatures 10-18C", 
-           var == "stress_btemp" ~ "Heat Stress Conditions >18C",
-           var == "cold_btemp" ~ "Below Preferred Conditions <10C")) %>% 
-  ggplot() +
-  geom_col(aes(year, y = totals, fill = var), 
-           color = "white", width = 1, linewidth = 0.1) + 
-  #geom_hline(yintercept = 366/2, color = "gray20", linetype = 3) +
-  facet_grid(area_id~.) +
-  scale_x_continuous(expand = expansion(add = c(0.15,0.15))) +
-  scale_fill_manual(values = c("lightblue",  "#ea4f12", "#057872")) +
-  theme(strip.text.y = element_text(angle = 0),
-      legend.position = "bottom") +
-  guides(fill = guide_legend(
-    nrow = 2, 
-    title.position = "top",
-    title.hjust = 0.5))+
-  labs(y = "Days in Range",
-       fill = "Daily Temperature Conditions", color = "",
-       title = "FVCOM Bottom Temperature Suitability")
-
-
-
-```
-
-
-
-
 
 
 ## Monthly Salinity
@@ -1061,6 +1007,7 @@ lobecol_dd %>%
 
 ```{r}
 #| label: process monthly salinity regimes
+#| eval: false
 
 # Take the input data,
 # Get monthly averages
@@ -1131,7 +1078,7 @@ lobecol_dd %>%
 # 
 # 
 # 
-# #Bottom temperature
+# #Bottom Salinity
 # bot_sal_monthly_shifts <- monthly_fvcom_sal %>%
 #   mutate(
 #     year = lubridate::year(time),
@@ -1162,7 +1109,7 @@ lobecol_dd %>%
 #       rename(
 #         model_fit = .fitted,
 #         model_resid = .resid) %>%
-#       
+# 
 #       # Rebuild a "date" column to pass to the function
 #       mutate(time = as.Date(
 #         str_c(
@@ -1208,31 +1155,27 @@ lobecol_dd %>%
 ```{r}
 mss <- surf_sal_monthly_shifts %>% 
   filter(RSI != 0) %>% 
-  mutate(
-    shift_direction = if_else(RSI>0, "Shift to Salt", "Shift to Fresh"),   
-    var = "surface salinity") %>% 
-  dplyr::select(area_id, time, RSI, shift_direction, var)
+  mutate(var = "surface salinity") %>% 
+  dplyr::select(area_id, time, RSI, var)
 
 mbs <- bot_sal_monthly_shifts %>% 
   filter(RSI != 0) %>% 
-  mutate(
-    shift_direction = if_else(
-      RSI > 0, "Shift to Salt", "Shift to Fresh"),   
-    var = "bottom salinity") %>% 
-  dplyr::select(area_id, time, RSI, shift_direction, var)
+  mutate(var = "bottom salinity") %>% 
+  dplyr::select(area_id, time, RSI, var)
 
 
 # Combine results for plotting
 sal_results_summ <- bind_rows(list(mss, mbs)) %>% 
-  mutate(area_id = factor(area_id, levels = areas_northsouth),
-         year = year(time))
+  mutate(
+    shift_direction = if_else(RSI > 0, "Shift to Salt", "Shift to Fresh"),
+    area_id = factor(area_id, levels = areas_northsouth),
+    year = year(time))
+```
 
 
-
-
-
+```{r}
 # Plot the breaks over the
-monthly_fvcom_sal %>% 
+monthly_fvcom_sal  %>% 
   pivot_longer(
     cols = ends_with("salinity"), 
     names_to = "var", values_to = "salinity") %>% 
@@ -1242,12 +1185,22 @@ monthly_fvcom_sal %>%
   geom_line(
     aes(time, salinity),
     linewidth = 0.2, alpha = 0.5) +
-  geom_vline(
-    data = sal_results_summ,
-    aes(
-      xintercept = time,
-      color = shift_direction),
-    linewidth = 1.5) +
+  geom_segment(
+    data = filter(
+      sal_results_summ, 
+      str_detect(shift_direction, "Salt")),
+    linewidth = 0.8,
+    aes(x = time, xend = time, y = -Inf, , yend = Inf, 
+        color = shift_direction),  
+    arrow = arrow(length = unit(0.3, "cm"), ends = "last")) +
+  geom_segment(
+    data = filter(
+      sal_results_summ, 
+      !str_detect(shift_direction, "Salt")),
+    linewidth = 0.8,
+    aes(x = time, xend = time, y = -Inf, , yend = Inf, 
+        color = shift_direction),  
+    arrow = arrow(length = unit(0.3, "cm"), ends = "first")) +
   scale_color_gmri() +
   facet_grid(area_id~var, labeller = label_wrap_gen(), scales = "free") +
   theme(
@@ -1261,10 +1214,83 @@ monthly_fvcom_sal %>%
 
 
 
+
+
+
+
+## Days In/Out Temperature Preferences
+
+Things we were thinking about
+
+days over 20 is too high for
+12 degrees is the magic number for larvae
+
+Metabolism/Stress at 18C
+
+
+```{r}
+
+
+# The degday functions were built with the ability to model daily cycles
+# the sine and triangle methods accomodate this
+# since we only have daily data the simple average is probably the way to do it
+thresh_low <- 10
+thresh_up  <- 18
+lobecol_dd <- daily_fvcom_temps %>%
+  group_by(area_id) %>% 
+  mutate(
+    opt_btemp_dd = dd_calc(
+      daily_min = bottom_t, 
+      daily_max = bottom_t, 
+      thresh_low = thresh_low, 
+      thresh_up = thresh_up, 
+      method = "simp_avg"),
+    opt_btemp  = if_else(between(bottom_t, 10,18), 1, 0),
+    stress_btemp  = if_else(bottom_t > 18, 1, NA),
+    cold_btemp  = if_else(bottom_t < 10, 1, NA))
+
+
+lobecol_dd %>% 
+  mutate(year = lubridate::year(time)) %>% 
+  group_by(area_id, year) %>% 
+  summarise(
+    across(
+      ends_with("temp"), 
+      ~sum(.x, na.rm = T)),
+    .groups = "drop") %>% 
+  pivot_longer(
+    cols = ends_with("temp"), 
+    names_to = "var", 
+    values_to = "totals") %>% 
+  mutate(area_id = factor(area_id, levels = areas_northsouth),
+         var = case_when(
+           var == "opt_btemp" ~ "Preferred Bottom Temperatures 10-18C", 
+           var == "stress_btemp" ~ "Heat Stress Conditions >18C",
+           var == "cold_btemp" ~ "Below Preferred Conditions <10C")) %>% 
+  ggplot() +
+  geom_col(aes(year, y = totals, fill = var), 
+           color = "white", width = 1, linewidth = 0.1) + 
+   facet_grid(area_id~.) +
+  scale_x_continuous(expand = expansion(add = c(0.15,0.15))) +
+  scale_fill_manual(values = c("lightblue",  "#ea4f12", "#057872")) +
+  theme(strip.text.y = element_text(angle = 0),
+      legend.position = "bottom") +
+  guides(fill = guide_legend(
+    nrow = 3, 
+    title.position = "top",
+    title.hjust = 0.5))+
+  labs(y = "Days in Range",
+       fill = "Daily Temperature Conditions", color = "",
+       title = "FVCOM Bottom Temperature Suitability")
+
+
+
+```
+
+
 # Other Environmental Features
 
 In addition to temperature, we have the additional environmental covariates as well.
-
 
 
 ```{r}
@@ -1273,13 +1299,9 @@ In addition to temperature, we have the additional environmental covariates as w
 
 list(
   "PPD" = ecodata::chl_pp,
-  "Z" = ecodata::chl_pp,
-)
-```
+  "Z" = ecodata::chl_pp)
 
 
-
-```{r}
 ecodata::plot_nao()
 ecodata::plot_gsi()
 ```

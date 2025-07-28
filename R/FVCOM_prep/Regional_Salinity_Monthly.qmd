@@ -120,6 +120,7 @@ test_url <- str_c(box_fvcom, "gom3_monthly_mean_", test_yr, test_mnth, ".nc")
 # Open Connection
 gom3_x <- nc_open(test_url)
 ncvar_get(gom3_x, "Times")
+
 # ncvar_get(gom3_x, "siglay")[,45] # Bottom Layer
 # ncvar_get(gom3_x, "siglev")[,46] # Bottom Level
 

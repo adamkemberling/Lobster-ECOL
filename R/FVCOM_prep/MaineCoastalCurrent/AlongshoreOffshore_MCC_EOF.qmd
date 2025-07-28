@@ -131,34 +131,37 @@ Our area of interest for continuous flow characteristics between the Eastern and
 With special interest on this current behavior's impact on lobster larval transport, we've segmented the region along the coast using lobster management areas.
 
 
+```{r}
+# Load the polygon for the Maine Coastal Current
+# mcc_turnoff_poly <- read_sf(str_c(poly_paths, "spatial_defs_2025/MCC_turnoff_lobzones.shp")) %>% 
+mcc_turnoff_poly <- read_sf(str_c(poly_paths, "spatial_defs_2025/MCC_turnoff_area_poly_small.shp")) %>% 
+  mutate(area_id = "Maine Coastal Current Region") 
+
+
+```
 
 
 ```{r}
+#| label: mcc expanded area polygon
 
-# Load the polygon for the Maine Coastal Current
-mcc_turnoff_poly <- read_sf(str_c(poly_paths, "spatial_defs_2025/MCC_turnoff_lobzones.shp"))
+# #Original Area
+# mcc_turnoff_coords <- tribble(
+#   ~"lon", ~"lat",
+#   -69.34, 43.21,   # Bottom Left
+#   -69.78, 43.62,   # Off Popham
+#   -67.45, 44.34,   # Off Jonesport
+#   -67.4, 43.8,     # Bottom right
+#   -69.34, 43.21,   # Bottom left again
+# )
+# 
+# # Make it a polygon
+# mcc_turnoff_poly <- st_polygon(list(cbind(mcc_turnoff_coords$lon, mcc_turnoff_coords$lat))) %>% 
+#   st_sfc(crs = 4326) %>% 
+#   st_as_sf() %>% 
+#   mutate(area = "Maine Coastal Current Region") 
+# st_geometry(mcc_turnoff_poly) <- "geometry"
 
-#Original Area
-mcc_turnoff_coords <- tribble(
-  ~"lon", ~"lat",
-  -69.34, 43.21,   # Bottom Left
-  -69.78, 43.62,   # Off Popham
-  -67.45, 44.34,   # Off Jonesport
-  -67.4, 43.8,     # Bottom right
-  -69.34, 43.21,   # Bottom left again
-)
-
-# Make it a polygon
-mcc_turnoff_poly <- st_polygon(list(cbind(mcc_turnoff_coords$lon, mcc_turnoff_coords$lat))) %>% 
-  st_sfc(crs = 4326) %>% 
-  st_as_sf() %>% 
-  mutate(area = "Maine Coastal Current Region") 
-st_geometry(mcc_turnoff_poly) <- "geometry"
-
-
-
-
-# # Expanded Area?
+# # Expanded Area? Just for plotting a larger area
 # expanded_mcc_turnoff_coords <- tribble(
 #   ~"lon", ~"lat",
 #   -69.85, 42.85,      # Bottom Left
@@ -185,28 +188,35 @@ Using that boundary we can clip the FVCOM mesh and obtain the indices to use for
 ```{r}
 #| label: Trim Mesh to MCC area
 
+#sf::sf_use_s2(TRUE)
 # Turn off s2
 sf::sf_use_s2(FALSE)
 
 # Project polygon
-poly_projected <- st_transform(mcc_turnoff_poly, st_crs(gom3_mesh)) 
-expanded_poly_projected <- st_transform(expanded_turnoff_poly, st_crs(gom3_mesh)) 
-
+poly_projected <- st_transform(
+  mcc_turnoff_poly, 
+  st_crs(gom3_mesh)) 
 
 
 # Trim them
 mcc_studyarea_mesh <- mesh_trim(
   mesh = gom3_mesh, 
-  domain = st_as_sf(poly_projected) )
+  domain = st_as_sf(poly_projected))
+
+# # Confirm we didn't mess things up
+# ggplot(mcc_studyarea_mesh) + geom_sf() +
+#   geom_sf(data = poly_projected, fill = "orange", alpha = 0.3)
 ```
 
 
 ```{r}
 
-# Run the expanded mesh
-expanded_studyarea_mesh <- mesh_trim(
-  mesh = gom3_mesh, 
-  domain = st_as_sf(expanded_poly_projected) )
+# # Run the expanded mesh
+# expanded_poly_projected <- st_transform(expanded_turnoff_poly, st_crs(gom3_mesh)) 
+# 
+# expanded_studyarea_mesh <- mesh_trim(
+#   mesh = gom3_mesh, 
+#   domain = st_as_sf(expanded_poly_projected) )
 ```
 
 
@@ -215,7 +225,7 @@ expanded_studyarea_mesh <- mesh_trim(
 ggplot() +
   geom_sf(data = new_england) +
   geom_sf(data = canada) +
-  geom_sf(data = expanded_studyarea_mesh, color = "gray80", alpha = 0.4) +
+  # geom_sf(data = expanded_studyarea_mesh, color = "gray80", alpha = 0.4) +
   geom_sf(data = mcc_studyarea_mesh, color = "black", alpha = 0.6) +
   geom_sf(data = mcc_turnoff_poly, fill = "orange", alpha = 0.4) +
   theme_classic() +
@@ -263,6 +273,7 @@ The following functions aid in the extraction of this data from the NetCDF filed
 
 
 This first function is a utility function for indexing data for a set of indices out of the results returned from `ncdf4::ncvar_get()`.
+
 ```{r}
 #' @title Extract Netcdf Data with Index List
 #' 
@@ -299,13 +310,14 @@ subset_nc_var <- function(nc_array, index_list) {
   
   return(extracted_data)
 }
+
+
 ```
 
 This second function will assemble a timeseries for `u` & `v` variables from a Netcdf file given the path to the file, and the indexing information (list of integer values for centroids we want the data for).
 
 ```{r}
 #| label: subset daily currents within MCC area
-
 
 # Function to grab each of them for a netcdf connection:
 # Loop through daily surfbot files and pull values for the proper nodes
@@ -442,8 +454,9 @@ daily_mcc_sc <- read_csv(here::here("data/daily_mcc_surface_currents_vectors.csv
 
 
 # Plot the velocities for an element as a check
+first_elem <- daily_mcc_sc$elem[[1]]
 daily_mcc_sc %>% 
-  filter(elem == 48733) %>% 
+  filter(elem == 49867) %>% 
   filter(between(time, as.Date("1978-01-01"), as.Date("2019-12-31"))) %>% 
   ggplot() +
   geom_line(aes(time, u, color = "Eastward Velocity (u)"), alpha = 0.5) +
@@ -451,9 +464,9 @@ daily_mcc_sc %>%
   scale_x_date(limits = c(as.Date("2016-01-01"), as.Date("2019-12-31"))) +
   rcartocolor::scale_color_carto_d() +
   labs(
-    title = "Confirming Daily Records",
+    title = "Confirming Daily Records for Single Mesh Element",
     y = "Directional Velocity",
-    subtitle = "centroid index: 48733",
+    subtitle = str_c("Element (centroid) index #", first_elem),
     color = "Direction:")
 
 
@@ -516,6 +529,8 @@ ggplot(average_directions) +
 
 
 ## Re-Orienting Currents to Alongshore and Offshore Axes
+
+For interpretation of flow characteristics relative to our interest in alongshore flow connectivity between EMCC & WMCC it make
 
 
 ```{r}

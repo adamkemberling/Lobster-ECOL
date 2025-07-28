@@ -352,9 +352,6 @@ pts_with_nearnodes <- pts_assigned %>%
 
 
 
-
-
-
 # Method 1: - Triangulation with Linear Interpolation
 
 The following approach follows code shared by Dr. Siqi Li with UMASS Dartmouth:

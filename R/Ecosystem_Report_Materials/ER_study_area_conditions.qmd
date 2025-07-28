@@ -282,7 +282,7 @@ ggplot() +
 gom4_path <- cs_path("res", "FVCOM/monthly_means/gom4_mon_means")
 gom4_base <- "gom4_monthly_mean_temp_"
 gom4_file <- str_c(gom4_path, gom4_base, "201808.nc")
-gom4_x <- nc_open(gom5_file)
+gom4_x <- nc_open(gom4_file)
 
 
 gom5_path <- cs_path("res", "FVCOM/monthly_means/gom5_mon_means")
