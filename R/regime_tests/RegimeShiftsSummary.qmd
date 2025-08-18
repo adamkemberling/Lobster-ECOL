@@ -13,7 +13,7 @@ execute:
   echo: true
   warning: false
   message: false
-  fig.align: "center"
+  fig.align: center
   comment: ""
 ---
 
@@ -53,6 +53,7 @@ lob_ecol_path <- cs_path("mills", "Projects/Lobster ECOL")
 fvcom_path    <- cs_path("res", "FVCOM/Lobster-ECOL")
 poly_paths    <- cs_path("mills", "Projects/Lobster ECOL/Spatial_Defs")
 
+
 # Shapefiles
 new_england <- ne_states("united states of america", returnclass = "sf") %>% 
   filter(postal %in% c("VT", "ME", "RI", "MA", "CT", "NH", "NY", "MD", "VA", "NJ", "DE", "NC", "PA", "WV"))
@@ -62,28 +63,30 @@ canada <- ne_states("canada", returnclass = "sf")
 source(here::here("R/FVCOM_Support.R"))
 
 
-# Factor Levels
+
+# New areas factor levels
 areas_northsouth <- c(
-  "Eastern Maine",  
-  "Western Maine",  
-  "Central Maine",  
-  "Eastern Mass",
-  "W South Channel",
-  "Nantucket Shoals",  
-  "Off No Mans Land",  
-  "Southern Mass",  
-  "Rhode Island Shore",
-  "Long Island Sound", 
-  "Cholera Bank",
-  "Off Long Island",   
-  "New Jersey Shore",  
-  "Barnegat Ridge",  
-  "Five Fathom Bank",  
-  "Virginia Shore",
-  "GOM_GBK",         
-  "SNE")
+  "eastern maine",  
+  "central maine",  
+  "western maine",  
+  "eastern mass",
+  "southern mass",  
+  "rhode island shore",
+  "long island sound", 
+  "new jersey shore",  
+  "five fathom bank",  
+  "virginia shore",
+  "gom_gbk",         
+  "sne")
 ```
 
+```{r}
+#| label: style-sheet
+#| results: asis
+
+# Use GMRI style
+use_gmri_style_rmd()
+```
 
 ```{r}
 #| label: load shapes
@@ -95,6 +98,7 @@ proj_path <- cs_path("mills", "Projects/Lobster ECOL")
 poly_paths <- cs_path("mills", "Projects/Lobster ECOL/Spatial_Defs")
 
 # Load inshore areas
+# 12nm from shore, aggregates of statistical zones
 inshore_areas <- map(
   setNames(
     list.files(str_c(poly_paths, "inshore_areas"), full.names = T),
@@ -121,16 +125,6 @@ study_regions <- bind_rows(
 
 ```
 
-
-```{r}
-#| label: style-sheet
-#| results: asis
-
-# Use GMRI style
-use_gmri_style_rmd()
-```
-
-
 ```{r}
 #| label: fonts-config
 #| echo: false
@@ -156,7 +150,7 @@ showtext::showtext_auto()
 
 This markdown reviews the various rstars regime shift results which were produced separately. I will begin at the largest geographic scales and work down to local timeseries:
 
-Regime shifts for individual timeseries were tested using the STARS methodology. Any daily timeseries (temperature and salinity from ocean reanalysis models) were aggregated to a monthly temporal resolution, and any trends and seasonal cycles were removed. 
+Regime shifts for individual timeseries were tested using the STARS methodology. Any daily timeseries (temperature and salinity from ocean reanalysis models) were aggregated to a monthly temporal resolution, and any trends and seasonal cycles were removed.
 
 The Marriott, Pope and Kendall (MPK) "pre-whitening" routine was used within the {rstars} algorithm to remove "red noise" (autoregressive processes, typically AR1) from the timeseries.
 
@@ -165,10 +159,10 @@ For more details on trend removal and pre-whitening methods see Rodionov 2006.
 ## Shelf-Scale Shifts
 
 There are 2-3 climate and oceanographic timeseries that operate at the broad regional scale of the Northeast shelf. These are:
- 
- 1. The Gulf Stream Index (a metric indicating the North/South position of the Gulf Stream) based on SSH
- 2. The Northeast Channel Slopewater Proportions (the percentage of various water masses at the 150-200m depth entering GOM, using NERACOOS buoy data)
- 3. The North Atlantic Oscillation (atmospheric pressure differential between icelandic low and the Azores High)
+
+1.  The Gulf Stream Index (a metric indicating the North/South position of the Gulf Stream) based on SSH
+2.  The Northeast Channel Slopewater Proportions (the percentage of various water masses at the 150-200m depth entering GOM, using NERACOOS buoy data)
+3.  The North Atlantic Oscillation (atmospheric pressure differential between icelandic low and the Azores High)
 
 These three indices affect conditions over large spatial scales and and are likely to either directly or indirectly impact more local scale changes.
 
@@ -231,9 +225,6 @@ shelf_indices_detrended <- shelf_indices %>%
 
 
 
-
-
-
 # Plot the residuals from the trend
 ggplot(shelf_indices_detrended, aes(Time, trend_resid, color = Var)) + 
   geom_line(linewidth = 0.6, alpha = 0.8) + 
@@ -243,7 +234,6 @@ ggplot(shelf_indices_detrended, aes(Time, trend_resid, color = Var)) +
 ```
 
 Bacause the slopewater proportion contains NA values, we cannot evaluate it for breaks unless we impute missing values somehow or take a subset of time that is uninterrupted.
-
 
 ```{r}
 # Stirnimann used these values in their paper:
@@ -256,7 +246,6 @@ Bacause the slopewater proportion contains NA values, we cannot evaluate it for 
 source(here::here("rstars-master","rSTARS.R"))
 
 ```
-
 
 ```{r}
 
@@ -301,8 +290,6 @@ shelf_indices_rstars <- shelf_indices_detrended %>%
   )
 
 ```
-
-
 
 The results can be seen below:
 
@@ -355,14 +342,16 @@ shelf_shift_points %>%
   gt::tab_header(title = "Shelf-Scale Breaks")
 ```
 
+## EPU-Scale Ecodata Indices
 
+For the EPU-scale metrics we have a number of indices available from the `ecodata` package:
 
-## EPU-Scale Shifts
+1.  The cold-pool index
+2.  The Northeast Channel Slopewater Proportion (from NERACOOS Buoy N)
+3.  Metrics of primary production and zooplankton community
+4.  Temperature and salinity timeseries specific to each area
 
-For the EPU-scale metrics we have the cold-pool index, the Northeast Channel Slopewater Proportion (from NERACOOS Buoy N), as well as metrics of primary production and zooplankton community. We also have temperature and salinity timeseries specific to each area. 
-
-Temperature and salinity is from either GLORYS or FVCOM, primary productivity is satellite derived (OC-CCI, SeaWiFS, MODIS-Aqua), , and the zooplankton community indices are from the Gulf of Maine CPR transect.
-
+Temperature and salinity is from either GLORYS or FVCOM, primary productivity is satellite derived (OC-CCI, SeaWiFS, MODIS-Aqua), and the zooplankton community indices are from the Gulf of Maine CPR transect.
 
 ```{r}
 # # There are a ton here. We want primary productivity / chlor a, and maybe anomalies
@@ -431,6 +420,9 @@ ggplot(epu_indices, aes(Time, Value, color = Var)) +
 
 ```
 
+### Detrend Ecodata
+
+Most of these indicators are
 
 ```{r}
 #| fig.height: 6
@@ -481,8 +473,6 @@ ggplot(epu_indices_detrended, aes(Time, trend_resid, color = Var)) +
 
 
 ```
-
-
 
 ```{r}
 # Run rstars for those, temperature and salinity are done
@@ -579,22 +569,19 @@ epu_shift_points %>%
   group_by(Var) %>% 
   arrange(Time, EPU) %>% 
   gt::gt() %>% 
-  gt::tab_header(title = "EPU Scale Breaks")
+  gt::tab_header(title = "Ecodata EPU Scale Breakpoints")
 ```
-
 
 ### EPU Temperature and Salinity
 
 Temperature and salinity changes were done separately, here are their results
 
-
 ```{r}
 # Load Temperature and Salinity, Pull out the EPU scale timeseries
 
-
 # # Save them
 surf_sal_monthly_shifts <- read_csv(here::here("rstars_results/lobecol_ssal_monthly_shifts_detrended.csv")) %>% 
-  mutate(Var = "Surface Salinity") 
+    mutate(Var = "Surface Salinity") 
 bot_sal_monthly_shifts <- read_csv(here::here("rstars_results/lobecol_bsal_monthly_shifts_detrended.csv"))  %>% 
   mutate(Var = "Bottom Salinity")
 surf_temp_monthly_shifts <- read_csv(here::here("rstars_results/lobecol_stemp_monthly_shifts_detrended.csv"))  %>% 
@@ -609,8 +596,8 @@ tempsal <- bind_rows(list(surf_sal_monthly_shifts, bot_sal_monthly_shifts, surf_
           RSI < 0 ~ "Shift Down",
           TRUE ~ NA),
          area_id = factor(area_id, levels = areas_northsouth))
-offshore_tempsal <- tempsal %>% filter(area_id %in% c("GOM_GBK", "SNE"))
-inshore_tempsal <- tempsal %>% filter(area_id %in% c("GOM_GBK", "SNE") == FALSE)
+offshore_tempsal <- tempsal %>% filter(area_id %in% tolower(c("GOM_GBK", "SNE")))
+inshore_tempsal <- tempsal %>% filter(area_id %in% tolower(c("GOM_GBK", "SNE")) == FALSE)
 
 
 # Pull the shift points
@@ -621,7 +608,6 @@ inshore_tempsal_shifts <- inshore_tempsal %>%
   filter(RSI != 0) %>% 
   dplyr::select(time, Var, area_id, shift_direction)
 ```
-
 
 ```{r}
 #| fig.height: 5
@@ -659,7 +645,6 @@ ggplot() +
        subtitle = "STARS Regime Shifts")
 ```
 
-
 A change in SNE salinity appears to have occured around 1992.
 
 Surface temperatures fell in SNE around 2002, but they rose again in 2011 along with GOM+GBK the same year.
@@ -672,10 +657,9 @@ offshore_tempsal_shifts %>%
   gt::tab_header(title = "EPU Scale Temp+Sal Breaks")
 ```
 
-
-
 ### CPR Community PCA Index
 
+Work by Andy Pershing helped develop an understanding that the Gulf of Mane's zooplankton community in a given year is often one of two groups with different life history and size characteristics. There is a large copepod community, of which Calanus finmarchicus (a large bodied, lipid rich species) is prominent, and a second community which is composed of smaller-bodied and more opportunistic zooplankton species. These two communities compete for the same prey resources, and are typically out of phase with one-another. A principal component analysis using the continuous plankton recorded data has been used as a proxy for which community is dominant each year.
 
 ```{r}
 # From Pershing & Kemberling
@@ -694,7 +678,7 @@ cpr_community <- read_csv(here::here("local_data", "cpr_focal_pca_timeseries_per
 
 ```
 
-
+Taking PCA timeseries as proxies for those communities and evaluating them for breakpoints gives the following results.
 
 ```{r}
 # Run breakpoints in CPR PCA
@@ -745,7 +729,6 @@ cpr_indices_rstars <- cpr_community %>%
 
 ```
 
-
 ```{r}
 
 # Summarise the breakpoint locations
@@ -785,12 +768,7 @@ ggplot() +
        subtitle = "STARS Regime Shifts")
 ```
 
-
-
-
-
 ### ECOMON Community PCA Index
-
 
 ```{r}
 # Abundance per 100m3 for different taxa
@@ -809,7 +787,6 @@ ecomon_zoo %>%
 # Para and Pseaudocalana are split
 # Euph also has a Euph1
 ```
-
 
 ### Large and Small Copepod Index
 
@@ -839,9 +816,6 @@ ggplot(zoo_lg_small, aes(Time, small_large_index)) +
   
 ```
 
-
-
-
 ```{r}
 #| label: zooplankton, not used
 
@@ -857,19 +831,15 @@ ggplot(zoo_lg_small, aes(Time, small_large_index)) +
 
 ```
 
-
-
 ### NEEDS: MCC & Lobster Predator Indices
 
 There are two EPU-Scale indices that we need to develop. This is the MCC index, and a lobster predator abundance index.
 
 The Gulf of Maine Coastal Current plays an important role in transporting lobster larva and their recruitment form year-to-year. The degree of "connected-ness" of the Western and Eastern portions of this current have been used in the past to inform expectations of lobster recruitment.
 
-
 ## Local/Nearshore Shifts
 
-
-###  Temperature and Salinity
+### Temperature and Salinity
 
 ```{r}
 #| fig.height: 8
@@ -905,8 +875,6 @@ ggplot() +
        subtitle = "STARS Regime Shifts")
 ```
 
-
-
 ```{r}
 
 ggplot() +
@@ -923,8 +891,6 @@ ggplot() +
   coord_sf(xlim = c(-78, -66), ylim = c(35.5, 45)) +
   labs(title = "Affected Areas")
 ```
-
-
 
 ```{r}
 #| fig.height: 8
@@ -960,7 +926,6 @@ ggplot() +
        subtitle = "STARS Regime Shifts")
 ```
 
-
 ```{r}
 ggplot() +
   geom_sf(data = filter(
@@ -976,8 +941,6 @@ ggplot() +
   coord_sf(xlim = c(-78, -66), ylim = c(35.5, 45)) +
   labs(title = "Affected Areas")
 ```
-
-
 
 ```{r}
 inshore_tempsal_shifts %>% 
@@ -996,7 +959,6 @@ inshore_tempsal_shifts %>%
   gt::gt() %>% 
   gt::tab_header(title = "Inshore Scale Temp+Sal Breaks")
 ```
-
 
 ### Days in Key Temperature Ranges
 
@@ -1069,8 +1031,6 @@ dd_monthly %>%
        title = "FVCOM Bottom Temperature Degree-Days")
 ```
 
-
-
 ```{r}
 # Do annual, Monthly values looked insane
 dd_annual <- dd_monthly %>%
@@ -1097,8 +1057,6 @@ dd_annual %>%
        fill = "Daily Temperature Conditions", color = "",
        title = "FVCOM Bottom Temperature Degree-Days")
 ```
-
-
 
 ```{r}
 # # Remove monthly averages, and trends
@@ -1142,7 +1100,6 @@ dd_annual_detrended %>%
   labs(title = "EPU Scale Ocean/Climate Metrics - Detrended")
 ```
 
-
 ```{r}
 # Run the regime shift test
 temp_range_rstars <- dd_annual_detrended %>%
@@ -1183,7 +1140,6 @@ temp_range_rstars <- dd_annual_detrended %>%
   mutate(area_id = factor(area_id, levels = areas_northsouth))
 
 ```
-
 
 ### Temperature Suitability Shifts
 
@@ -1241,8 +1197,6 @@ temp_suit_shift_points %>%
 
 And restricted to these areas
 
-
-
 ```{r}
 ggplot() +
   geom_sf(data = filter(
@@ -1256,8 +1210,4 @@ ggplot() +
   labs(title = "Affected Areas")
 ```
 
-
-
-
 ## Summary Figures
-
