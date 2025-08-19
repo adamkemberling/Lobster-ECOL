@@ -31,6 +31,7 @@ execute:
   # From: https://www.fabiocrameri.ch/colourmaps/
   library(scico)
   library(legendry)
+  library(ggh4x)
 }
 
 # namespace conflicts
@@ -39,8 +40,7 @@ conflicted::conflict_prefer("filter", "dplyr")
 
 
 # Set the theme
-theme_set(
-  theme_gmri() +
+theme_set(theme_gmri_simple() +
     theme(strip.text.y = element_text(angle = 0),
           legend.position = "bottom", 
           legend.title.position = "top", 
@@ -97,22 +97,22 @@ proj_path <- cs_path("mills", "Projects/Lobster ECOL")
 # Load Shapefiles for inshore/offshore
 poly_paths <- cs_path("mills", "Projects/Lobster ECOL/Spatial_Defs")
 
+
+
 # Load inshore areas
 # 12nm from shore, aggregates of statistical zones
-inshore_areas <- map(
+inshore_areas <- map_dfr(
   setNames(
     list.files(str_c(poly_paths, "inshore_areas"), full.names = T),
     str_remove(list.files(str_c(poly_paths, "inshore_areas")), ".geojson")),
-  function(x){read_sf(x)}
-) %>% 
-  bind_rows()
+  function(x){read_sf(x)}) 
 
-offshore_areas <- map(
+offshore_areas <- map_dfr(
   setNames(
     list.files(str_c(poly_paths, "offshore_areas"), full.names = T),
     str_remove(list.files(str_c(poly_paths, "offshore_areas")), ".geojson")),
   function(x){read_sf(x)}
-) %>% bind_rows() %>% 
+) %>% 
   mutate(SHORT_NAME = Region) 
 
 # st_crs(offshore_areas)
@@ -123,7 +123,40 @@ study_regions <- bind_rows(
   st_transform(inshore_areas, crs = st_crs(4269)),
   offshore_areas)
 
+
+
+
+# NEW Areas
+
+
+
 ```
+
+```{r}
+
+# clusters of statistical areas that align loosely with geography and management areas
+inshore_areas <- read_sf(str_c(poly_paths,"spatial_defs_2025/12nm_poly_statarea_merge.shp")) %>% 
+  janitor::clean_names() %>% 
+  mutate(
+    area_type = "nearshore-coastal",
+    area_id = tolower(short_name))
+
+# ecological production units
+offshore_areas <- read_sf(str_c(poly_paths,"spatial_defs_2025/sne_gom_tocoast.shp"))  %>% 
+  janitor::clean_names() %>% 
+  mutate(
+    area_type = "offshore-regional",
+    area_id = tolower(region))
+
+# Combine them
+study_regions <- bind_rows(
+  st_transform(dplyr::select(inshore_areas, area_id, geometry), st_crs(offshore_areas)), 
+  dplyr::select(offshore_areas, area_id, geometry)
+)
+
+```
+
+
 
 ```{r}
 #| label: fonts-config
@@ -303,12 +336,23 @@ shelf_shift_points <- shelf_indices_rstars %>%
 
 # Plot the breaks over the monthly data
 ggplot() +
-   geom_vline(
-    data = shelf_shift_points,
-    aes(
-      xintercept = Time,
-      color = shift_direction),
-    linewidth = 1.5) +
+  # Add a vertical line using geom_segment with an arrow
+  geom_segment(
+    data = filter(
+      shelf_shift_points, 
+      str_detect(shift_direction, "Up")),
+    linewidth = 0.8,
+    aes(x = Time, xend = Time, y = -Inf, , yend = Inf, 
+        color = shift_direction),  
+    arrow = arrow(length = unit(0.3, "cm"), ends = "last")) +
+  geom_segment(
+    data = filter(
+      shelf_shift_points, 
+      !str_detect(shift_direction, "Up")),
+    linewidth = 0.8,
+    aes(x = Time, xend = Time, y = -Inf, , yend = Inf, 
+        color = shift_direction),  
+    arrow = arrow(length = unit(0.3, "cm"), ends = "first")) +
   geom_line(
     data = shelf_indices_rstars,
     aes(Time, Value),
@@ -402,7 +446,7 @@ epu_indices <- bind_rows(annual_chl_pp, slopewater, cold_pool) %>%
 
 
 # Plot them
-ggplot(epu_indices, aes(Time, Value, color = Var)) +
+ggplot(epu_indices, aes(Time, Value)) +
   geom_line(linewidth = 0.6, alpha = 0.8) +
   facet_grid(Var * EPU ~ ., scales = "free", labeller = label_wrap_gen(width= 8)) +
   guides(color = guide_legend(nrow = 3)) +
@@ -414,15 +458,16 @@ ggplot(epu_indices, aes(Time, Value, color = Var)) +
      limits = as.Date(c("1970-01-01", "2020-01-01")),
     labels = scales::label_date_short()) +
   guides(color = guide_legend(nrow = 2)) +
-  labs(title = "EPU Scale Ocean/Ecological Metrics")
+  labs(title = "EPU Scale Ocean/Ecological Metrics - Raw")
 
   
 
 ```
 
-### Detrend Ecodata
+### Detrending Ecodata Indicators
 
-Most of these indicators are
+Most of these indicators have data at the monthly time-scale. To aid in regime change detection long-term year over year changes have been removed.
+
 
 ```{r}
 #| fig.height: 6
@@ -457,7 +502,7 @@ epu_indices_detrended <- epu_indices %>%
 
 
 # Plot detrended
-ggplot(epu_indices_detrended, aes(Time, trend_resid, color = Var)) + 
+ggplot(epu_indices_detrended, aes(Time, trend_resid)) + 
   geom_line(linewidth = 0.6, alpha = 0.8) + 
   facet_grid(EPU * Var ~ ., scales = "free", labeller = label_wrap_gen(width= 8)) +
   guides(color = guide_legend(nrow = 3)) +
@@ -473,6 +518,9 @@ ggplot(epu_indices_detrended, aes(Time, trend_resid, color = Var)) +
 
 
 ```
+
+Once detrended, they can be checked for signs of a regime change.
+
 
 ```{r}
 # Run rstars for those, temperature and salinity are done
@@ -521,7 +569,7 @@ epu_indices_rstars <- epu_indices_detrended %>%
 
 ### Primary Production and Cold-Pool Dynamics
 
-The results can be seen below:
+The results from the STARS algorithm can be seen below:
 
 ```{r}
 
@@ -562,7 +610,7 @@ ggplot() +
        subtitle = "STARS Regime Shifts")
 ```
 
-Based on these results, we see no breakpoints in either primary production or the cold pool index.
+Based on these results, we see no breakpoints in primary production or the cold pool indices.
 
 ```{r}
 epu_shift_points %>% 
@@ -572,25 +620,34 @@ epu_shift_points %>%
   gt::tab_header(title = "Ecodata EPU Scale Breakpoints")
 ```
 
-### EPU Temperature and Salinity
+### EPU/Offshore Temperature and Salinity
 
 Temperature and salinity changes were done separately, here are their results
 
 ```{r}
 # Load Temperature and Salinity, Pull out the EPU scale timeseries
 
-# # Save them
-surf_sal_monthly_shifts <- read_csv(here::here("rstars_results/lobecol_ssal_monthly_shifts_detrended.csv")) %>% 
-    mutate(Var = "Surface Salinity") 
-bot_sal_monthly_shifts <- read_csv(here::here("rstars_results/lobecol_bsal_monthly_shifts_detrended.csv"))  %>% 
-  mutate(Var = "Bottom Salinity")
-surf_temp_monthly_shifts <- read_csv(here::here("rstars_results/lobecol_stemp_monthly_shifts_detrended.csv"))  %>% 
-  mutate(Var = "Surface Temperature") 
-bot_temp_monthly_shifts <- read_csv(here::here("rstars_results/lobecol_btemp_monthly_shifts_detrended.csv"))  %>% 
-  mutate(Var = "Bottom Temperature") 
+# Load the regime shift results from STARS_FVCOM.qmd
+surf_sal_monthly_shifts <- read_csv(
+  here::here("rstars_results/lobecol_ssal_monthly_shifts_detrended.csv")) %>% 
+  mutate(Var = "Surface Salinity") %>% 
+  rename(detrended_vals = ssal_model_resid) 
+bot_sal_monthly_shifts <- read_csv(
+  here::here("rstars_results/lobecol_bsal_monthly_shifts_detrended.csv"))  %>% 
+  mutate(Var = "Bottom Salinity") %>% 
+  rename(detrended_vals = bsal_model_resid)
+surf_temp_monthly_shifts <- read_csv(
+  here::here("rstars_results/lobecol_stemp_monthly_shifts_detrended.csv"))  %>% 
+  mutate(Var = "Surface Temperature") %>% 
+  rename(detrended_vals = stemp_model_resid)
+bot_temp_monthly_shifts <- read_csv(
+  here::here("rstars_results/lobecol_btemp_monthly_shifts_detrended.csv"))  %>% 
+  mutate(Var = "Bottom Temperature") %>% 
+  rename(detrended_vals = btemp_model_resid)
 
 # Put them together
-tempsal <- bind_rows(list(surf_sal_monthly_shifts, bot_sal_monthly_shifts, surf_temp_monthly_shifts, bot_temp_monthly_shifts)) %>% 
+tempsal <- bind_rows(
+  list(surf_sal_monthly_shifts, bot_sal_monthly_shifts, surf_temp_monthly_shifts, bot_temp_monthly_shifts)) %>%
   mutate(shift_direction = case_when(
           RSI > 0 ~ "Shift Up", 
           RSI < 0 ~ "Shift Down",
@@ -601,6 +658,7 @@ inshore_tempsal <- tempsal %>% filter(area_id %in% tolower(c("GOM_GBK", "SNE")) 
 
 
 # Pull the shift points
+tempsal_shifts <- tempsal %>% filter(RSI != 0)
 offshore_tempsal_shifts <- offshore_tempsal %>% 
   filter(RSI != 0) %>% 
   dplyr::select(time, Var, area_id, shift_direction)
@@ -616,18 +674,30 @@ inshore_tempsal_shifts <- inshore_tempsal %>%
 
 # Plot the breaks over the monthly data
 ggplot() +
-   geom_vline(
-    data = offshore_tempsal_shifts,
-    aes(
-      xintercept = time,
-      color = shift_direction),
-    linewidth = 1.5) +
+   # Add a vertical line using geom_segment with an arrow
+  geom_segment(
+    data = filter(
+      offshore_tempsal_shifts, 
+      str_detect(shift_direction, "Up")),
+    linewidth = 0.8,
+    aes(x = time, xend = time, y = -Inf, yend = Inf, 
+        color = shift_direction),  
+    arrow = arrow(length = unit(0.3, "cm"), ends = "last")) +
+  geom_segment(
+    data = filter(
+      offshore_tempsal_shifts, 
+      !str_detect(shift_direction, "Up")),
+    linewidth = 0.8,
+    aes(x = time, xend = time, y = -Inf, yend = Inf, 
+        color = shift_direction),  
+    arrow = arrow(length = unit(0.3, "cm"), 
+                  ends = "first")) +
   geom_line(
     data = offshore_tempsal,
-     aes(time, model_resid),
+     aes(time, detrended_vals),
     linewidth = 0.4, alpha = 0.5) +
   scale_color_gmri() +
-  facet_grid(area_id * Var~., labeller = label_wrap_gen(width = 8), scales = "free") +
+  facet_nested(area_id * Var~., labeller = label_wrap_gen(width = 8), scales = "free") +
   scale_x_date(
     breaks = seq.Date(
       from = as.Date("1950-01-01"),
@@ -750,7 +820,7 @@ ggplot() +
      aes(time, trend_resid),
     linewidth = 0.4, alpha = 0.5) +
   scale_color_gmri() +
-  facet_grid(EPU ~ Var, labeller = label_wrap_gen(width = 8), scales = "free") +
+  facet_grid(Var ~ EPU, labeller = label_wrap_gen(width = 8), scales = "free") +
   scale_x_date(
     breaks = seq.Date(
       from = as.Date("1950-01-01"),
@@ -839,22 +909,34 @@ The Gulf of Maine Coastal Current plays an important role in transporting lobste
 
 ## Local/Nearshore Shifts
 
-### Temperature and Salinity
+### Temperature and Salinity Breaks
 
 ```{r}
 #| fig.height: 8
 
 # Plot the breaks over the monthly data
 ggplot() +
-   geom_vline(
-    data = filter(inshore_tempsal_shifts, str_detect(Var, "Salinity")),
-    aes(
-      xintercept = time,
-      color = shift_direction),
-    linewidth = 1.5) +
+   # Add a vertical line using geom_segment with an arrow
+  geom_segment(
+    data = filter(
+      inshore_tempsal_shifts, 
+      str_detect(shift_direction, "Up")),
+    linewidth = 0.8,
+    aes(x = time, xend = time, y = -Inf, yend = Inf, 
+        color = shift_direction),  
+    arrow = arrow(length = unit(0.3, "cm"), ends = "last")) +
+  geom_segment(
+    data = filter(
+      inshore_tempsal_shifts, 
+      !str_detect(shift_direction, "Up")),
+    linewidth = 0.8,
+    aes(x = time, xend = time, y = -Inf, yend = Inf, 
+        color = shift_direction),  
+    arrow = arrow(length = unit(0.3, "cm"), 
+                  ends = "first")) +
   geom_line(
-    data = filter(inshore_tempsal, str_detect(Var, "Salinity")),
-     aes(time, model_resid),
+    data = filter(inshore_tempsal),
+     aes(time, detrended_vals),
     linewidth = 0.4, alpha = 0.5) +
   scale_color_gmri() +
   facet_grid(area_id~Var, labeller = label_wrap_gen(width = 8), scales = "free") +
@@ -875,37 +957,36 @@ ggplot() +
        subtitle = "STARS Regime Shifts")
 ```
 
-```{r}
-
-ggplot() +
-  geom_sf(data = filter(
-    study_regions, 
-    SHORT_NAME %in% 
-      (dplyr::filter(inshore_tempsal_shifts, str_detect(Var, "Salinity")) %>% 
-      pull(area_id))
-    ),
-    fill = gmri_cols("gmri blue"), alpha = 0.4) +
-  geom_sf(data = new_england) +
-  geom_sf(data = canada) +
-  
-  coord_sf(xlim = c(-78, -66), ylim = c(35.5, 45)) +
-  labs(title = "Affected Areas")
-```
+#### Salinity 
 
 ```{r}
 #| fig.height: 8
 
 # Plot the breaks over the monthly data
 ggplot() +
-   geom_vline(
-    data = filter(inshore_tempsal_shifts, !str_detect(Var, "Salinity")),
-    aes(
-      xintercept = time,
-      color = shift_direction),
-    linewidth = 1.5) +
+   # Add a vertical line using geom_segment with an arrow
+  geom_segment(
+    data = filter(
+      inshore_tempsal_shifts,
+      str_detect(Var, "Salinity"),
+      str_detect(shift_direction, "Up")),
+    linewidth = 0.8,
+    aes(x = time, xend = time, y = -Inf, yend = Inf, 
+        color = shift_direction),  
+    arrow = arrow(length = unit(0.3, "cm"), ends = "last")) +
+  geom_segment(
+    data = filter(
+      inshore_tempsal_shifts, 
+      str_detect(Var, "Salinity"),
+      !str_detect(shift_direction, "Up")),
+    linewidth = 0.8,
+    aes(x = time, xend = time, y = -Inf, yend = Inf, 
+        color = shift_direction),  
+    arrow = arrow(length = unit(0.3, "cm"), 
+                  ends = "first")) +
   geom_line(
-    data = filter(inshore_tempsal, !str_detect(Var, "Salinity")),
-     aes(time, model_resid),
+    data = filter(inshore_tempsal, str_detect(Var, "Salinity")),
+     aes(time, detrended_vals),
     linewidth = 0.4, alpha = 0.5) +
   scale_color_gmri() +
   facet_grid(area_id~Var, labeller = label_wrap_gen(width = 8), scales = "free") +
@@ -920,9 +1001,89 @@ ggplot() +
     legend.position = "bottom",
     strip.text.y = element_text(angle = 0)) + 
   labs(color = "",
-       y = "Measurement",
+       y = "Salinity Anomaly",
        x = "Date",
-       title = "FVCOM Inshore Scale Temperature Metrics",
+       title = "FVCOM Hindcast Inshore Salinity",
+       subtitle = "STARS Regime Shifts")
+```
+
+
+
+```{r}
+inshore_tempsal_shifts %>% 
+  filter(str_detect(Var, "Salinity")) %>% 
+  group_by(Var) %>% 
+  arrange(time, area_id) %>% 
+  gt::gt() %>% 
+  gt::tab_header(title = "Inshore Salinity Regime Breaks")
+```
+
+```{r}
+# Highlight whichever regions have seen salinity regime change
+ggplot() +
+  geom_sf(data = filter(
+    study_regions, 
+    area_id %in% 
+      (dplyr::filter(tempsal_shifts, str_detect(Var, "Salinity")) %>% 
+      pull(area_id))
+    ),
+    fill = gmri_cols("gmri blue"), alpha = 0.4) +
+  geom_sf(data = new_england) +
+  geom_sf(data = canada) +
+  
+  coord_sf(xlim = c(-78, -66), ylim = c(35.5, 45)) +
+  labs(title = "Salinity Regime Change Affected Areas")
+```
+
+
+
+#### Temperatures
+
+```{r}
+#| fig.height: 8
+
+# Plot the breaks over the monthly data
+ggplot() +
+   # Add a vertical line using geom_segment with an arrow
+  geom_segment(
+    data = filter(
+      inshore_tempsal_shifts,
+      !str_detect(Var, "Salinity"),
+      str_detect(shift_direction, "Up")),
+    linewidth = 0.8,
+    aes(x = time, xend = time, y = -Inf, yend = Inf, 
+        color = shift_direction),  
+    arrow = arrow(length = unit(0.3, "cm"), ends = "last")) +
+  geom_segment(
+    data = filter(
+      inshore_tempsal_shifts, 
+      !str_detect(Var, "Salinity"),
+      !str_detect(shift_direction, "Up")),
+    linewidth = 0.8,
+    aes(x = time, xend = time, y = -Inf, yend = Inf, 
+        color = shift_direction),  
+    arrow = arrow(length = unit(0.3, "cm"), 
+                  ends = "first")) +
+  geom_line(
+    data = filter(inshore_tempsal, !str_detect(Var, "Salinity")),
+     aes(time, detrended_vals),
+    linewidth = 0.4, alpha = 0.5) +
+  scale_color_gmri() +
+  facet_grid(area_id~Var, labeller = label_wrap_gen(width = 8), scales = "free") +
+  scale_x_date(
+    breaks = seq.Date(
+      from = as.Date("1950-01-01"),
+      to = as.Date("2020-01-01") ,
+      by = "10 year"),
+     limits = as.Date(c("1978-01-01", "2020-01-01")),
+    labels = scales::label_date_short()) +
+  theme(
+    legend.position = "bottom",
+    strip.text.y = element_text(angle = 0)) + 
+  labs(color = "",
+       y = "Temperature Anomaly",
+       x = "Date",
+       title = "FVCOM Hindcast Inshore Temperature",
        subtitle = "STARS Regime Shifts")
 ```
 
@@ -930,7 +1091,7 @@ ggplot() +
 ggplot() +
   geom_sf(data = filter(
     study_regions, 
-    SHORT_NAME %in% 
+    area_id %in% 
       (dplyr::filter(inshore_tempsal_shifts, !str_detect(Var, "Salinity")) %>% 
       pull(area_id))
     ),
@@ -939,16 +1100,7 @@ ggplot() +
   geom_sf(data = canada) +
   
   coord_sf(xlim = c(-78, -66), ylim = c(35.5, 45)) +
-  labs(title = "Affected Areas")
-```
-
-```{r}
-inshore_tempsal_shifts %>% 
-  filter(str_detect(Var, "Salinity")) %>% 
-  group_by(Var) %>% 
-  arrange(time, area_id) %>% 
-  gt::gt() %>% 
-  gt::tab_header(title = "Inshore Scale Temp+Sal Breaks")
+  labs(title = "Inshore Temperature Regime Shift Affected Areas")
 ```
 
 ```{r}
@@ -957,7 +1109,7 @@ inshore_tempsal_shifts %>%
   group_by(Var) %>% 
   arrange(time, area_id) %>% 
   gt::gt() %>% 
-  gt::tab_header(title = "Inshore Scale Temp+Sal Breaks")
+  gt::tab_header(title = "Inshore Scale Temperature Regime Breaks")
 ```
 
 ### Days in Key Temperature Ranges
@@ -967,9 +1119,24 @@ In addition to breaks in absolute temperatures, there is interest in the amount 
 These use daily bottom temperatures:
 
 ```{r}
+# Load the data for the new regions
 daily_fvcom_temps <- read_csv(
-  str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/all_regions_fvcom_temperatures_daily.csv")) %>% 
-  mutate(depth_type = if_else(area_id %in% c("GOM_GBK", "SNE"), "offshore", "nearshore"))
+  str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/new_regions_fvcom_temperatures_daily.csv")
+) %>% 
+  mutate(
+    depth_type = if_else(area_id %in% c("gom_gbk", "SNE"), "offshore", "nearshore"),
+    area_id = factor(area_id, levels = areas_northsouth)
+  )
+
+# # Monthly Salinity
+# monthly_fvcom_sal <- read_csv(
+#   str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/new_regions_fvcom_salinity_monthly_gom3.csv")) %>% 
+#   mutate(
+#     depth_type = if_else(area_id %in% c("gom_gbk", "SNE"), "offshore", "nearshore"),
+#     area_id = factor(area_id, levels = areas_northsouth)
+#   )
+
+
 
 
 # The degday functions were built with the ability to model daily cycles
@@ -1007,35 +1174,13 @@ dd_monthly <- daily_fvcom_temps %>%
       "cold_btemp" ~ "Below Preferred Conditions <10C")
   )
 
-# Plot them
-dd_monthly %>%
-  filter(area_id %in% c("GOM_GBK", "SNE")) %>%
-  ggplot() +
-  geom_point(
-    aes(time, y = totals, color = var),
-    linewidth = 0.6) +
-  geom_smooth(
-    aes(time, y = totals, color = var),
-    method = "loess") +
-  scale_color_manual(values = c("lightblue",  "#ea4f12", "#057872")) +
-  facet_grid(area_id~.) +
-  
-  theme(strip.text.y = element_text(angle = 0),
-      legend.position = "bottom") +
-  guides(fill = guide_legend(
-    nrow = 2,
-    title.position = "top",
-    title.hjust = 0.5))+
-  labs(y = "Days in Range",
-       fill = "Daily Temperature Conditions", color = "",
-       title = "FVCOM Bottom Temperature Degree-Days")
 ```
 
 ```{r}
 # Do annual, Monthly values looked insane
-dd_annual <- dd_monthly %>%
+dd_annual <- dd_monthly %>% 
   group_by(year, area_id, var) %>% 
-  summarise(across(totals, mean)) %>%
+  summarise(across(totals, sum)) %>%
   mutate(var_area = str_c(var, area_id, sep = "X"),
          time = as.Date(str_c(year, "-01-01")))
 
@@ -1045,8 +1190,8 @@ dd_annual %>%
   geom_area(
     aes(year, y = totals, fill = var)) +
   scale_fill_manual(values = c("lightblue",  "#ea4f12", "#057872")) +
-  facet_grid(area_id~.) +
-  
+  facet_grid(area_id~var) +
+  scale_x_continuous(expand = expansion(add = c(0,0))) +
   theme(strip.text.y = element_text(angle = 0),
       legend.position = "bottom") +
   guides(fill = guide_legend(
@@ -1069,8 +1214,6 @@ dd_annual_detrended <-  dd_annual  %>%
       arrange(year) %>%
       mutate(yr_num = as.numeric(year))
 
-    # annual trend
-    # trend_mod <- lm(totals ~ yr_num, data = .x)
 
     # annual trend + monthly average
     trend_mod <- lm(totals ~ yr_num, data = .x)
@@ -1090,17 +1233,24 @@ dd_annual_detrended <-  dd_annual  %>%
 
 # Plot
 dd_annual_detrended %>% 
-  filter(area_id %in% c("GOM_GBK", "SNE")) %>%
-  ggplot(aes(time, trend_resid, color = var)) +
-  geom_point() +
+  filter(area_id %in% tolower(c("GOM_GBK", "SNE"))) %>%
+  ggplot(aes(time, trend_resid, fill = var, color = var)) +
+  geom_col() +
   geom_smooth(method = "loess", linewidth = 0.6) +
   scale_color_manual(values = c("lightblue",  "#ea4f12", "#057872")) +
-  facet_grid(area_id ~ ., scales = "free", labeller = label_wrap_gen(width= 8)) +
+  scale_fill_manual(values = c("lightblue",  "#ea4f12", "#057872")) +
+  facet_grid(area_id~var, scales = "free", labeller = label_wrap_gen(width= 8)) +
   guides(color = guide_legend(nrow = 3)) +
-  labs(title = "EPU Scale Ocean/Climate Metrics - Detrended")
+  labs(title = "EPU Scale Ocean/Climate Metrics - Detrended",
+       y = "Departure from Long-Term Trend (days)")
+
 ```
 
+
+
 ```{r}
+
+
 # Run the regime shift test
 temp_range_rstars <- dd_annual_detrended %>%
 # temp_range_rstars <-   dd_annual %>% 
@@ -1115,7 +1265,6 @@ temp_range_rstars <- dd_annual_detrended %>%
     x_rstars <- rstars(
       data.timeseries = as.data.frame(
         .x[,c("time", "trend_resid")]),
-        # .x[,c("time", "totals")]),
       l.cutoff = cutoff_length,
       pValue = 0.05,
       Huber = 1,
@@ -1156,12 +1305,23 @@ temp_suit_shift_points <- temp_range_rstars %>%
 
 # Plot the breaks over the monthly data
 ggplot() +
-   geom_vline(
-    data = temp_suit_shift_points,
-    aes(
-      xintercept = time,
-      color = shift_direction),
-    linewidth = 1.5) +
+  # Add a vertical line using geom_segment with an arrow
+  geom_segment(
+    data = filter(
+      temp_suit_shift_points, 
+      str_detect(shift_direction, "Up")),
+    linewidth = 0.8,
+    aes(x = time, xend = time, y = -Inf, , yend = Inf, 
+        color = shift_direction),  
+    arrow = arrow(length = unit(0.3, "cm"), ends = "last")) +
+  geom_segment(
+    data = filter(
+      temp_suit_shift_points, 
+      !str_detect(shift_direction, "Up")),
+    linewidth = 0.8,
+    aes(x = time, xend = time, y = -Inf, , yend = Inf, 
+        color = shift_direction),  
+    arrow = arrow(length = unit(0.3, "cm"), ends = "first")) +
   geom_line(
     data = temp_range_rstars,
      aes(time, Value),
@@ -1201,7 +1361,7 @@ And restricted to these areas
 ggplot() +
   geom_sf(data = filter(
     study_regions, 
-    SHORT_NAME %in% temp_suit_shift_points$area_id),
+    area_id %in% temp_suit_shift_points$area_id),
     fill = gmri_cols("lv orange"), alpha = 0.4) +
   geom_sf(data = new_england) +
   geom_sf(data = canada) +
@@ -1210,4 +1370,7 @@ ggplot() +
   labs(title = "Affected Areas")
 ```
 
-## Summary Figures
+## Summary Figures / Tables
+
+
+
