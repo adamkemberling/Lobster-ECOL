@@ -107,6 +107,10 @@ daily_fvcom_temps <- read_csv(
   str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/new_regions_fvcom_temperatures_daily.csv")
 ) %>% 
   mutate(
+    yday = lubridate::yday(time),
+    year = lubridate::year(time),
+    month = lubridate::month(time),
+    month_lab = factor(month.abb[month(time)], levels = month.abb), 
     depth_type = if_else(area_id %in% c("gom_gbk", "SNE"), "offshore", "nearshore"),
     area_id = factor(area_id, levels = areas_northsouth)
   )
@@ -115,6 +119,8 @@ daily_fvcom_temps <- read_csv(
 monthly_fvcom_sal <- read_csv(
   str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/new_regions_fvcom_salinity_monthly_gom3.csv")) %>% 
   mutate(
+    month = lubridate::month(time),
+    month_lab = factor(month.abb[month(time)], levels = month.abb),
     depth_type = if_else(area_id %in% c("gom_gbk", "SNE"), "offshore", "nearshore"),
     area_id = factor(area_id, levels = areas_northsouth)
   )
@@ -155,15 +161,8 @@ To illustrate these pre-processing steps, a daily bottome temperature timeseries
 ```{r}
 # Test timeseries
 test_area <- "gom_gbk"
-tester <- filter(daily_fvcom_temps, area_id == test_area) 
-
-# Make a day of year value to cycle over
-tester <- tester %>% 
-  mutate(yday = lubridate::yday(time),
-         year = year(time),
-         month = factor(month.abb[month(time)], levels = month.abb))
-test_sal <- filter(monthly_fvcom_sal, area_id == test_area) %>% 
-  mutate(month = factor(month.abb[month(time)], levels = month.abb))
+tester   <- filter(daily_fvcom_temps, area_id == test_area) 
+test_sal <- filter(monthly_fvcom_sal, area_id == test_area) 
 
 # Plot Surface and Bottom
 
@@ -250,27 +249,27 @@ p1 <- ggplot(tester, aes(x = yday)) +
 
 p2 <- test_sal  %>% 
   pivot_longer(cols = ends_with("salinity"), names_to = "var", values_to = "salinity") %>% 
-  group_by(var, month) %>% 
+  group_by(var, month_lab) %>% 
   summarise(avg_monthly = mean(salinity, na.rm = T)) %>% 
   ggplot() +
   geom_point(
     data = test_sal,
-    aes(x = month, y = bottom_salinity, color = "bottom_salinity"),
+    aes(x = month_lab, y = bottom_salinity, color = "bottom_salinity"),
     position = position_jitter(height = 0, width = 0.1),
     alpha = 0.35) +
   geom_point(
     data = test_sal,
-    aes(x = month, y = surface_salinity, color = "surface_salinity"),
+    aes(x = month_lab, y = surface_salinity, color = "surface_salinity"),
     position = position_jitter(height = 0, width = 0.1),
     alpha = 0.35) +
   geom_point(
-    aes(month, avg_monthly, color = var),
+    aes(month_lab, avg_monthly, color = var),
     shape = "-", size = 20) +
   scale_color_gmri() +
   labs(color = "Data",
        y = "Salinity",
-       x = "Day of Year",
-       subtitle = "Monthly Salinity Seasonality")
+       x = "Month",
+       subtitle = "Salinity Seasonality")
 
 p1/p2
 ```
@@ -295,17 +294,17 @@ tester %>%
 
 # Remove mean monthly salinity too
 test_sal %>% 
-  group_by(month) %>% 
+  group_by(month_lab) %>% 
   summarise(surf_sal_mean = mean(surface_salinity),
             bot_sal_mean = mean(bottom_salinity),
             .groups = "drop") %>% 
-  right_join(test_sal, join_by(month)) %>% 
+  right_join(test_sal, join_by(month_lab)) %>% 
   mutate(
     surface_resid = surface_salinity - surf_sal_mean,
     bottom_resid = bottom_salinity - bot_sal_mean) %>% 
   ggplot() +
-  geom_line(aes(time, surface_resid, color = "Surface Salinity"), alpha = 0.75) +
-  geom_line(aes(time, bottom_resid, color = "Bottom Salinity"), alpha = 0.75) +
+  geom_line(aes(time, surface_resid, color = "Surface Salinity"), alpha = 0.75, linewidth = 1) +
+  geom_line(aes(time, bottom_resid, color = "Bottom Salinity"), alpha = 0.75, linewidth = 1) +
   geom_hline(yintercept = 0, linewidth = 2, alpha = 0.75) +
   scale_color_gmri() +
   labs(
@@ -333,22 +332,24 @@ trend_tester <- broom::augment(x = tester_trend_mod) %>%
          trend_resid = .resid)
 
 # Plot detrended timeseries
+??geom_labelline
+
 trend_tester %>%
   ggplot() +
   geom_line(
-    aes(time, bottom_t, color = "Bottom Temperature"), 
-    alpha = 0.45) +
-  geom_smooth(
-    aes(time, bottom_t, color = "Bottom Temperature"),
-    method = "lm", se = F) +
+    aes(time, bottom_t),
+    color = "gray60", alpha = 0.45) +
   geom_line(
-    aes(time, trend_resid + coef(tester_trend_mod)[[1]], 
-        color = "Trend-Removed"), 
-    alpha = 0.65) +
-  geom_smooth(
+    aes(time, trend_resid + coef(tester_trend_mod)[[1]]), 
+    color = "gray20", alpha = 0.65) +
+  geomtextpath::geom_labelsmooth(
+    aes(time, bottom_t, color = "Bottom Temperature", label = "Original"),
     method = "lm", se = F,
-    aes(time, trend_resid + coef(tester_trend_mod)[[1]], color = "Trend-Removed")) +
-  scale_color_grey(start = 0.8, end = 0.3) +
+    color = "gray50") +
+  geomtextpath::geom_labelsmooth(
+    method = "lm", se = F,
+    aes(time, trend_resid + coef(tester_trend_mod)[[1]], label = "Trend-Removed"),
+    color = "gray10") +
   labs(title = "Detrending Daily Timeseries", color = "Data")
 
 
@@ -381,8 +382,6 @@ season_trend_results %>%
   
   geom_line(aes(y = seasonal_fit, color = "Seasonal Cycle + Trend to Remove"), alpha = 0.8, linewidth = 1) +
   geom_line(aes(y = bottom_t, color = "Original Timeseries"), alpha = 0.8, linewidth = 1) +
-  #scale_color_grey(start = 0.2, end = 0.8) +
-  # scale_color_grey(start = 0.2, end = 0.8) +
   scale_color_gmri() +
   labs(color = "Data", 
        y = "Temperature", 
@@ -571,29 +570,105 @@ bot_temp_shifts <- read_csv(here::here("rstars_results/lobecol_btemp_shifts_detr
 surf_temp_shifts <- read_csv(here::here("rstars_results/lobecol_stemp_shifts_detrended.csv"))
 
 
-# Plot the RSI
-p1 <- surf_temp_shifts %>% 
- ggplot() +
-  geom_line(aes(time, RSI), linewidth = 0.5, alpha = 0.35) +
-  geom_hline(yintercept = 0) +
-  facet_grid() +
-  labs(
-    x = "Time",
-    y = "RSI",
-    title = "All Areas, Surface Temperature RSI")
+# # Plot the RSI
+# p1 <- surf_temp_shifts %>% 
+#  ggplot() +
+#   geom_line(aes(time, RSI), linewidth = 0.5, alpha = 0.35) +
+#   geom_hline(yintercept = 0) +
+#   facet_grid() +
+#   labs(
+#     x = "Time",
+#     y = "RSI",
+#     title = "All Areas, Surface Temperature RSI")
+# 
+# # Plot the RSI
+# p2 <- bot_temp_shifts %>% 
+#  ggplot() +
+#   geom_line(aes(time, RSI), linewidth = 0.5, alpha = 0.35) +
+#   geom_hline(yintercept = 0) +
+#   facet_grid() +
+#   labs(
+#     x = "Time",
+#     y = "RSI",
+#     title = "All Areas, Bottom Temperature RSI")
+# 
+# p1/p2
 
-# Plot the RSI
-p2 <- bot_temp_shifts %>% 
- ggplot() +
-  geom_line(aes(time, RSI), linewidth = 0.5, alpha = 0.35) +
-  geom_hline(yintercept = 0) +
-  facet_grid() +
-  labs(
-    x = "Time",
-    y = "RSI",
-    title = "All Areas, Bottom Temperature RSI")
+```
 
-p1/p2
+
+
+```{r}
+# better daily plots
+
+
+
+# Summarise them and put them together
+mst_daily <- surf_temp_shifts %>% filter(RSI != 0) %>% 
+  mutate(var = "daily surface temperature") %>% 
+  dplyr::select(area_id, time, RSI, var)
+mbt_daily <- bot_temp_shifts %>% filter(RSI != 0) %>% 
+  mutate(var = "daily bottom temperature") %>% 
+  dplyr::select(area_id, time, RSI, var)
+
+
+# Combine results for plotting
+results_daily_summ <- bind_rows(list(mst_daily, mbt_daily)) %>% 
+  mutate(
+    shift_direction = if_else(RSI > 0, "Shift to Warm", "Shift to Cool"), 
+    area_id = factor(area_id, levels = areas_northsouth),
+    year = year(time))
+
+
+# Get Monthly temperatures in long form
+temps_daily_long <- daily_fvcom_temps %>%
+  rename(
+    `daily surface temperature` = surface_t,
+    `daily bottom temperature` = bottom_t) %>% 
+  pivot_longer(
+    names_to = "var", 
+    values_to = "temperature", cols = ends_with("temperature"))
+
+
+
+# Plot the breaks over the timeseries
+ggplot() +
+  geom_line(
+    data = temps_daily_long,
+    aes(time, temperature),
+    linewidth = 0.2, alpha = 0.5) +
+  # Add a vertical line using geom_segment with an arrow
+  geom_segment(
+    data = filter(
+      results_daily_summ, 
+      str_detect(shift_direction, "Warm")),
+    linewidth = 0.8,
+    aes(x = time, xend = time, y = -Inf, , yend = Inf, 
+        color = shift_direction),  
+    arrow = arrow(length = unit(0.3, "cm"), ends = "last")) +
+  geom_segment(
+    data = filter(
+      results_daily_summ, 
+      !str_detect(shift_direction, "Warm")),
+    linewidth = 0.8,
+    aes(x = time, xend = time, y = -Inf, , yend = Inf, 
+        color = shift_direction),  
+    arrow = arrow(length = unit(0.3, "cm"), ends = "first")) +
+  scale_color_gmri() +
+  scale_y_continuous(
+    labels = scales::label_number(suffix = deg_c)) +
+  facet_grid(
+    area_id~var, 
+    labeller = label_wrap_gen(),
+    scales = "free") +
+  theme(
+    legend.position = "bottom",
+    strip.text.y = element_text(angle = 0)) + 
+  labs(
+    title = "FVCOM Hindcast Temperatures",
+    subtitle = "STARS Regime Shift Index - Detrended Daily Data",
+    y = "Temperature",
+    color = "")
 
 ```
 
@@ -618,10 +693,7 @@ For these reasons and for consistency with the other environmental drivers, I wi
 
 
 # Run the monthly versions
-monthly_fvcom_temps <- daily_fvcom_temps %>%
-  mutate(
-    year = lubridate::year(time),
-    month = lubridate::month(time)) %>%
+monthly_fvcom_temps <- daily_fvcom_temps  %>%
   group_by(area_id, year, month) %>%
   summarise(
     surface_t = mean(surface_t, na.rm = T),
@@ -666,6 +738,54 @@ monthly_fvcom_temps <- monthly_fvcom_temps %>%
 
 
 
+```
+
+
+
+### Recording Rates of Change
+
+It is usefull to be aware on how much each area is warming as a long-term rate and whether or not these are significant baseline levels of warming or not. The following table reports the annual warming rate and whether or not this is significant.
+
+```{r}
+library(trend)
+
+# # Mann-Kendall Test
+# # Kendall::MannKendall(tester$surface_t)$sl
+# str(trend::mk.test(tester$surface_t))
+# trend::mk.test(tester$surface_t)$p.value < 0.05
+
+# # Seasonal mann-kendall
+# str(trend::smk.test(ts(tester$surface_t, frequency = 365)))
+# trend::smk.test(ts(tester$surface_t, frequency = 365))$p.value < 0.05
+
+# # sens slope
+# trend::sens.slope(tester$surface_t) # sens slope
+
+daily_fvcom_temps %>% 
+  split(.$area_id) %>% 
+  map_dfr(function(x){
+    surface_warming <- trend::smk.test(ts(x$surface_t, frequency = 365))$p.value < 0.05
+    bottom_warming <- trend::smk.test(ts(x$bottom_t, frequency = 365))$p.value < 0.05
+    surface_annual_rate <- ifelse(
+      surface_warming, 
+      coef(lm(surface_t ~ time, data = x))[[2]] * 365 * 10,
+      NA)
+    bottom_annual_rate <- ifelse(
+      bottom_warming, 
+      coef(lm(surface_t ~ time, data = x))[[2]] * 365 * 10,
+      NA)
+    return(tibble(
+      "Surface Warming" = surface_warming,
+      "Decadal Surface Warming" = round(surface_annual_rate, 2),
+      "Bottom Warming" = bottom_warming,
+      "Decadal Bottom Warming"  = round(bottom_annual_rate, 2)))
+  }, .id = "area_id") %>% 
+  gt::gt() %>% 
+  gt::tab_header(
+    title = "Long Term Regional Warming Rates",
+    subtitle = "Trend Significance Evaluated with Seasonal Mann-Kendall Trend Test (Hirsch-Slack Test)
+
+")
 ```
 
 
@@ -813,7 +933,7 @@ ggplot() +
     strip.text.y = element_text(angle = 0)) + 
   labs(
     title = "FVCOM Hindcast Temperatures",
-    subtitle = "STARS Regime Shift Testing",
+    subtitle = "STARS Regime Shift Index - Raw Monthly Data",
     y = "Temperature",
     color = "")
 
@@ -965,8 +1085,8 @@ ggplot() +
     legend.position = "bottom",
     strip.text.y = element_text(angle = 0)) + 
   labs(
-    title = "Detrended FVCOM Hindcast Temperatures",
-    subtitle = "Regime Shift Index, Detrended Temperatures",
+    title = "FVCOM Hindcast Temperatures",
+    subtitle = "STARS Regime Shift Index - Detrended Temperatures",
     y = "Temperature Anomaly",
     color = "")
 
@@ -1147,7 +1267,9 @@ monthly_fvcom_sal  %>%
     strip.text.y = element_text(angle = 0)) + 
   labs(color = "",
        y = "Salinity Anomaly",
-       title = "STARS Regime Shifts from FVCOM Salinity")
+       title = "FVCOM Hindcast Salinity",
+       subtitle = "STARS Regime Shift Index - Detrended Salinity"
+       )
 ```
 
 
