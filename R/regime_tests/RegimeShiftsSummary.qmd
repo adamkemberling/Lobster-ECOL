@@ -32,6 +32,8 @@ execute:
   library(scico)
   library(legendry)
   library(ggh4x)
+  library(ecodata)
+  library(trend)
 }
 
 # namespace conflicts
@@ -88,6 +90,21 @@ areas_northsouth <- c(
 use_gmri_style_rmd()
 ```
 
+
+```{r}
+#| label: load rstars functions
+
+# Stirnimann used these values in their paper:
+# l = 5, 10, 15, 17.5 years, with monthly data
+# Huber = 1
+# Subsampling = (l + 1) / 3
+
+
+# Load the function(s)
+source(here::here("rstars-master","rSTARS.R"))
+
+```
+
 ```{r}
 #| label: load shapes
 
@@ -99,40 +116,7 @@ poly_paths <- cs_path("mills", "Projects/Lobster ECOL/Spatial_Defs")
 
 
 
-# Load inshore areas
-# 12nm from shore, aggregates of statistical zones
-inshore_areas <- map_dfr(
-  setNames(
-    list.files(str_c(poly_paths, "inshore_areas"), full.names = T),
-    str_remove(list.files(str_c(poly_paths, "inshore_areas")), ".geojson")),
-  function(x){read_sf(x)}) 
-
-offshore_areas <- map_dfr(
-  setNames(
-    list.files(str_c(poly_paths, "offshore_areas"), full.names = T),
-    str_remove(list.files(str_c(poly_paths, "offshore_areas")), ".geojson")),
-  function(x){read_sf(x)}
-) %>% 
-  mutate(SHORT_NAME = Region) 
-
-# st_crs(offshore_areas)
-# st_crs(inshore_areas)
-
-# Combine so we can plot them
-study_regions <- bind_rows(
-  st_transform(inshore_areas, crs = st_crs(4269)),
-  offshore_areas)
-
-
-
-
 # NEW Areas
-
-
-
-```
-
-```{r}
 
 # clusters of statistical areas that align loosely with geography and management areas
 inshore_areas <- read_sf(str_c(poly_paths,"spatial_defs_2025/12nm_poly_statarea_merge.shp")) %>% 
@@ -155,8 +139,6 @@ study_regions <- bind_rows(
 )
 
 ```
-
-
 
 ```{r}
 #| label: fonts-config
@@ -189,7 +171,7 @@ The Marriott, Pope and Kendall (MPK) "pre-whitening" routine was used within the
 
 For more details on trend removal and pre-whitening methods see Rodionov 2006.
 
-## Shelf-Scale Shifts
+# Shelf-Scale Ecodata Indices
 
 There are 2-3 climate and oceanographic timeseries that operate at the broad regional scale of the Northeast shelf. These are:
 
@@ -202,7 +184,8 @@ These three indices affect conditions over large spatial scales and and are like
 These three metrics are available in the `ecodata` r package and can be pulled directly from the package.
 
 ```{r}
-library(ecodata)
+#| label: load shef-scale indices
+
 
 # GSI
 # Why is there more than one value per month?
@@ -224,9 +207,67 @@ nao <- ecodata::nao%>%
 shelf_indices <- bind_rows(list(gsi, gsi_old, nao))
 
 
+# Plot the residuals from the trend
+ggplot(shelf_indices, aes(Time, Value)) + 
+  geom_line(linewidth = 0.6, alpha = 0.8) + 
+  facet_grid(Var ~ ., scales = "free", labeller = label_wrap_gen(width= 8)) +
+  guides(color = guide_legend(nrow = 2)) +
+  labs(title = "Shelf Scale Ocean/Climate Metrics - Raw")
+
+
 ```
 
-The Gulf Stream indices come as two monthly datasets, the other indices are annual. Any long-term trends for each metric have been removed prior to regime shift tests on these metrics.
+The Gulf Stream indices come as two monthly datasets, the other indices are annual. 
+
+### Trends in Ecodata Indicators
+
+A Mann-Kendall test can be used to determine whether there is any monotonic (increasing/decreasing) trends in a time series. I will be checking each timeseries along the way using this method to keep a tab on whether or not long-term trends existed, which may be relevant to ecosystem change regardless of stars regime results.
+
+```{r}
+
+# Perform test of monotonic trends and report as table
+shelf_indices %>% 
+  split(.$Var) %>% 
+  map_dfr(function(x){
+    # check pacing
+    x_2000 <- filter(x, year(Time) == 2000)
+    tempo <- if_else(nrow(x_2000) == 12, 12, 1)
+    message(str_c(x$Var[[1]], " has ", tempo, " values"))
+    
+    trend <- trend::mk.test(x$Value)$p.value < 0.05
+    rate <- ifelse(
+      trend, 
+      coef(lm(Value ~ Time, data = x))[[2]] * tempo * 10,
+      NA)
+   
+    return(tibble(
+      "Trend?" = trend,
+      "Decadal Rate" = round(rate, 3)))
+  }, .id = "Var") %>% 
+  gt::gt() %>% 
+  gt::tab_header(
+    title = "Ecodata Shelf-Scale Long Term Trends",
+    subtitle = "Monotonic Trends Evaluated by Mann-Kendall Test")  %>%
+  gt::fmt_missing(columns = everything(), missing_text = "")
+
+```
+
+The Gulf Stream and Western Gulf Stream indices show a long term increasing trend, with some evidence in the GSI that this quickly changed course around 2023.
+
+```{r}
+shelf_indices %>% 
+  filter(Var == "gulf stream index", year(Time) > 2010) %>% 
+  ggplot(aes(Time, Value)) +
+  geom_line() +
+  geom_vline(xintercept = as.Date("2023-01-01"), linetype = 3, color = "gray50") +
+  facet_grid(Var~.) + 
+  labs(title = "Recent Course-Change in Gulf Stream Index",
+       subtitle = "Rapid Gulf Stream Position Reset After 2023")
+```
+
+
+Because the presence of long-term trends can influence the results of tests for breakpoint/mean shifts, any long-term trends for each metric have been removed prior to regime shift tests on these metrics.
+
 
 ```{r}
 #| fig-height: 5
@@ -255,30 +296,21 @@ shelf_indices_detrended <- shelf_indices %>%
       mutate(trend_resid = if_else(is.na(Value), NA, trend_resid))
     
     return(.x)})
+```
 
+The following plot shows what these timeseries look like after the removal of any monotonic trend:
 
-
+```{r}
 # Plot the residuals from the trend
-ggplot(shelf_indices_detrended, aes(Time, trend_resid, color = Var)) + 
+ggplot(shelf_indices_detrended, aes(Time, trend_resid)) + 
   geom_line(linewidth = 0.6, alpha = 0.8) + 
-  facet_grid(EPU * Var ~ ., scales = "free", labeller = label_wrap_gen(width= 8)) +
+  facet_grid(Var ~ ., scales = "free", labeller = label_wrap_gen(width= 8)) +
   guides(color = guide_legend(nrow = 2)) +
   labs(title = "Shelf Scale Ocean/Climate Metrics - Detrended")
 ```
 
 Bacause the slopewater proportion contains NA values, we cannot evaluate it for breaks unless we impute missing values somehow or take a subset of time that is uninterrupted.
 
-```{r}
-# Stirnimann used these values in their paper:
-# l = 5, 10, 15, 17.5 years, with monthly data
-# Huber = 1
-# Subsampling = (l + 1) / 3
-
-
-# Load the function(s)
-source(here::here("rstars-master","rSTARS.R"))
-
-```
 
 ```{r}
 
@@ -287,6 +319,7 @@ shelf_indices_rstars <- shelf_indices_detrended %>%
   split(.$Var) %>%
   map_dfr(function(.x){
     
+    # Set the cutoff length, change it based on monthly/annual
     cutoff_length <- ifelse(
       str_detect(.x$Var[[1]], "index"),
       12*7,
@@ -316,7 +349,6 @@ shelf_indices_rstars <- shelf_indices_detrended %>%
           RSI > 0 ~ "Shift Up", 
           RSI < 0 ~ "Shift Down",
           TRUE ~ NA))
-    
     },
     
     .id = "Var"
@@ -355,7 +387,7 @@ ggplot() +
     arrow = arrow(length = unit(0.3, "cm"), ends = "first")) +
   geom_line(
     data = shelf_indices_rstars,
-    aes(Time, Value),
+    aes(Time, trend_resid),
     linewidth = 0.4, alpha = 0.5) +
   scale_color_gmri() +
   facet_grid(EPU * Var~., labeller = label_wrap_gen(width = 8)) +
@@ -376,7 +408,7 @@ ggplot() +
        subtitle = "Performed on Detrended Timeseries")
 ```
 
-Based on these results, there is some evidence for breakpoints in the Gulf Stream Indices, and not in the NAO index.
+Based on these results, there is evidence for breakpoints in the Gulf Stream Indices, and not in the NAO index.
 
 ```{r}
 shelf_shift_points %>% 
@@ -386,7 +418,7 @@ shelf_shift_points %>%
   gt::tab_header(title = "Shelf-Scale Breaks")
 ```
 
-## EPU-Scale Ecodata Indices
+# EPU-Scale Ecodata Indices
 
 For the EPU-scale metrics we have a number of indices available from the `ecodata` package:
 
@@ -464,10 +496,47 @@ ggplot(epu_indices, aes(Time, Value)) +
 
 ```
 
+
+### Long-Term EPU Scale Trends
+
+
+
+```{r}
+
+# Perform test of monotonic trends and report as table
+epu_indices %>% 
+  mutate(var_epu = str_c(Var, EPU, sep = "X")) %>% 
+  split(.$var_epu) %>% 
+  map_dfr(function(x){
+    
+    
+    # check pacing
+    # Set the cutoff length, change it based on monthly/annual
+    cutoff_length <- 7 # 7 years for annual
+    trend <- trend::mk.test(x$Value)$p.value < 0.05
+    rate <- ifelse(
+      trend, 
+      coef(lm(Value ~ Time, data = x))[[2]] * 12 * 10,
+      NA)
+   
+    return(tibble(
+      "Trend?" = trend,
+      "Decadal Rate" = round(rate, 3)))
+    }, 
+  .id = "var_epu") %>% 
+  separate(var_epu, into = c("Var", "EPU"), sep = "X") %>% 
+  gt::gt() %>% 
+  gt::tab_header(
+    title = "Ecodata Shelf-Scale Long Term Trends",
+    subtitle = "Monotonic Trends Evaluated by Mann-Kendall Test") %>%
+  gt::fmt_missing(columns = everything(), missing_text = "")
+
+```
+
+
 ### Detrending Ecodata Indicators
 
 Most of these indicators have data at the monthly time-scale. To aid in regime change detection long-term year over year changes have been removed.
-
 
 ```{r}
 #| fig.height: 6
@@ -519,8 +588,7 @@ ggplot(epu_indices_detrended, aes(Time, trend_resid)) +
 
 ```
 
-Once detrended, they can be checked for signs of a regime change.
-
+Once detrended, they can be checked for signs of regime changes.
 
 ```{r}
 # Run rstars for those, temperature and salinity are done
@@ -567,6 +635,9 @@ epu_indices_rstars <- epu_indices_detrended %>%
 
 ```
 
+
+
+
 ### Primary Production and Cold-Pool Dynamics
 
 The results from the STARS algorithm can be seen below:
@@ -610,7 +681,7 @@ ggplot() +
        subtitle = "STARS Regime Shifts")
 ```
 
-Based on these results, we see no breakpoints in primary production or the cold pool indices.
+Based on these results, we see no breakpoints in EPU-Scale measures of primary production or the cold pool dynamics.
 
 ```{r}
 epu_shift_points %>% 
@@ -620,14 +691,125 @@ epu_shift_points %>%
   gt::tab_header(title = "Ecodata EPU Scale Breakpoints")
 ```
 
-### EPU/Offshore Temperature and Salinity
+### EPU-Scale Temperature and Salinity
 
-Temperature and salinity changes were done separately, here are their results
+Temperature and salinity timeseries from FVCOM were processed and had their STARS testing done separately in `STARS_FVCOM.qmd`. here are their results:
 
 ```{r}
-# Load Temperature and Salinity, Pull out the EPU scale timeseries
+#| label: Load FVCOM Temperature and Salinity
 
+# These are the raw monthly timeseries:
+# write_csv(surf_temp_monthly_shifts_raw, here::here("rstars_results/lobecol_stemp_monthly_shifts_raw.csv"))
+# write_csv(bot_temp_monthly_shifts_raw, here::here("rstars_results/lobecol_btemp_monthly_shifts_raw.csv"))
+
+# Load the data for the new regions
+daily_fvcom_temps <- read_csv(
+  str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/new_regions_fvcom_temperatures_daily.csv")
+) %>% 
+  mutate(
+    yday = lubridate::yday(time),
+    year = lubridate::year(time),
+    month = lubridate::month(time),
+    depth_type = if_else(area_id %in% c("gom_gbk", "sne"), "offshore", "nearshore"),
+    area_id = factor(area_id, levels = areas_northsouth))
+
+
+
+
+# Run the monthly versions
+monthly_fvcom_temps <- daily_fvcom_temps  %>%
+  group_by(area_id, year, month, depth_type) %>%
+  summarise(
+    surface_t = mean(surface_t, na.rm = T),
+    bottom_t  = mean(bottom_t, na.rm = T),
+    .groups = "drop") %>%
+  mutate(
+    yr_num = as.numeric(as.character(year)),
+    month = factor(month),
+    time = as.Date(
+      str_c(
+        year,
+        str_pad(month, side = "left", pad = "0", width = 2),
+        "15", sep = "-"))) %>% 
+  rename(
+    surface_temperature = surface_t,
+    bottom_temperature = bottom_t) %>% 
+  pivot_longer(ends_with("temperature"), names_to = "var", values_to = "values")
+
+
+# Monthly Salinity
+monthly_fvcom_sal <- read_csv(
+  str_c(lob_ecol_path, "FVCOM_processed/area_timeseries/new_regions_fvcom_salinity_monthly_gom3.csv")) %>% 
+  mutate(
+    yr_num = as.numeric(as.character(year(time))),
+    month = factor(lubridate::month(time)),
+    depth_type = if_else(area_id %in% c("gom_gbk", "sne"), "offshore", "nearshore"),
+    area_id = factor(area_id, levels = areas_northsouth)
+  ) %>% 
+  pivot_longer(ends_with("salinity"), names_to = "var", values_to = "values")
+
+# Combine these
+fvcom_tempsal_raw <- bind_rows(
+  monthly_fvcom_temps, monthly_fvcom_sal
+)
+
+```
+
+
+#### Temp/Sal Trends
+
+```{r}
+
+# Perform test of monotonic trends and report as table
+fvcom_trends <- fvcom_tempsal_raw  %>% 
+  mutate(var_area = str_c(var, area_id, sep = "X")) %>% 
+  split(.$var_area) %>% 
+  map_dfr(function(x){
+    
+    
+    # check pacing
+    # Set the cutoff length, change it based on monthly/annual
+    cutoff_length <- 7 # 7 years for annual
+    trend <- trend::mk.test(x$values)$p.value < 0.05
+    rate <- ifelse(
+      trend, 
+      coef(lm(values ~ time, data = x))[[2]] * 12 * 10,
+      NA)
+   
+    return(tibble(
+      "Trend?" = trend,
+      "Decadal Rate" = round(rate, 3)))
+    }, 
+  .id = "var_area") %>% 
+  separate(var_area, into = c("var", "area_id"), sep = "X") 
+
+
+
+fvcom_trends %>% 
+  filter(#str_detect(var, "temperature"),
+         `Trend?`,
+         area_id %in% c("gom_gbk", "sne")) %>% 
+  group_by(area_id) %>% 
+  gt::gt() %>% 
+  gt::tab_header(
+    title = "FVCOM Offshore Long Term Temperature Trends",
+    subtitle = "Monotonic Trends Evaluated by Mann-Kendall Test") %>%
+  gt::fmt_missing(columns = everything(), missing_text = "")
+
+```
+
+
+
+#### Temp/Sal STARS Breaks
+
+In `STARS_FVCOM.qmd` I used temperature timeseries to explore the impacts of performing regime shift testing on raw or detrended monthly data. These tests helped reinforce that the suggested preprocessing (detrending etc.) did help isolate step-changes in the timeseries which may be related to a regime change.
+
+The following breaks were identified from these detrended series:
+
+```{r}
+#| label: load detrended rsi for sal/temp
 # Load the regime shift results from STARS_FVCOM.qmd
+# These are from detrended data
 surf_sal_monthly_shifts <- read_csv(
   here::here("rstars_results/lobecol_ssal_monthly_shifts_detrended.csv")) %>% 
   mutate(Var = "Surface Salinity") %>% 
@@ -659,6 +841,9 @@ inshore_tempsal <- tempsal %>% filter(area_id %in% tolower(c("GOM_GBK", "SNE")) 
 
 # Pull the shift points
 tempsal_shifts <- tempsal %>% filter(RSI != 0)
+
+
+# Split surface and bottom
 offshore_tempsal_shifts <- offshore_tempsal %>% 
   filter(RSI != 0) %>% 
   dplyr::select(time, Var, area_id, shift_direction)
@@ -666,6 +851,7 @@ inshore_tempsal_shifts <- inshore_tempsal %>%
   filter(RSI != 0) %>% 
   dplyr::select(time, Var, area_id, shift_direction)
 ```
+
 
 ```{r}
 #| fig.height: 5
@@ -909,6 +1095,35 @@ The Gulf of Maine Coastal Current plays an important role in transporting lobste
 
 ## Local/Nearshore Shifts
 
+Conditions closer to the coast show the following long-term trends:
+
+```{r}
+# Temperature
+fvcom_trends %>% 
+  filter(str_detect(var, "temperature"),
+         `Trend?`,
+         !area_id %in% c("gom_gbk", "sne")) %>% 
+  group_by(area_id) %>% 
+  gt::gt() %>% 
+  gt::tab_header(
+    title = "FVCOM Offshore Long Term Salinity Trends",
+    subtitle = "Monotonic Trends Evaluated by Mann-Kendall Test") %>%
+  gt::fmt_missing(columns = everything(), missing_text = "")
+
+# Salinity
+fvcom_trends %>% 
+  filter(!str_detect(var, "temperature"),
+         `Trend?`,
+         !area_id %in% c("gom_gbk", "sne")) %>% 
+  group_by(area_id) %>% 
+  gt::gt() %>% 
+  gt::tab_header(
+    title = "FVCOM Offshore Long Term Salinity Trends",
+    subtitle = "Monotonic Trends Evaluated by Mann-Kendall Test") %>%
+  gt::fmt_missing(columns = everything(), missing_text = "")
+```
+
+
 ### Temperature and Salinity Breaks
 
 ```{r}
@@ -957,7 +1172,7 @@ ggplot() +
        subtitle = "STARS Regime Shifts")
 ```
 
-#### Salinity 
+#### Salinity
 
 ```{r}
 #| fig.height: 8
@@ -1007,8 +1222,6 @@ ggplot() +
        subtitle = "STARS Regime Shifts")
 ```
 
-
-
 ```{r}
 inshore_tempsal_shifts %>% 
   filter(str_detect(Var, "Salinity")) %>% 
@@ -1034,8 +1247,6 @@ ggplot() +
   coord_sf(xlim = c(-78, -66), ylim = c(35.5, 45)) +
   labs(title = "Salinity Regime Change Affected Areas")
 ```
-
-
 
 #### Temperatures
 
@@ -1246,8 +1457,6 @@ dd_annual_detrended %>%
 
 ```
 
-
-
 ```{r}
 
 
@@ -1372,5 +1581,6 @@ ggplot() +
 
 ## Summary Figures / Tables
 
+Do the trend evaluation for everything:
 
-
+Summary table should have the region, the variable, whether there is a trend or not, what the rate is, then whether there have been breakpoints, and when they were (mm/yyyy).

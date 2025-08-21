@@ -103,8 +103,6 @@ st_crs(gom3_mesh)
 #| label: export the shapefile to use as mask
 #| eval: false  
 
-
-
 gom3_hull <- gom3_mesh %>% st_union() 
 gom3_hull %>% ggplot() + geom_sf() 
 gom3_mesh %>% st_write(here::here("local_data/mesh_shapefiles/gom3_mesh.geojson"))

@@ -111,7 +111,7 @@ daily_fvcom_temps <- read_csv(
     year = lubridate::year(time),
     month = lubridate::month(time),
     month_lab = factor(month.abb[month(time)], levels = month.abb), 
-    depth_type = if_else(area_id %in% c("gom_gbk", "SNE"), "offshore", "nearshore"),
+    depth_type = if_else(area_id %in% c("gom_gbk", "sne"), "offshore", "nearshore"),
     area_id = factor(area_id, levels = areas_northsouth)
   )
 
@@ -121,7 +121,7 @@ monthly_fvcom_sal <- read_csv(
   mutate(
     month = lubridate::month(time),
     month_lab = factor(month.abb[month(time)], levels = month.abb),
-    depth_type = if_else(area_id %in% c("gom_gbk", "SNE"), "offshore", "nearshore"),
+    depth_type = if_else(area_id %in% c("gom_gbk", "sne"), "offshore", "nearshore"),
     area_id = factor(area_id, levels = areas_northsouth)
   )
 
@@ -783,9 +783,7 @@ daily_fvcom_temps %>%
   gt::gt() %>% 
   gt::tab_header(
     title = "Long Term Regional Warming Rates",
-    subtitle = "Trend Significance Evaluated with Seasonal Mann-Kendall Trend Test (Hirsch-Slack Test)
-
-")
+    subtitle = "Trend Significance Evaluated with Seasonal Mann-Kendall Trend Test (Hirsch-Slack Test)")
 ```
 
 
