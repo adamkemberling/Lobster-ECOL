@@ -5,12 +5,12 @@ description: |
 date: "Updated on: `r Sys.Date()`"
 format: 
   html:
-    code-fold: true
+    code-fold: false
     code-tools: true
     df-print: kable
     self-contained: true
 execute: 
-  echo: true
+  echo: false
   warning: false
   message: false
   fig.align: center
@@ -161,9 +161,9 @@ showtext::showtext_auto()
 
 ```
 
-# Reviewing STARS Regime Changes in Space/Time
+# STARS Regime Change Review of Northeast US Region
 
-This markdown reviews the various rstars regime shift results which were produced separately. I will begin at the largest geographic scales and work down to local timeseries:
+This markdown reviews the various STARS regime shift results which were produced separately. I will begin at the largest geographic scales and work down to local timeseries:
 
 Regime shifts for individual timeseries were tested using the STARS methodology. Any daily timeseries (temperature and salinity from ocean reanalysis models) were aggregated to a monthly temporal resolution, and any trends and seasonal cycles were removed.
 
@@ -171,17 +171,25 @@ The Marriott, Pope and Kendall (MPK) "pre-whitening" routine was used within the
 
 For more details on trend removal and pre-whitening methods see Rodionov 2006.
 
+## About: ecodata Indices
+
+A number of ocean, climate, and ecosystem indices relevant to the Northeast US have been consolidate and made available from the [ecodata](https://github.com/NOAA-EDAB/ecodata) package.
+
+This is is an R data package developed by the Ecosystems Dynamics and Assessment Branch of the Northeast Fisheries Science Center for use in State of the Ecosystem (SOE) reporting. SOE reports are high-level overviews of ecosystem indicator status and trends occurring on the Northeast Continental Shelf. Unless otherwise stated, data are representative of specific Ecological Production Units (EPUs), referring to the Mid-Atlantic Bight (MAB), Georges Bank (GB), Gulf of Maine (GOM), and Scotian Shelf (SS). SOE reports are developed for US Fishery Management Councils (FMCs), and therefore indicator data for Scotian Shelf are included when available, but this is not always the case.
+
+[Technical Documentation for ecodata](https://noaa-edab.github.io/tech-doc/) is available online, which covers the data sources and methods behind the development of these indices.
+
 # Shelf-Scale Ecodata Indices
 
-There are 2-3 climate and oceanographic timeseries that operate at the broad regional scale of the Northeast shelf. These are:
+There are 2-3 climate and oceanographic timeseries of interest within `ecodata` that operate at the broad regional scale of the Northeast shelf. 
+
+These include:
 
 1.  The Gulf Stream Index (a metric indicating the North/South position of the Gulf Stream) based on SSH
 2.  The Northeast Channel Slopewater Proportions (the percentage of various water masses at the 150-200m depth entering GOM, using NERACOOS buoy data)
 3.  The North Atlantic Oscillation (atmospheric pressure differential between icelandic low and the Azores High)
 
-These three indices affect conditions over large spatial scales and and are likely to either directly or indirectly impact more local scale changes.
-
-These three metrics are available in the `ecodata` r package and can be pulled directly from the package.
+These large-scale processes affect oceanographic conditions over large spatial scales, and and are likely to directly and indirectly impact other downstream local-scale environmental changes. These metrics are published with the state of the ecosystem report and can be pulled directly from the  `ecodata` r package.
 
 ```{r}
 #| label: load shef-scale indices
@@ -217,7 +225,7 @@ ggplot(shelf_indices, aes(Time, Value)) +
 
 ```
 
-The Gulf Stream indices come as two monthly datasets, the other indices are annual. 
+The Gulf Stream indices come as two monthly datasets, the other indices are annual. For regime shift testing I have adjusted the cutoff length accordingly to represent 7 years (following the methods of Stirnimann et al in their STARS review).
 
 ### Trends in Ecodata Indicators
 
@@ -252,7 +260,7 @@ shelf_indices %>%
 
 ```
 
-The Gulf Stream and Western Gulf Stream indices show a long term increasing trend, with some evidence in the GSI that this quickly changed course around 2023.
+The Gulf Stream and Western Gulf Stream indices show a long term increasing trend, which is consistent with reports of a Northward movement in the Gulf Stream position. More recently (around 2023) the GSI quickly changed course, with Gulf Stream position moving more South.
 
 ```{r}
 shelf_indices %>% 
@@ -266,11 +274,15 @@ shelf_indices %>%
 ```
 
 
+### Shelf-Scale STARS Breakpoints
+
+Each of these indicators has been independently evaluate for abrupt shifts in mean values using the STARS method. Because the slopewater proportion contains NA values, we cannot evaluate it for breaks unless we impute missing values somehow or take a subset of time that is uninterrupted.
+
 Because the presence of long-term trends can influence the results of tests for breakpoint/mean shifts, any long-term trends for each metric have been removed prior to regime shift tests on these metrics.
 
 
 ```{r}
-#| fig-height: 5
+
 
 # Run the shift test for summertime PCA
 shelf_indices_detrended <- shelf_indices %>%
@@ -301,6 +313,7 @@ shelf_indices_detrended <- shelf_indices %>%
 The following plot shows what these timeseries look like after the removal of any monotonic trend:
 
 ```{r}
+#| fig-height: 5
 # Plot the residuals from the trend
 ggplot(shelf_indices_detrended, aes(Time, trend_resid)) + 
   geom_line(linewidth = 0.6, alpha = 0.8) + 
@@ -309,8 +322,8 @@ ggplot(shelf_indices_detrended, aes(Time, trend_resid)) +
   labs(title = "Shelf Scale Ocean/Climate Metrics - Detrended")
 ```
 
-Bacause the slopewater proportion contains NA values, we cannot evaluate it for breaks unless we impute missing values somehow or take a subset of time that is uninterrupted.
 
+Once the monotonic trends are removed, we are left with these results:
 
 ```{r}
 
@@ -420,7 +433,7 @@ shelf_shift_points %>%
 
 # EPU-Scale Ecodata Indices
 
-For the EPU-scale metrics we have a number of indices available from the `ecodata` package:
+The EPU-scale indicators from `ecodata` that we are using for this project include:
 
 1.  The cold-pool index
 2.  The Northeast Channel Slopewater Proportion (from NERACOOS Buoy N)
@@ -430,6 +443,7 @@ For the EPU-scale metrics we have a number of indices available from the `ecodat
 Temperature and salinity is from either GLORYS or FVCOM, primary productivity is satellite derived (OC-CCI, SeaWiFS, MODIS-Aqua), and the zooplankton community indices are from the Gulf of Maine CPR transect.
 
 ```{r}
+#| fig-height: 6
 # # There are a ton here. We want primary productivity / chlor a, and maybe anomalies
 # chl_pp <- ecodata::chl_pp %>% 
 #   filter(str_detect(Var, "MONTHLY")) %>% 
@@ -480,7 +494,7 @@ epu_indices <- bind_rows(annual_chl_pp, slopewater, cold_pool) %>%
 # Plot them
 ggplot(epu_indices, aes(Time, Value)) +
   geom_line(linewidth = 0.6, alpha = 0.8) +
-  facet_grid(Var * EPU ~ ., scales = "free", labeller = label_wrap_gen(width= 8)) +
+  facet_nested(EPU * Var ~ ., scales = "free", labeller = label_wrap_gen(width= 8), nest_line = T) +
   guides(color = guide_legend(nrow = 3)) +
   scale_x_date(
     breaks = seq.Date(
@@ -499,6 +513,9 @@ ggplot(epu_indices, aes(Time, Value)) +
 
 ### Long-Term EPU Scale Trends
 
+As before, we want to isolate abrupt shifts from any background trends that may be present. This trends are themselves important and of interest to us, but they obscure the ability of breakpoint algorithms to perform as intended.
+
+The following table reviews which of these EPU scale indices have baseline monotonic trends, which are later removed.
 
 
 ```{r}
@@ -525,6 +542,7 @@ epu_indices %>%
     }, 
   .id = "var_epu") %>% 
   separate(var_epu, into = c("Var", "EPU"), sep = "X") %>% 
+  group_by(EPU) %>% 
   gt::gt() %>% 
   gt::tab_header(
     title = "Ecodata Shelf-Scale Long Term Trends",
@@ -573,7 +591,7 @@ epu_indices_detrended <- epu_indices %>%
 # Plot detrended
 ggplot(epu_indices_detrended, aes(Time, trend_resid)) + 
   geom_line(linewidth = 0.6, alpha = 0.8) + 
-  facet_grid(EPU * Var ~ ., scales = "free", labeller = label_wrap_gen(width= 8)) +
+  facet_nested(EPU * Var ~ ., scales = "free", labeller = label_wrap_gen(width= 8), nest_line = T) +
   guides(color = guide_legend(nrow = 3)) +
     scale_x_date(
     breaks = seq.Date(
@@ -637,8 +655,7 @@ epu_indices_rstars <- epu_indices_detrended %>%
 
 
 
-
-### Primary Production and Cold-Pool Dynamics
+### EPU-Scale ecodata Indices Breakpoints
 
 The results from the STARS algorithm can be seen below:
 
@@ -691,7 +708,8 @@ epu_shift_points %>%
   gt::tab_header(title = "Ecodata EPU Scale Breakpoints")
 ```
 
-### EPU-Scale Temperature and Salinity
+
+## EPU-Scale FVCOM Temperature and Salinity
 
 Temperature and salinity timeseries from FVCOM were processed and had their STARS testing done separately in `STARS_FVCOM.qmd`. here are their results:
 
