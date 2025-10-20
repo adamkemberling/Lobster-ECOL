@@ -81,6 +81,7 @@ areas_northsouth <- c(
   "sne")
 ```
 
+
 ```{r}
 #| label: style-sheet
 #| results: asis

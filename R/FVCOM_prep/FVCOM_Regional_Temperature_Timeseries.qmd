@@ -884,7 +884,7 @@ all_areas %>%
   ggplot() +
   #geom_sf(data = gom3_mesh, color = "gray80", alpha = 0.2) +
   geom_sf(aes(fill = avg_area_km2)) +
-  facet_wrap(~area_id) +
+  # facet_wrap(~area_id) +
   scale_fill_distiller(palette = "RdYlGn")
 
 

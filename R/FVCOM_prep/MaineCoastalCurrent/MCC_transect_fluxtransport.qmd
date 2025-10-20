@@ -160,7 +160,140 @@ ggplot() +
 
 For each location along the transect, we want vertically integrated current velocites (eastward ua, and northward va <- double-check names).
 
-The points along the transect will follow a line, and thus not match the FVCOM mesh structure. This means we will need to get interpolated values using nearby or surrounding locations
+The points along the transect will follow a line, and thus not match the FVCOM mesh structure. This means we will need to get interpolated values using nearby or surrounding locations,
+
+After checking back in with Zhuomin, she confirmed that we will need "zones" along a transect and not points. Here is what that would look like:
+
+```{r}
+#| label: create transect zones
+
+
+# Set the endpoints
+start <- st_point(c(-69.5, 43.5))
+end <- st_point(c(-67.5, 44.2))
+
+line <- st_sfc(st_linestring(rbind(st_coordinates(start), st_coordinates(end))), crs = 4326)
+
+# reproject to meters for equal spacing
+line_m <- st_transform(line, 32619)  # UTM zone 19N for NE US
+
+# generate equally spaced points (say every 5 km)
+n_points <- 10
+points_m <- st_line_sample(line_m, sample = seq(0, 1, length.out = n_points))
+
+
+# Convert to coordinates
+coords <- st_coordinates(points_m)
+
+# Calculate segment vectors
+seg_vecs <- diff(coords)  # differences between points
+
+# Unit direction vector for each segment
+seg_dirs <- seg_vecs / sqrt(rowSums(seg_vecs^2))
+
+# Perpendicular vector (to the left of transect)
+perp_dirs <- cbind(-seg_dirs[,2], seg_dirs[,1])
+
+# Define transect width (in meters, e.g., 1000 m)
+width <- 10000
+
+# Create polygons between pairs of centerpoints
+polys <- list()
+for (i in 1:(nrow(coords)-1)) {
+  p1 <- coords[i,]
+  p2 <- coords[i+1,]
+  
+  # corners offset by perpendicular vector
+  poly_coords <- rbind(
+    p1 + perp_dirs[i,] * width/2,
+    p2 + perp_dirs[i,] * width/2,
+    p2 - perp_dirs[i,] * width/2,
+    p1 - perp_dirs[i,] * width/2,
+    p1 + perp_dirs[i,] * width/2
+  )
+  
+  polys[[i]] <- st_polygon(list(poly_coords))
+}
+
+# Convert to simple features collection
+alongshore_transect_zones_m <- st_sfc(polys, crs = st_crs(line_m))
+alongshore_transect_zones <- st_transform(alongshore_transect_zones_m, 4326)
+
+
+##### Repeat for offshore transport
+# Set the endpoints
+start <- st_point(c(-69, 43.9))
+end <- st_point(c(-68.7, 43.4))
+
+line <- st_sfc(st_linestring(rbind(st_coordinates(start), st_coordinates(end))), crs = 4326)
+
+# reproject to meters for equal spacing
+line_m <- st_transform(line, 32619)  # UTM zone 19N for NE US
+
+# generate equally spaced points (say every 5 km)
+n_points <- 5
+points_m <- st_line_sample(line_m, sample = seq(0, 1, length.out = n_points))
+
+
+# Convert to coordinates
+coords <- st_coordinates(points_m)
+
+# Calculate segment vectors
+seg_vecs <- diff(coords)  # differences between points
+
+# Unit direction vector for each segment
+seg_dirs <- seg_vecs / sqrt(rowSums(seg_vecs^2))
+
+# Perpendicular vector (to the left of transect)
+perp_dirs <- cbind(-seg_dirs[,2], seg_dirs[,1])
+
+# Define transect width (in meters, e.g., 1000 m)
+width <- 10000
+
+# Create polygons between pairs of centerpoints
+polys <- list()
+for (i in 1:(nrow(coords)-1)) {
+  p1 <- coords[i,]
+  p2 <- coords[i+1,]
+  
+  # corners offset by perpendicular vector
+  poly_coords <- rbind(
+    p1 + perp_dirs[i,] * width/2,
+    p2 + perp_dirs[i,] * width/2,
+    p2 - perp_dirs[i,] * width/2,
+    p1 - perp_dirs[i,] * width/2,
+    p1 + perp_dirs[i,] * width/2
+  )
+  
+  polys[[i]] <- st_polygon(list(poly_coords))
+}
+
+# Convert to simple features collection
+offshore_transect_zones_m <- st_sfc(polys, crs = st_crs(line_m))
+offshore_transect_zones <- st_transform(offshore_transect_zones_m, 4326)
+
+
+
+
+ggplot() +
+  geom_sf(data = gom3_mesh, color = "black", alpha = 0.9, fill = "transparent", linewidth = 0.05) +
+  geom_sf(data = new_england) +
+  geom_sf(data = canada) +
+  geom_sf(data = alongshore_transect_zones,  aes(fill = "Alongshore Flux Transect"), alpha = 0.2) +
+  geom_sf(data = offshore_transect_zones, aes(fill = "Offshore Flux Transect"), alpha = 0.2) +
+  theme_classic() +
+  scale_color_gmri() +
+  map_theme() +
+  coord_sf(
+    xlim = c(-71, -66), 
+    ylim = c(43, 44.7), 
+    expand = T) +
+  labs(
+    title = "Maine Coastal Current Turnoff Study Area", 
+    subtitle = "Hypothetical Flux Transport Transect Zones overlaid over FVCOM Mesh",
+    fill = "Transect:")
+```
+
 
 
 ```{r}
