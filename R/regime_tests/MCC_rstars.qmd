@@ -40,7 +40,7 @@ conflicted::conflict_prefer("filter", "dplyr")
 
 
 # Set the theme
-theme_set(theme_classic() + map_theme())
+theme_set(theme_gmri_simple())
 
 # Project paths
 lob_ecol_path <- cs_path("mills", "Projects/Lobster ECOL")
@@ -100,7 +100,8 @@ Relevant Literature:
 ```{r}
 
 # Project path
-fvcom_processed_path <- cs_path("mills", "Projects/Lobster ECOL/FVCOM_processed/MaineCoastalCurrent")
+fvcom_processed_path <- cs_path(
+  "mills", "Projects/Lobster ECOL/FVCOM_processed/MaineCoastalCurrent")
 
 # Load the daily surface currents (u,v)
 daily_mcc_sc <- read_csv(here::here("local_data/MCC_PC_timeseries/MCC_daily_surface_velocities.csv"))  %>% 
@@ -110,6 +111,7 @@ daily_mcc_sc <- read_csv(here::here("local_data/MCC_PC_timeseries/MCC_daily_surf
     year = str_sub(label, 1,4),
     month = as.numeric(str_sub(label, 6, 7)))
 
+# I prepared the same data for a larger area here:
 # And the expanded area
 expanded_sc <- read_csv(here::here("data/expanded_daily_surface_currents_vectors.csv"))  %>% 
   mutate(
@@ -118,6 +120,9 @@ expanded_sc <- read_csv(here::here("data/expanded_daily_surface_currents_vectors
     year = str_sub(label, 1,4),
     month = as.numeric(str_sub(label, 6, 7)))
 
+
+# Here is a timeseries of the principal components of that data
+# after conversion to monthly and a PCA
 # Load the PCA Timeseries
 mcc_pc_monthly <- read_csv(here::here("local_data/MCC_PC_timeseries/monthly_surface_velocities_PCA_timeseries.csv"))
 
@@ -158,9 +163,9 @@ mcc_turnoff_coords <- tribble(
   -69.34, 43.21,   # Bottom Left
   -69.78, 43.62,   # Off Popham
   -67.45, 44.34,   # Off Jonesport
-  -67.4, 43.8,     # Bottom right
-  -69.34, 43.21,   # Bottom left again
-)
+  -67.4, 43.8) %>%      # Bottom right
+  # Bottom left again
+  bind_rows(.[1,])
 
 
 
@@ -172,21 +177,34 @@ mcc_turnoff_poly <- st_polygon(
   mutate(area = "Maine Coastal Current Region") 
 st_geometry(mcc_turnoff_poly) <- "geometry"
 
+# # Export a copy
+# write_sf(mcc_turnoff_poly, here::here("data/MCC_turnoff_area_poly_small.geojson"))
+# write_sf(mcc_turnoff_poly, here::here("data/MCC_turnoff_area_poly_small.shp"))
 
-write_sf(mcc_turnoff_poly, here::here("data/MCC_turnoff_area_poly_small.geojson"))
-write_sf(mcc_turnoff_poly, here::here("data/MCC_turnoff_area_poly_small.shp"))
+# Project polygon
+poly_projected <- st_transform(mcc_turnoff_poly, st_crs(gom3_mesh)) 
+
+# Trim it
+mcc_studyarea_mesh <- mesh_trim(
+  mesh = gom3_mesh, 
+  domain = st_as_sf(poly_projected) )
+
+```
 
 
+```{r}
+#| label: FVCOM-mesh-expanded area
 
-# Expanded Area?
+
+# Expanded Area Coordinates
 expanded_mcc_turnoff_coords <- tribble(
   ~"lon", ~"lat",
-  -69.85, 42.85,      # Bottom Left
-  -70,    43.65,       # Top Left
-  -67.25, 44.5,    # Off Jonesport
-  -66.45, 43.8,    # Bottom right
-  -69.85, 42.85,    # Bottom left again
-)
+  -70.65, 42.8,      # Bottom Left
+  -70,   43.65,      # Top Left
+  -67.25, 44.5,      # Off Jonesport
+  -66.45, 43.8) %>%  # Bottom right
+  # Close the polygon with the first row
+  bind_rows(.[1,])
 
 
 # Make it a polygon
@@ -199,18 +217,10 @@ expanded_turnoff_poly <- st_polygon(
 st_geometry(mcc_turnoff_poly) <- "geometry"
 
 
-
 # Project polygon
-poly_projected <- st_transform(mcc_turnoff_poly, st_crs(gom3_mesh)) 
 expanded_poly_projected <- st_transform(mcc_turnoff_poly, st_crs(gom3_mesh)) 
 
-
-
 # Trim it
-mcc_studyarea_mesh <- mesh_trim(
-  mesh = gom3_mesh, 
-  domain = st_as_sf(poly_projected) )
-
 expanded_studyarea_mesh <- mesh_trim(
   mesh = gom3_mesh, 
   domain = st_as_sf(expanded_poly_projected) )
@@ -248,14 +258,15 @@ yr_round_map <- average_directions %>%
   filter(period == "Year Round") %>% 
   ggplot() +
   geom_sf(data = new_england) +
+  geom_sf(data = canada) +
   geom_segment(
     aes(lonc, latc, xend = lonc + dx, yend = latc + dy, color = angle),
     arrow = arrow(length = unit(0.075, "cm")),
     linewidth = 0.5) +
   coord_sf(
-    xlim = c(-70.2, -67.1), 
-    ylim = c(43.2, 44.7), 
-    expand = F) +
+    xlim = c(-71, -66), 
+    ylim = c(42.8, 44.7), 
+    expand = T) +
   scale_y_continuous(breaks = seq(43, 45, .5)) +
   scale_x_continuous(breaks = seq(-71, -67, 1)) +
   facet_wrap(~period, ncol = 4) +
@@ -271,6 +282,7 @@ yr_round_map <- average_directions %>%
     legend.position = "bottom", 
     legend.title.position = "top") +
   labs(
+    title = "Average Annual Surface Current Flow for Coastal Maine",
     x = "Longitude", y = "Latitude",
     color = "Current Flow")
 
@@ -295,9 +307,9 @@ monthly_flow <- average_directions %>%
     arrow = arrow(length = unit(0.03, "cm")),
     linewidth = 0.25) +
   coord_sf(
-    xlim = c(-70.2, -67.1), 
-    ylim = c(43.2, 44.7), 
-    expand = F) +
+    xlim = c(-71, -66), 
+    ylim = c(42.8, 44.7), 
+    expand = T) +
   scale_y_continuous(breaks = seq(43, 45, .5)) +
   scale_x_continuous(breaks = seq(-71, -67, 1)) +
   facet_wrap(~period, ncol = 3) +
@@ -319,8 +331,6 @@ monthly_flow
 ```
 
 Local variability evolves throughout the year, with a blocking recirculation developing in the western portion of this study area during the summer which then forces water adjacent to this area to the east to flow away from the coast at this time of year.
-
-
 
 ### Review the Year-Round MCC Principal Components
 

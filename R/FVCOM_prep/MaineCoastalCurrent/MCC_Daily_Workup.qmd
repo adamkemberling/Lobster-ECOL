@@ -98,19 +98,17 @@ This junction is important as it is a site where a variable portion of current f
 This shift in current flow has important implications for nutrient and plankton distribution, and larval transport. This is why this section of the current flow is used as an indicator of general circulation patterns within the Gulf of Maine.
 
 
-
-
 ```{r}
 #| label: load-daily-fvcom
 # Loading FVCOM
 
-# Get some file names
+# List the FVCOM file names we have locally (on Box)
 fvcom_surfbot_files <- setNames(
   list.files(fvcom_path, full.names = T, pattern = ".nc"),
   str_remove(list.files(fvcom_path, full.names = F, pattern = ".nc"), ".nc"))
 
 
-# Open one
+# Open one file to build the mesh and get indexing information
 gom3_early <- nc_open(fvcom_surfbot_files[[1]])
 # So the data is daily...
 # ncvar_get(gom3_early, varid = "surface_v", start = c(1,1), count = c(1,-1))
@@ -133,8 +131,10 @@ We may want to extend our area east (Li et al 2022):
 > The EMCC generally bifurcates southeast of Mount Desert Island (D. Brooks & Townsend, 1989; D. Li et al., 2021; Luerssen et al., 2005; Pettigrew et al., 1998, 2005).
 
 
-```{r}
+Using a polygon boundary for an area off the coast of Maine where the MCC dynamics of interest occur, we can clip the FVCOM mesh and obtain the indices to use for pulling data from the many netcdf files.
 
+
+```{r}
 # Make a polygon for the area of interest:
 
 #Original Area
@@ -154,18 +154,60 @@ mcc_turnoff_poly <- st_polygon(list(cbind(mcc_turnoff_coords$lon, mcc_turnoff_co
   mutate(area = "Maine Coastal Current Region") 
 st_geometry(mcc_turnoff_poly) <- "geometry"
 
+# # Export for other notebooks:
+# st_write(
+#   mcc_turnoff_poly,
+#   str_c(poly_paths, "spatial_defs_2025/MCC_turnoff_lobzones.shp"), 
+#   delete_dsn = T) 
+
+# Turn off s2
+sf::sf_use_s2(FALSE)
+
+# Project polygon
+poly_projected <- st_transform(mcc_turnoff_poly, st_crs(gom3_mesh)) 
+
+# Trim the mesh to the study area
+mcc_studyarea_mesh <- mesh_trim(
+  mesh = gom3_mesh, 
+  domain = st_as_sf(poly_projected) )
+
+
+```
 
 
 
-# Expanded Area?
+```{r}
+# Map the area we're using for MCC dynamics:
+ggplot() +
+  geom_sf(data = new_england) +
+  geom_sf(data = canada) +
+  geom_sf(data = mcc_studyarea_mesh, color = "black", alpha = 0.6) +
+  geom_sf(data = mcc_turnoff_poly, fill = "orange", alpha = 0.4) +
+  theme_classic() +
+  map_theme() +
+  coord_sf(
+    xlim = c(-71, -66), 
+    ylim = c(43, 44.7), 
+    expand = T) +
+  labs(title = "MCC Turnoff Study Area - FVCOM Mesh Intersection")
+
+```
+
+Then for the ability to see across a broader area, I've prepared a second polygon for clipping the data:
+
+
+```{r}
+#| label: expanded MCC data
+
+# Expanded Area
 expanded_mcc_turnoff_coords <- tribble(
   ~"lon", ~"lat",
-  -69.85, 42.85,      # Bottom Left
-  -70,    43.65,       # Top Left
-  -67.25, 44.5,    # Off Jonesport
-  -66.45, 43.8,    # Bottom right
-  -69.85, 42.85,    # Bottom left again
-)
+  -70.65, 42.8,      # Bottom Left
+  -70,   43.65,      # Top Left
+  -67.25, 44.5,      # Off Jonesport
+  -66.45, 43.8) %>%  # Bottom right
+  # Close the polygon with the first row
+  bind_rows(.[1,])
 
 
 # Make it a polygon
@@ -177,51 +219,34 @@ expanded_turnoff_poly <- st_polygon(
   mutate(area = "Maine Coastal Current Region") 
 st_geometry(mcc_turnoff_poly) <- "geometry"
 
-```
 
-Using that boundary we can clip the FVCOM mesh and obtain the indices to use for pulling data from the many netcdf files.
-
-```{r}
-#| label: Trim Mesh to MCC area
-
-# Turn off s2
-sf::sf_use_s2(FALSE)
-
-# Project polygon
-poly_projected <- st_transform(mcc_turnoff_poly, st_crs(gom3_mesh)) 
+# Reproject
 expanded_poly_projected <- st_transform(expanded_turnoff_poly, st_crs(gom3_mesh)) 
 
-
-
-# Trim them
-mcc_studyarea_mesh <- mesh_trim(
-  mesh = gom3_mesh, 
-  domain = st_as_sf(poly_projected) )
-```
-
-
-```{r}
+# Trim the mesh to the expanded area
 
 # Run the expanded mesh
 expanded_studyarea_mesh <- mesh_trim(
   mesh = gom3_mesh, 
   domain = st_as_sf(expanded_poly_projected) )
+
 ```
 
 
+
+
 ```{r}
-# Map that
+# Map the expanded area:
 ggplot() +
   geom_sf(data = new_england) +
   geom_sf(data = canada) +
-  geom_sf(data = expanded_studyarea_mesh, color = "gray80", alpha = 0.4) +
-  geom_sf(data = mcc_studyarea_mesh, color = "black", alpha = 0.6) +
+  geom_sf(data = expanded_studyarea_mesh, color = "gray60", alpha = 0.4) +
   geom_sf(data = mcc_turnoff_poly, fill = "orange", alpha = 0.4) +
   theme_classic() +
   map_theme() +
   coord_sf(
     xlim = c(-71, -66), 
-    ylim = c(43, 44.7), 
+    ylim = c(42.8, 44.7), 
     expand = T) +
   labs(title = "MCC Turnoff Study Area - FVCOM Mesh Intersection")
 
@@ -246,6 +271,23 @@ During late-fall and early winter the inshore flow reverses*
 
 >  Both the circulation and particle tracking models suggested that the connectivity generally peaks twice annually, highest in winter and then secondarily in late spring or early summer. The former is concurrent with the most southwest offshore veering of the EMCC, while the latter is concurrent with the strongest EMCC. Moreover, the counter-WMCC can reduce the connectivity and result in year-to-year variations. Li et al. 2022
 
+We care about this because flow characteristics determine whether lobster larva are transported along the coast or advected offshore. In chatting with Damien, there may not be 1 best way to get the meaningful information out of the different FVCOM variables available.
+
+Our aim ultimately is generate a timeseries that can be used as an index of this behavior. This timeseries could be a direct measure of connectivity (potentially by measuring flux) or principal components which capture the onshore/offshore dynamic and can be used as a proxy for MCC flow continuity.
+
+
+It may make sense to tailor the data we use and the index we generate to lobster question, and taking steps like:
+ * Limiting the time span to summer months to include the time of year when lobster larva are dispersing
+ * Limiting the spatial extent of the area we pull currents from, to minimize sources of variability
+
+
+### Subsetting Surface Currents from FVCOM Files
+
+We have requested and received files from the UMASS Dartmouth team that contain surface and bottom temperatures, and surface current vectors from 1970-2019. The data is stored in yearly NetCDF files, which are indexed by node for temperature and salinity information, and by centroid for current vector data.
+
+The following functions aid in the extraction of this data from the NetCDF filed for our area of interest, and restructuring it as a dataframe for plotting and analyses.
+
+This first function is a utility function for indexing data for a set of indices out of the results returned from `ncdf4::ncvar_get()`.
 
 
 ```{r}
@@ -286,6 +328,7 @@ subset_nc_var <- function(nc_array, index_list) {
 }
 ```
 
+This second function will assemble a timeseries for `u` & `v` variables from a Netcdf file given the path to the file, and the indexing information (list of integer values for centroids we want the data for).
 
 
 ```{r}
@@ -347,7 +390,7 @@ get_elem_timeseries <- function(fpath, elem_list){
 
 ```
 
-
+The next code chunk loops over all the files we have (or a list of URLs) and returns data in the same format for the same locations for each. This is where I extract the full record for our area of interest:
 
 
 ```{r}
@@ -355,51 +398,54 @@ get_elem_timeseries <- function(fpath, elem_list){
 #| eval: false
 
 
-# Get the elem numbers we care about for ncvar_get()
-mcc_elems <- unique(mcc_studyarea_mesh$elem) %>%
-  setNames(unique(mcc_studyarea_mesh$elem))
-
-
-# # Test one
-#t1 <-  get_elem_timeseries(fpath = fvcom_surfbot_files[[1]], elem_list = mcc_elems[1])
-
-# Run them all
-daily_mcc_surface_currents <- map_dfr(
-  .x = fvcom_surfbot_files,
-  .f = ~get_elem_timeseries(fpath = .x, elem_list = mcc_elems))
-
-
-# Save them
-write_csv(
-  daily_mcc_surface_currents,
-  here::here("data/daily_mcc_surface_currents_vectors.csv"))
+# # Get the elem numbers we care about for ncvar_get()
+# mcc_elems <- unique(mcc_studyarea_mesh$elem) %>%
+#   setNames(unique(mcc_studyarea_mesh$elem))
+# 
+# 
+# # # Test one
+# #t1 <-  get_elem_timeseries(fpath = fvcom_surfbot_files[[1]], elem_list = mcc_elems[1])
+# 
+# # Run them all
+# daily_mcc_surface_currents <- map_dfr(
+#   .x = fvcom_surfbot_files,
+#   .f = ~get_elem_timeseries(fpath = .x, elem_list = mcc_elems))
+# 
+# 
+# # Save them
+# write_csv(
+#   daily_mcc_surface_currents,
+#   here::here("data/daily_mcc_surface_currents_vectors.csv"))
 
 ```
 
 
+Since I like looking at data all over, I did the same thing for the broader area. This is really not an efficient way to look at the data, but I did it anyways.
+
+This code chunk is just a repeat of the one above, but performed on index details for an expanded area.
 
 ```{r}
 #| label: extract daily currents for elements beyond MCC area
 #| eval: false
 
 
-# Get the elem numbers we care about for ncvar_get()
-expanded_mcc_elems <- unique(expanded_studyarea_mesh$elem) %>%
-  setNames(unique(expanded_studyarea_mesh$elem))
-
-
-# Run the expanded all
-expanded_daily_surface_currents <- map_dfr(
-  .x = fvcom_surfbot_files,
-  .f = ~get_elem_timeseries(
-    fpath = .x, 
-    elem_list = expanded_mcc_elems))
-
-
-# Save them
-write_csv(
-  expanded_daily_surface_currents,
-  here::here("data/expanded_daily_surface_currents_vectors.csv"))
+# # Get the elem numbers we care about for ncvar_get()
+# expanded_mcc_elems <- unique(expanded_studyarea_mesh$elem) %>%
+#   setNames(unique(expanded_studyarea_mesh$elem))
+# 
+# 
+# # Run the expanded all
+# expanded_daily_surface_currents <- map_dfr(
+#   .x = fvcom_surfbot_files,
+#   .f = ~get_elem_timeseries(
+#     fpath = .x, 
+#     elem_list = expanded_mcc_elems))
+# 
+# 
+# # Save them
+# write_csv(
+#   expanded_daily_surface_currents,
+#   here::here("data/expanded_daily_surface_currents_vectors.csv"))
 
 ```
 
@@ -540,44 +586,62 @@ The following approach uses Northward (v) and Eastward(u) water velocity of the 
 ```{r}
 #| label: surface-currents-pca
 
-# For Area weighted PCA, get mesh element areas
-
+# For Area weighted PCA, get mesh element areas this way:
 
 # Get the surface area of all the elements
 elem_areas_df <- map_dfr(
   split(mcc_studyarea_mesh, mcc_studyarea_mesh$elem),
    function(x){
-     data.frame("elem" = x$elem, "area" = st_area(x))
-})
+     data.frame("elem" = x$elem, "area" = st_area(x))})
 
 
 # A. Surface current variables (u,v)
 pca_mat <- daily_mcc_sc %>% 
-  # Join surface areas and weight u + v
-  # left_join(elem_areas_df) %>% 
-  # mutate(across(c(u,v), ~.x*sqrt(area))) %>%  # Weight the current values by the areas
   select(time, elem, u, v) %>% 
   pivot_wider(
     names_from = elem, 
     values_from = c(u, v)) %>% 
   column_to_rownames("time")
 
-# # Inspect
-# pca_mat[1:6,1:6]
-
 
 # Do PCA
 # If all columns have comparable variances and you want to retain absolute differences in current strength, center but do not scale.
 mcc_pca <- prcomp(pca_mat, scale. = TRUE, center = TRUE)
 
-# Save the PCA
+# Save the PCA itself?
 # mcc_pca <- saveRDS(mcc_pca, here::here("local_data/MCC_PC_timeseries/daily_surface_velocities_PCA.rds"))
 ```
 
+# Export:
 
-### PC Loadings
+I am exporting the principal component timeseries from the approach that used the Northward and Eastward current velocities. 
 
-The following maps show how the two principal component rotations/loadings (the same if matrix is scaled) relate to areas along the study area.
+It explained more variance in the data, and mapped fairly well to some intuition about which direction the currents were flowing.
+
+```{r}
+#|eval: false
+
+# Save to project path
+fvcom_processed_path <- cs_path("mills", "Projects/Lobster ECOL/FVCOM_processed/MaineCoastalCurrent")
+
+
+# A. Surface current variables (u,v)
+# Exporting to Box
+daily_mcc_sc %>% 
+  write_csv(str_c(fvcom_processed_path, "MCC_daily_surface_velocities.csv"))
+
+
+# Save the PCA timeseries
+mcc_pc_monthly %>% 
+  ungroup() %>% 
+  write_csv(str_c(fvcom_processed_path, "monthly_surface_velocities_PCA_timeseries.csv"))
+```
+
+
+
+### Principal Component Weights
+
+The following maps show how the two principal component rotations/loadings correlate with the surface current vectors u (eastward velocity) and v (northward velocity) across along the study area.
 
 ```{r}
 # Summary - Proportion of variance
@@ -619,7 +683,10 @@ mcc_studyarea_mesh %>%
 
 ```
 
-### PC Timeseries
+
+### Principal Component Timeseries
+
+If we take the principal component values for all locations, and aggregate the loadings across the whole area, we can produce timeseries that reflect the average for the area for each month:
 
 
 ```{r}
@@ -656,7 +723,8 @@ mcc_pc_monthly <- mcc_pcomponents %>%
 
 
 
-# Plot daily with the monthly smooth
+# Plot monthly timeseries for the first two prncipal components
+# Add a rolling monthly smooth as an overlay
 mcc_pc_monthly %>% 
   ggplot() +
   geom_line(
@@ -675,20 +743,26 @@ mcc_pc_monthly %>%
 ```
 
 
-### Validation Exercise: Pettigrew 2005 Years
+
+
+## Validation Exercise: Pettigrew 2005 Years
 
 I need to figure out how to relate the principal components to the open/closed gate language of pettigrew 2005.
 
-This study used 1998-2001 as the study years, and characterized strong offshore veering in 1998 and strong continuous flow in 2000.
+The Pettigrew 2005 study used a three-year period 1998-2001 as a case-study to characterize different patterns in maine coastal current dynamics. This study documented strong offshore veering in 1998 and strong along-shore continuous flow in 2000, with conditions somewhere in-between during 1999.
 
-These years may be useful for characterizing the relationship between the current principal components. Here is what the current directions were like during those years:
+Using these three years, we can characterizing/assess the relationship between the current principal components we're developing for consistency with Pettigrew's findings. 
+
+Here is what the current directions were like during the summer (June-August) for those three years:
 
 ```{r}
 
 
 # Quick verification that directions make sense
 pettigrew_directions <-  daily_mcc_sc %>% 
-  filter(between(time, as.Date("1998-01-01"), as.Date("2001-12-31"))) %>% 
+  filter(
+    between(time, as.Date("1998-01-01"), as.Date("2001-12-31")),
+    month(time) %in% c(6:8)) %>% 
   mutate(year = lubridate::year(time)) %>% 
   filter(year != 1999) %>% 
   mutate(
@@ -741,7 +815,7 @@ ggplot(pettigrew_directions) +
     start = pi/2)) +
   labs(
     title = "MCC Pettigrew 2025: Gate Open/Closed/Mixed Example Years",
-    subtitle = "Average Surface Current Direction", 
+    subtitle = "Average Summer Surface Current Direction", 
     x = "Longitude", 
     y = "Latitude",
     color = "Current Direction")
@@ -749,7 +823,9 @@ ggplot(pettigrew_directions) +
 ```
 
 
-### Validation Exercise: PC Timeseries Peaks
+## Validation Exercise: PC Timeseries Peaks
+
+The comparison against the three years in the pettigrew paper
 
 Choose the 12-month periods where principal components are at their peaks. Make maps of what the current directions over that same period of time. 
 
@@ -757,7 +833,8 @@ Choose the 12-month periods where principal components are at their peaks. Make 
 # Get the dates when the 12 month average are highest
 mcc_peaks <- mcc_pc_monthly %>% 
   select(-vals) %>% 
-  filter(date > as.Date("1990-01-01")) %>% 
+  filter(
+    date > as.Date("1990-01-01")) %>% 
   pivot_wider(names_from = `Principal Component`, values_from = vals_rollmean) %>% 
   mutate(
     PC_state = case_when(
@@ -875,127 +952,6 @@ peak_direction_maps
   
 ```
 
-
-
-# PCA on Angular Direction and Speed Directly?
-
-We could try coding the PCA to use angle and speed directly rather than the Northward and Eastward velocity components.
-
-The cosine and sine components of the current's angular direction preserve the cyclical nature of the currents. 
-
-```{r}
-
-# Get the Cyclic X and Y components using trig
-angular_pca_df <- daily_mcc_sc %>%
-  mutate(
-    angle_rad = atan2(v, u),    # Compute angle in radians
-    cos_theta = cos(angle_rad), # Cyclic X component
-    sin_theta = sin(angle_rad), # Cyclic Y component
-    speed = sqrt(u^2 + v^2)     # Optional: current speed
-  )
-
-
-# A. Pivot wider to get those three things by the mesh element
-angular_pca_mat <- angular_pca_df %>% 
-  select(time, elem, cos_theta, sin_theta, speed) %>% 
-  pivot_wider(
-    names_from = elem, 
-    values_from = c(cos_theta, sin_theta, speed), names_sep = "X") %>% 
-  column_to_rownames("time")
-
-# Now run PCA using cos_theta and sin_theta instead of u, v
-angular_pca_result <- prcomp(angular_pca_mat, center = TRUE, scale. = TRUE)
-```
-
-
-
-
-### Angular PC Loadings
-
-The following maps show how the two principal component rotations/loadings (the same if matrix is scaled) relate to areas along the study area.
-
-```{r}
-# Summary - Proportion of variance
-angular_pca_summ <- summary(angular_pca_result)
-angular_pca_summ$importance[1:2, 1:2]
-
-# Pull + Reshape the Rotations / Loadings
-angular_loadings <- data.frame(
-  "PC1" = angular_pca_result$rotation[,"PC1"],
-  "PC2" = angular_pca_result$rotation[,"PC2"]) %>% 
-  rownames_to_column("loc") %>% 
-  separate(col = "loc", into = c("var", "elem"), sep = "X") %>% 
-  pivot_longer(
-    cols = starts_with("PC"), 
-    names_to = "PC", 
-    values_to = "PC_rotation") %>% 
-  mutate(longname = case_match(
-    var,
-    "cos_theta" ~"Cyclic X component",
-    "sin_theta" ~ "Cyclic Y component",
-    "speed" ~ "Current Speed"))
-
-
-
-# Map The Loadings
-mcc_studyarea_mesh %>% 
-  mutate(elem = as.character(elem)) %>% 
-  left_join(angular_loadings) %>% 
-  st_as_sf() %>% 
-  ggplot() +
-  geom_sf(data = new_england) +
-  geom_sf(aes(fill = PC_rotation)) +
-  facet_grid(PC~longname) +
-  coord_sf(
-    xlim = c(-70, -67.3), 
-    ylim = c(43.2, 44.7), 
-    expand = F) +
-  scale_fill_distiller(palette = "RdBu", limits = c(-0.06, 0.06)) +
-  map_theme(
-    legend.title.position = "top",
-    legend.title = element_text(hjust = 0.5),
-    legend.position = "bottom")
-
-```
-
-### Angular PC Timeseries
-
-
-```{r}
-
-# Pull Principal Components overall values
-angular_pcomponents <- data.frame(
-  "date" = rownames(angular_pca_mat),
-  "PC1" = angular_pca_result$x[,"PC1"],
-  "PC2" = angular_pca_result$x[,"PC2"])  %>% 
-  mutate(
-    date = as.Date(date), 
-    mon = lubridate::month(date), 
-    yr = lubridate::year(date))
-
-# Make a monthly summary:
-angular_pc_monthly <- angular_pcomponents %>% 
-  pivot_longer(
-    starts_with("PC"), 
-    names_to = "Principal Component", 
-    values_to = "vals") %>% 
-  group_by(yr, mon, `Principal Component`) %>% 
-  summarise(
-    vals = mean(vals),
-    .groups = "drop") %>% 
-  mutate(date = as.Date(
-    str_c(
-      yr,
-      str_pad(mon, side = "left", width = 2, pad = "0"),
-      "15",
-      sep = "-"))) %>% 
-  group_by(`Principal Component`) %>% 
-  arrange(date) %>% 
-  mutate(vals_rollmean = zoo::rollmean(vals, k = 12, fill = NA, align = "center"))
-
-
-
-```
 
 
 
@@ -1125,29 +1081,6 @@ peak_direction_maps
   
 ```
 
-# Export:
-
-I am exporting the principal component timeseries from the approach that used the Northward and Eastward current velocities. It explained more variance in the data, and mapped fairly well to some intuition about which direction the currents were flowing.
-
-```{r}
-#|eval: false
-
-# Save to project path
-fvcom_processed_path <- cs_path("mills", "Projects/Lobster ECOL/FVCOM_processed/MaineCoastalCurrent")
-
-
-# A. Surface current variables (u,v)
-daily_mcc_sc %>% 
-  #write_csv(here::here("local_data/MCC_PC_timeseries/MCC_daily_surface_velocities.csv"))
-  write_csv(str_c(fvcom_processed_path, "MCC_daily_surface_velocities.csv"))
-
-
-# Save the PCA timeseries locally
-mcc_pc_monthly %>% 
-  ungroup() %>% 
-  #write_csv(here::here("local_data/MCC_PC_timeseries/monthly_surface_velocities_PCA_timeseries.csv"))
-  write_csv(str_c(fvcom_processed_path, "monthly_surface_velocities_PCA_timeseries.csv"))
-```
 
 
 
@@ -1160,3 +1093,129 @@ An alternative way to potentially get at MCC flow continuity is by measuring wat
 We could frame it as either the total southwestern flux, or if its clear/consistent where positionally the current veers south, we could measure southward flux in that area.
 
 It would be super interesting to correlate the surface volume flux with the river output from the penobscot.
+
+
+
+---
+
+
+
+# DEFUNCT: PCA on Angular Direction and Speed Directly?
+
+We could try coding the PCA to use angle and speed directly rather than the Northward and Eastward velocity components.
+
+The cosine and sine components of the current's angular direction preserve the cyclical nature of the currents. 
+
+```{r}
+# 
+# # Get the Cyclic X and Y components using trig
+# angular_pca_df <- daily_mcc_sc %>%
+#   mutate(
+#     angle_rad = atan2(v, u),    # Compute angle in radians
+#     cos_theta = cos(angle_rad), # Cyclic X component
+#     sin_theta = sin(angle_rad), # Cyclic Y component
+#     speed = sqrt(u^2 + v^2)     # Optional: current speed
+#   )
+# 
+# 
+# # A. Pivot wider to get those three things by the mesh element
+# angular_pca_mat <- angular_pca_df %>% 
+#   select(time, elem, cos_theta, sin_theta, speed) %>% 
+#   pivot_wider(
+#     names_from = elem, 
+#     values_from = c(cos_theta, sin_theta, speed), names_sep = "X") %>% 
+#   column_to_rownames("time")
+# 
+# # Now run PCA using cos_theta and sin_theta instead of u, v
+# angular_pca_result <- prcomp(angular_pca_mat, center = TRUE, scale. = TRUE)
+```
+
+
+
+
+### Angular PC Loadings
+
+The following maps show how the two principal component rotations/loadings (the same if matrix is scaled) relate to areas along the study area.
+
+```{r}
+# # Summary - Proportion of variance
+# angular_pca_summ <- summary(angular_pca_result)
+# angular_pca_summ$importance[1:2, 1:2]
+# 
+# # Pull + Reshape the Rotations / Loadings
+# angular_loadings <- data.frame(
+#   "PC1" = angular_pca_result$rotation[,"PC1"],
+#   "PC2" = angular_pca_result$rotation[,"PC2"]) %>% 
+#   rownames_to_column("loc") %>% 
+#   separate(col = "loc", into = c("var", "elem"), sep = "X") %>% 
+#   pivot_longer(
+#     cols = starts_with("PC"), 
+#     names_to = "PC", 
+#     values_to = "PC_rotation") %>% 
+#   mutate(longname = case_match(
+#     var,
+#     "cos_theta" ~"Cyclic X component",
+#     "sin_theta" ~ "Cyclic Y component",
+#     "speed" ~ "Current Speed"))
+# 
+# 
+# 
+# # Map The Loadings
+# mcc_studyarea_mesh %>% 
+#   mutate(elem = as.character(elem)) %>% 
+#   left_join(angular_loadings) %>% 
+#   st_as_sf() %>% 
+#   ggplot() +
+#   geom_sf(data = new_england) +
+#   geom_sf(aes(fill = PC_rotation)) +
+#   facet_grid(PC~longname) +
+#   coord_sf(
+#     xlim = c(-70, -67.3), 
+#     ylim = c(43.2, 44.7), 
+#     expand = F) +
+#   scale_fill_distiller(palette = "RdBu", limits = c(-0.06, 0.06)) +
+#   map_theme(
+#     legend.title.position = "top",
+#     legend.title = element_text(hjust = 0.5),
+#     legend.position = "bottom")
+
+```
+
+### Angular PC Timeseries
+
+
+```{r}
+
+# # Pull Principal Components overall values
+# angular_pcomponents <- data.frame(
+#   "date" = rownames(angular_pca_mat),
+#   "PC1" = angular_pca_result$x[,"PC1"],
+#   "PC2" = angular_pca_result$x[,"PC2"])  %>% 
+#   mutate(
+#     date = as.Date(date), 
+#     mon = lubridate::month(date), 
+#     yr = lubridate::year(date))
+# 
+# # Make a monthly summary:
+# angular_pc_monthly <- angular_pcomponents %>% 
+#   pivot_longer(
+#     starts_with("PC"), 
+#     names_to = "Principal Component", 
+#     values_to = "vals") %>% 
+#   group_by(yr, mon, `Principal Component`) %>% 
+#   summarise(
+#     vals = mean(vals),
+#     .groups = "drop") %>% 
+#   mutate(date = as.Date(
+#     str_c(
+#       yr,
+#       str_pad(mon, side = "left", width = 2, pad = "0"),
+#       "15",
+#       sep = "-"))) %>% 
+#   group_by(`Principal Component`) %>% 
+#   arrange(date) %>% 
+#   mutate(vals_rollmean = zoo::rollmean(vals, k = 12, fill = NA, align = "center"))
+
+
+
+```

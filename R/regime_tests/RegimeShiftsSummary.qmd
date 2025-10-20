@@ -36,7 +36,7 @@ execute:
   library(trend)
 }
 
-# namespace conflicts
+# Namespace conflicts
 conflicted::conflict_prefer("select", "dplyr")
 conflicted::conflict_prefer("filter", "dplyr")
 
@@ -61,9 +61,8 @@ new_england <- ne_states("united states of america", returnclass = "sf") %>%
   filter(postal %in% c("VT", "ME", "RI", "MA", "CT", "NH", "NY", "MD", "VA", "NJ", "DE", "NC", "PA", "WV"))
 canada <- ne_states("canada", returnclass = "sf")
 
-# # # Support functions for FVCOM
+ # Support functions for FVCOM
 source(here::here("R/FVCOM_Support.R"))
-
 
 
 # New areas factor levels

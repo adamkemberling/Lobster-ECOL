@@ -1,0 +1,178 @@
+---
+title: "Maine Coastal Current Flux Transport"
+description: | 
+  Maine Coastal Current PCA/EOF with FVCOM
+date: "Updated on: `r Sys.Date()`"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    df-print: kable
+    self-contained: true
+execute: 
+  echo: true
+  warning: false
+  message: false
+  fig.align: "center"
+  comment: ""
+---
+
+```{r}
+
+{
+  library(raster)
+  library(sf) 
+  library(fvcom) 
+  library(ncdf4) 
+  library(tidyverse)
+  library(gmRi)
+  library(patchwork)
+  library(rnaturalearth)
+  library(showtext)
+  # Cyclic color palettes in scico
+  # From: https://www.fabiocrameri.ch/colourmaps/
+  library(scico)
+  library(legendry)
+}
+
+# namespace conflicts
+conflicted::conflict_prefer("select", "dplyr")
+conflicted::conflict_prefer("filter", "dplyr")
+
+
+# Set the theme
+theme_set(theme_gmri_simple())
+
+# Project paths
+lob_ecol_path <- cs_path("mills", "Projects/Lobster ECOL")
+fvcom_path    <- cs_path("res", "FVCOM/Lobster-ECOL")
+poly_paths    <- cs_path("mills", "Projects/Lobster ECOL/Spatial_Defs")
+
+# Shapefiles
+new_england <- ne_states("united states of america", returnclass = "sf") %>% 
+  filter(postal %in% c("VT", "ME", "RI", "MA", "CT", "NH", "NY", "MD", "VA", "NJ", "DE", "NC", "PA", "WV"))
+canada <- ne_states("canada", returnclass = "sf")
+
+# # # Support functions for FVCOM
+source(here::here("R/FVCOM_Support.R"))
+```
+
+
+```{r}
+#| label: style-sheet
+#| results: asis
+
+# Use GMRI style
+use_gmri_style_rmd()
+```
+
+
+```{r}
+#| label: fonts-config
+#| echo: false
+
+
+# Path to the directory containing the font file (replace with your actual path)
+font_dir <- paste0(system.file("stylesheets", package = "gmRi"), "/GMRI_fonts/Avenir/")
+
+# Register the font
+font_add(
+  family = "Avenir",
+  file.path(font_dir, "LTe50342.ttf"),
+  bold = file.path(font_dir, "LTe50340.ttf"),
+  italic = file.path(font_dir, "LTe50343.ttf"),
+  bolditalic = file.path(font_dir, "LTe50347.ttf"))
+
+# Load the font
+showtext::showtext_auto()
+
+```
+
+```{r}
+#| label: build fvcom mesh
+
+
+
+# List the FVCOM file names we have locally (on Box)
+fvcom_surfbot_files <- setNames(
+  list.files(fvcom_path, full.names = T, pattern = ".nc"),
+  str_remove(list.files(fvcom_path, full.names = F, pattern = ".nc"), ".nc"))
+
+
+# Open one file to build the mesh and get indexing information
+gom3_early <- nc_open(fvcom_surfbot_files[[1]])
+# So the data is daily...
+# ncvar_get(gom3_early, varid = "surface_v", start = c(1,1), count = c(1,-1))
+
+
+# Get the mesh itself as a simple feature collection
+gom3_mesh <- get_mesh_geometry(gom3_early, what = 'lonlat') 
+```
+
+
+
+# Flux Transport of Maine Coastal Current Information from FVCOM
+
+Alongshore transport of water during the summer months is thought to be favorable for lobster recruitment, a species which primarily spawns during this time of year.
+
+
+In `AlongshoreOffshore_MCC_EOF` I explored using principal component analyses as a means to get some index of the connectivity between the eastern and western branches of the Maine Coastal Current.
+
+After exploring those thoroughly, and getting feedback from the team it was recommended that we approach the question with a more direct measurement of alongshore and offshore Flux using a transect.
+
+
+
+
+```{r}
+#| label: building the transect
+
+# Build transects from equally spaced points in an alongshore and offshore direction
+alongshore_transect <- data.frame(
+      lon = seq(-69.5, -67.5, length.out = 10),
+      lat = seq(43.5, 44.2, length.out = 10)) %>% 
+  st_as_sf(coords = c("lon", "lat"), crs = st_crs(4326), remove = F)
+offshore_transect <- data.frame(
+      lon = seq(-69, -68.7, length.out = 8),
+      lat = seq(43.9, 43.4, length.out = 8)) %>% 
+  st_as_sf(coords = c("lon", "lat"), crs = st_crs(4326), remove = F)
+
+# Map the transects:
+ggplot() +
+  geom_sf(data = gom3_mesh, color = "black", alpha = 0.9, fill = "transparent", linewidth = 0.05) +
+  geom_sf(data = new_england) +
+  geom_sf(data = canada) +
+  geom_sf(data = alongshore_transect, aes(color = "Alongshore Flux Transect"), size = 2) +
+  geom_sf(data = offshore_transect, aes(color = "Offshore Flux Transect"), size = 2) +
+  theme_classic() +
+  scale_color_gmri() +
+  map_theme() +
+  coord_sf(
+    xlim = c(-71, -66), 
+    ylim = c(43, 44.7), 
+    expand = T) +
+  labs(
+    title = "Maine Coastal Current Turnoff Study Area", 
+    subtitle = "Hypothetical Flux Transport Transects overlaid over FVCOM Mesh",
+    color = "Transect:")
+
+
+```
+
+For each location along the transect, we want vertically integrated current velocites (eastward ua, and northward va <- double-check names).
+
+The points along the transect will follow a line, and thus not match the FVCOM mesh structure. This means we will need to get interpolated values using nearby or surrounding locations
+
+
+```{r}
+#| label: getting vertically integrated u and v data
+
+
+# Load an FVCOM file that has the ua, uv values (can be monthly)
+
+```
+
+
+```{r}
+
+```
+
