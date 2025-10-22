@@ -91,7 +91,7 @@ showtext::showtext_auto()
 Regions of interest are looking at temperature dynamics ar two spatial scales: 
 
  1.a nearshore scale within 12nm of the coast, which is further sub-divided by NMFS statistical areas. \
- 2. The second is an offshore scale extending beyond 12nm to the shelf break. This area is split into Southern New England and a Northern Gulf of Maine + Georges Bank region.\
+ 2. The second is an offshore scale extending beyond 12nm to the shelf break. This area is split into Southern New England and a Northern Gulf of Maine + Georges Bank region.
  
  
 ```{r}
@@ -363,7 +363,7 @@ regional_from_nodes <- function(fvcom_mesh_trios, nc, nc_varname = "surface_t"){
   triangle_temps <- map(unique_elems, function(elem_id){
     
     # Slice the row for that element, get distinct in case >1
-    elem_df <- filter(regional_assignments, elem == elem_id) %>% 
+    elem_df <- filter(fvcom_mesh_trios, elem == elem_id) %>% 
       distinct(elem, p1, p2, p3)
     
     # Get element id

@@ -1,0 +1,479 @@
+---
+title: "FVCOM to Timeseries Demo"
+description: | 
+  Processing Regional Timeseries of Surface and Bottom Temperatures
+date: "Updated on: `r Sys.Date()`"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    df-print: kable
+    self-contained: true
+execute: 
+  echo: true
+  warning: false
+  message: false
+  fig.align: "center"
+  comment: ""
+---
+
+```{r}
+
+####. packages. ####
+library(gmRi)           # for building file paths to box
+library(tidyverse)      # data wrangling and plotting
+library(sf)             # spatial data support
+library(rnaturalearth)  # shapefiles for country and states
+library(fvcom)          # Bigelow package for dealing with FVCOM
+library(ncdf4)          # Support for netcdf files
+
+# Set a plotting theme
+theme_set(theme_gmri_simple())
+
+# Project paths on box
+lob_ecol_path <- cs_path("mills", "Projects/Lobster ECOL")
+fvcom_path    <- cs_path("res", "FVCOM/Lobster-ECOL")
+poly_paths    <- cs_path("mills", "Projects/Lobster ECOL/Spatial_Defs")
+
+# State and Province Shapefiles for US + Canada
+# Downloaded locally as part of the rnaturalearthhires package
+new_england <- ne_states("united states of america", returnclass = "sf") %>% 
+  filter(postal %in% c("VT", "ME", "RI", "MA", "CT", "NH", "NY", "MD", "VA", "NJ", "DE", "NC", "PA", "WV"))
+canada <- ne_states("canada", returnclass = "sf")
+```
+
+
+# Timeseries from FVOM
+
+About:
+
+This is a start-to-finish demo of getting a timeseries from the FVCOM Data using a shapefile.
+
+The FVCOM data I am using as a starting point was prepared for us by Dr. Siqi Li in Dr. Chen's lab at UMASS Dartmouth. A Key difference between these files (which have a limited number of variables) and a "full" FVCOM file is that there is no dimension for depth. 
+
+This difference means that there is one less dimension when indexing data out of these files with square brackets `[]`. This code will need to be modified slighly to index the proper depth (`siglay`) if using another FVCOM file source.
+
+
+### Load a Shapefile
+
+The following R code will provide the steps to read a shapefile (.shp, .geojson, or similar) into R as a "simple features" dataframe, a special dataframe that contains geospatial information (like the coordinate reference system). These can represent various vector geometries: points, lines, polygons, multipolygons etc.
+
+Then I will plot it just so we can see it.
+
+For this example I will use the lobster management zones:
+
+```{r}
+#| label: Read a shapefile from box
+
+# Make paths
+res_shapefiles <- cs_path("res", "Shapefiles")
+lob_zones_path <- str_c(res_shapefiles, "LobsterZones/DMR/DMR_Lobster_Zones.shp")
+
+# Read it in
+lob_zones <- st_read(lob_zones_path)
+
+# We can subset these objects just like any other dataframe
+sf_use_s2(FALSE) # turn off spherical geometry so we can simplify the geometry
+lob_zones_main <- filter(lob_zones, ZONEID %in% c("B", "C", "D")) %>% 
+  st_simplify()
+
+# Plot the subset on a map
+ggplot() +
+  geom_sf(data = new_england) +
+  geom_sf(data = canada) +
+  geom_sf(data = lob_zones_main, aes(fill = ZONEID)) +
+  coord_sf(xlim = c(-72, -66), ylim = c(41, 45))
+```
+
+### Prepare Directory Links to FVCOM
+
+FVCOM Data was delivered via google drive, and then transferred to Box. There is a file with daily data for each year from 1978-2019.
+
+These files are in this directory:   
+`Box/Res_Data/FVCOM/Lobster-ECOL/`
+
+For our workflow: we will be opening files sequentially, clipping data for the relevant areas, and returning a dataframe for that period of time. These then get sandwiched together at the end to make one file.
+
+
+```{r}
+#| label: build paths to fvcom inventory
+
+
+# Here are the files we have, loop over them later
+fvcom_surfbot_files <- setNames(
+  list.files(fvcom_path, full.names = T, pattern = ".nc"),
+  str_remove(list.files(fvcom_path, full.names = F, pattern = ".nc"), ".nc"))
+
+
+```
+
+
+### Loading one FVCOM File
+
+```{r}
+#| label: load one fvcom file
+
+
+
+# Test File: GOM3 1978
+# Load some daily FVCOM that we downloaded and averaged
+fvcom_yrx <- nc_open(fvcom_surfbot_files["gom3_1978"])
+
+# The variables we have in each file
+names(fvcom_yrx$var)
+
+
+```
+
+
+
+### Making the FVCOM Mesh into a `sf` object
+
+From the latitude and longitude information in the FVCOM file, we can construct an sf dataframe to represent the mesh spatially on a map. This is helpful for letting us "see" what we're working with.
+
+
+```{r}
+#| label: plot the fvcom mesh
+
+# Get the mesh itself as a simple feature collection
+gom3_mesh <- get_mesh_geometry(fvcom_yrx, what = 'lonlat')
+
+
+# Map everything
+ggplot() +
+  geom_sf(data = gom3_mesh, alpha = 0.4, linewidth = 0.1) +
+  geom_sf(data = lob_zones_main, aes(fill = ZONEID), alpha = 0.4) +
+  geom_sf(data = new_england) +
+  geom_sf(data = canada) +
+  theme(legend.position = "right") +
+  coord_sf(xlim = c(-72, -66), ylim = c(41, 45)) + 
+  labs(
+    title = "FVCOM Mesh in Study Area",
+    fill = "Area")
+
+```
+
+
+### Using the FVCOM Mesh to Index
+
+Having the FVCOM mesh represented this way also lets us perform geometric operations like spatial intersections, masking, clipping, unions etc.
+
+The mesh sf object we created contains the indexing information for FVCOM nodes and elements. We can trim the mesh down to the area we care about, and use the indexing information that remains to subset temperature and salinity data from the FVCOM files for those locations.
+
+Because the mesh does not change over the hindcast period, we only need to perform this step once, and then we can use the results as a template for extracting the data from any FVCOM file.
+
+As an extra step, I calculate the area of each mesh triangle within the area we are clipping. I will use this later when averaging the areas as a relative weight.
+
+
+```{r}
+#| label: clipping the mesh
+
+# There are three zones in "lob_zones_main"
+# This code splits them into separate polygons by ZONEID
+# Then transforms their CRS to match that of the mesh
+# For one shapefile just use st_transform(my_shape, crs = st_crs(gom3_mesh))
+lobster_zones_trans <- lob_zones_main %>% 
+  split(.$ZONEID) %>% 
+  map(~st_transform(.x, crs = st_crs(gom3_mesh)))
+
+
+# Use a geomtric intersection to clip the mesh with zone B
+crop_b <- st_intersection(
+  gom3_mesh, 
+  lobster_zones_trans$B) 
+
+# Get areas
+# Pull necessary information out
+crop_b <- crop_b %>% 
+  mutate(rel_area = st_area(crop_b)) %>% 
+  select(area_id = ZONEID, elem, p1, p2, p3, rel_area)
+
+
+# Map what is happening:
+ggplot() +
+  geom_sf(
+    data = lobster_zones_trans$B, 
+    aes(color = "Lobster Management Zone B"), linewidth = 1,
+    fill = "transparent") +
+  geom_sf(
+    data = crop_b, 
+    aes(color = "FVCOM Mesh"), 
+    alpha = 0.5) +
+  geom_sf(data = new_england) +
+  scale_color_gmri() +
+  coord_sf(xlim = c(-68.6, -67.5), ylim = c(43.5, 44.5)) + 
+  labs(
+    title = "Getting FVCOM Mesh Information for Shapefile Overlap",
+    subtitle = "st_intersection(mesh, area_poly)",
+       color = "Geometry Source")
+
+```
+
+
+### Use Clipped Mesh as Indexing Key
+
+
+From this area, we know which nodes to index out by looking at the results of the intersection. The first six rows are shown below (with some columns hidden). We have an information for each `elem` (triangle centers), and the three nodes that go with them (`p1`, `p2`, `p3`)
+
+```{r}
+#| label: Indexing Surface Temperature with Clipped Data
+
+crop_b %>% 
+  st_drop_geometry() %>% 
+  select(area_id , elem, p1, p2, p3, rel_area) %>% 
+  head() %>% 
+  gt::gt()
+```
+
+
+
+
+# Get Average Value for Element (triangle area) from values at nodes
+
+For surface and bottom temperatures the values are stored/calculated at the triangle vertices, or nodes. 
+
+For regional statistics like the regional average temperature, we need to average the three nodes to get a value representative of the interior space.
+
+This step loops through all the regional elements that are within any of our regions and processes that value once for each. These are then stored in a named list that can be accessed later.
+
+```{r}
+#| label: regional_from_nodes function
+
+#' @Title FVCOM Element Average from Vertices
+#' 
+#' 
+#' @description Get the average value from the relevant vertices, along  
+#' the time dimension for FVCOM mesh triangles.
+#'
+#' @param mesh_df 
+#' @param nc
+#' @param nc_varname 
+#'
+#' @return
+#' @export
+#'
+#' @examples
+regional_from_nodes <- function(fvcom_mesh_trios, nc, nc_varname = "surface_t"){
+  
+  
+  # Take the unique elements from our table:
+  unique_elems <- distinct(fvcom_mesh_trios, elem) %>% pull(elem)
+  
+  # Make a named list
+  unique_elems <- setNames(unique_elems, unique_elems)
+  
+  # Iterate through each unique element (triangle element, p1, p2, p3)
+  # Average the nodes to get value for each element
+  triangle_temps <- map(unique_elems, function(elem_id){
+    
+    # Slice the row for that element, get distinct in case >1
+    elem_df <- filter(fvcom_mesh_trios, elem == elem_id) %>% 
+      distinct(elem, p1, p2, p3)
+    
+    # Get element id
+    elem_num <- elem_df[[1, "elem"]]
+    
+    # Pull surface_t for the three nodes
+    p1_ts <- ncvar_get(
+      nc, 
+      varid = nc_varname, 
+      start = c(elem_df[[1, "p1"]], 1), 
+      count = c(1, -1))
+    p2_ts <- ncvar_get(
+      nc, 
+      varid = nc_varname, 
+      start = c(elem_df[[1, "p2"]], 1), 
+      count = c(1, -1))
+    p3_ts <- ncvar_get(
+      nc, 
+      varid = nc_varname, 
+      start = c(elem_df[[1, "p3"]], 1), 
+      count = c(1, -1))
+    
+    # Get Averages
+    elem_avg_var <- (p1_ts + p2_ts + p3_ts) / 3
+    
+    # Spit it out, no dataframe bs
+    unique_elems[elem_num] <- elem_avg_var
+    
+  })
+  
+}
+```
+
+The function above will take: 
+  1. the dataframe we got from clipping the mesh `crop_b`
+  2. the open FVCOM file `fvcom_yrx`
+  3. the name of the variable to subset "surface_t"
+
+And it will return a named list. The names correspond to the `elem` index number i.e. which triangle it is in the mesh. And the values will be the average value from its three nodes for every day.
+
+```{r}
+#| label: test regional_from_nodes
+
+#  Perform a test on one year
+triangle_avg_1978 <- regional_from_nodes(
+  fvcom_mesh_trios = crop_b, 
+  nc = fvcom_yrx, 
+  nc_varname = "surface_t")
+
+```
+
+# Area-weighted Regional Averages
+
+We now have temperature for each triangle, but we want to get to the average for the entire area. To do this we want to weight them by their surface areas when averaging the many timeseries together.
+
+This will give us the average value for the entire polygon, appropriately weighting each of the component areas.
+
+```{r}
+#| label: fvcom_regional_averages function
+
+
+# Take the code above and calculate the weighted averages:
+# function should take:
+# 1. region overlay dataframe, containing relative areas for weights
+# 2. triangle-specific values
+
+
+#' @title Regional Averages from FVCOM-Polygon Intersection
+#' 
+#' @description
+#'
+#' @param mesh_poly_intersection 
+#' @param regional_means 
+#' @param nc 
+#'
+#' @return
+#' @export
+#'
+#' @examples
+fvcom_regional_averages <- function(mesh_poly_intersection, regional_means, nc){
+  
+  # Get the elements
+  poly_elems <- as.character(mesh_poly_intersection$elem)
+
+  # pull out the weights, name them
+  poly_wts <- as.numeric(mesh_poly_intersection$rel_area) %>% 
+    setNames(poly_elems)
+  
+  # Weight each timeseries by area, then sum them all
+  # Get the timeseries that go with the triangles
+  # multiply the relevant relative areas
+  poly_wtd_ts <- purrr::map(poly_elems, function(x){
+    wtd_vals <- regional_means[[x]] * poly_wts[[x]]
+    return(wtd_vals)}) %>% 
+    reduce(.x = ., .f = `+`)
+  
+  # Divide by total area
+  poly_tot_area <- sum(as.numeric(mesh_poly_intersection$rel_area))
+  
+  # Add the time dimension and return as dataframe
+  poly_regional <- data.frame(
+    "time"     = as.Date(ncvar_get(nc, "Times")),
+    "regional_mu" = poly_wtd_ts / poly_tot_area)
+  return(poly_regional)
+  
+}
+
+
+```
+
+
+
+
+```{r}
+#| eval: true
+#| label: fvcom_regional_averages testing
+
+# Run the surface temperatures for 1978
+zone_b_surface_t_1978 <- fvcom_regional_averages(
+      mesh_poly_intersection = crop_b,
+      regional_means = triangle_avg_1978,
+      nc = fvcom_yrx)
+
+
+# Plot the Zone B surface Temperatures
+ggplot(zone_b_surface_t_1978) +
+  geom_line(aes(time, regional_mu)) +
+  labs(title = "Zone B Surface Temperature, 1978")
+```
+
+
+
+# All together:
+
+This is great, but we want data for all the years, not just one.
+
+The good news, is that many of these steps only need to be performed once. The clipping to get the indexing information, and the relative weighting is reusable.
+
+We only really need to loop over the yearly files and extract, then average across mesh elements. 
+
+This whole process looks like this:
+
+```{r}
+#| label: processing all years as a step
+
+
+# Process Surface Temperature for one region:
+
+# Set the fvcom variable here
+fvcom_var_name <- "surface_t"
+mesh_shape_intersection <- crop_b %>% st_drop_geometry()
+
+
+# Time it
+Sys.time() # Print the start time
+all_year_surface_temp <- map_dfr(
+  # Looping through all the fvcom files
+  .x = fvcom_surfbot_files, 
+  # For each one, applying these steps
+  .f = function(nc_x){
+  
+    # 1. Open the netcdf file for that year:
+    yr_x_fvcom <- nc_open(nc_x)
+    
+    # 2. Get the average values for the triangles
+    # Run that for all the years I guess?!?
+    triangle_avgs <- regional_from_nodes(
+      fvcom_mesh_trios = mesh_shape_intersection, 
+      nc = yr_x_fvcom, 
+      nc_varname = fvcom_var_name)
+    
+    
+    # Get the weighted average for the region, from the triangles
+    poly_avgs_yr_x <- fvcom_regional_averages(
+        mesh_poly_intersection = mesh_shape_intersection,
+        regional_means = triangle_avgs, 
+        nc = yr_x_fvcom)
+    
+    # Close the netcdf connection
+    nc_close(yr_x_fvcom)
+    
+    # Return the regional averages
+    return(poly_avgs_yr_x)
+  
+})
+
+# print the time on completion
+Sys.time()
+
+
+
+# Plot the data
+all_year_surface_temp %>%
+  mutate(time = as.Date(time)) %>%
+  ggplot() +
+  geom_line(
+    aes(time, regional_mu),
+        linewidth = 0.4, alpha = 0.6) +
+  labs(title = "Zone B Surface Temperature, 1978-2019")
+
+
+
+```
+
+
+
+
+
+

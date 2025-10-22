@@ -297,7 +297,27 @@ ggplot() +
 
 
 ```{r}
-#| label: getting vertically integrated u and v data
+#| label: get vertically integrated u and v data in R from AWS
+
+library(stars)
+
+sf::sf_extSoftVersion()["GDAL"] # Shows GDAL version
+# sf::gdal_version()          # Shows GDAL version - newer sf
+# sf::gdal_drivers()[,"name"] # List available drivers
+
+# Need GDAL >= 3.6 to have zarr support
+
+# Path to the Zarr store from the YAML catalog
+# (from the YAML you'd find the 'urlpath' for the selected dataset)
+zarr_url <- "https://umassd-fvcom.s3.amazonaws.com/gom3/hindcast/zarr2/"  # example
+
+# Use GDAL's Zarr driver through stars
+# /vsicurl/ lets GDAL stream remote data over HTTP/S3
+dsn <- sprintf('ZARR:"/vsicurl/%s"', zarr_url)
+
+# Read the dataset (metadata and data lazily)
+fvcom <- read_mdim(dsn)
+fvcom
 
 
 # Load an FVCOM file that has the ua, uv values (can be monthly)

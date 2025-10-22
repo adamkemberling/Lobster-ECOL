@@ -194,22 +194,27 @@ These large-scale processes affect oceanographic conditions over large spatial s
 ```{r}
 #| label: load shef-scale indices
 
+# Save a record of ecodata datasets as we go:
+ecodata_path <- cs_path("mills", "projects/lobster ecol/regime shift analyses/regime_shift_timeseries/ecodata_sourced")
+
 
 # GSI
 # Why is there more than one value per month?
 gsi <- ecodata::gsi %>% #glimpse()
   mutate(Time = as.Date(str_c(str_replace(Time, "[.]", "-"), "-01")))
+# write_csv(gsi, str_c(ecodata_path, "gsi.csv"))
 
 
 # use the old one
 gsi_old <- ecodata::gsi_old %>% #glimpse()
   mutate(Var = "gulf stream index old") %>% 
   mutate(Time = as.Date(str_c(str_replace(Time, "[.]", "-"), "-01")))
-
+# write_csv(gsi_old, str_c(ecodata_path, "gsi_old.csv"))
 
 # NAO
 nao <- ecodata::nao%>% 
   mutate(Time = as.Date(str_c(Time, "-01-01")))
+# write_csv(nao, str_c(ecodata_path, "nao.csv"))
 
 # Put them together to plot
 shelf_indices <- bind_rows(list(gsi, gsi_old, nao))
@@ -465,6 +470,7 @@ annual_chl_pp <- ecodata::annual_chl_pp %>%
       Time,
       "01-01",
       sep = "-")))
+# write_csv(annual_chl_pp, str_c(ecodata_path, "annual_chl_pp.csv"))
 
 
 # Just take one cold pool index for now
@@ -477,13 +483,15 @@ cold_pool <- ecodata::cold_pool %>% #distinct(Source)
       Time,
       "01-01",
       sep = "-")))
+# write_csv(cold_pool, str_c(ecodata_path, "cold_pool.csv"))
+
 
 # Slopewater
 slopewater <- ecodata::slopewater %>% 
   mutate(Time = as.Date(str_c(Time, "-01-01")))  %>% 
   filter(Time > as.Date("1990-01-01")) %>% 
   drop_na()
-
+# write_csv(slopewater, str_c(ecodata_path, "slopewater.csv"))
 
 # Combine those
 epu_indices <- bind_rows(annual_chl_pp, slopewater, cold_pool) %>% 
@@ -1048,6 +1056,7 @@ ggplot() +
 # Abundance per 100m3 for different taxa
 # ecodata::zoo_regime %>% distinct(Var) %>% pull() %>% sort()
 ecomon_zoo <- ecodata::zoo_regime
+# write_csv(ecomon_zoo, str_c(ecodata_path, "ecomon_zoo.csv"))
 ecomon_zoo %>% 
   filter(!str_detect(Var, "fish|clauso|gas")) %>% 
   ggplot(aes(Time, Value)) +
@@ -1078,7 +1087,7 @@ zoo_lg_small <- ecodata::zoo_abundance_anom %>%
   mutate(Value = as.numeric(Value)) %>% 
   pivot_wider(values_from = "Value", names_from = "Var") %>% 
   mutate(small_large_index =  SmCopepods - LgCopepods)
-
+write_csv(gsi, str_c(ecodata_path, "zoo_lg_small.csv"))
 
 
 ggplot(zoo_lg_small, aes(Time, small_large_index)) +
