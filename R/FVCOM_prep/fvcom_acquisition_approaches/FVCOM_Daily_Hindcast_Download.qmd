@@ -52,7 +52,7 @@ For the years 1978-2016 there are daily timestep files for one-month at atime. D
 
 ```{r}
 #| label: GOM3-data-access
-#| eval: false
+#| eval: true
 #| echo: true
 
 # We can Access links from the THREDDS directory as if they are NETCDF files

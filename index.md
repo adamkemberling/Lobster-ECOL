@@ -17,11 +17,11 @@ for surface and bottom temperature, and surface currents from their hindcast pro
 The following links show some efforts/demos to access various products over thredds. But know that we 
 ultimately moved our core analyses to work from the data we requested directly.
 
-[Downloading Daily Hindcast Data](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/fvcom_acquisition_approaches/FVCOM_Daily_Hindcast_Download.html)
+[Downloading Daily Hindcast Data from THREDDS](https://github.com/adamkemberling/Lobster-ECOL/blob/main/R/FVCOM_prep/fvcom_acquisition_approaches/FVCOM_Daily_Hindcast_Download.qmd)
 
-[Processing Daily Hindcast Data from Hourly](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/fvcom_acquisition_approaches/GOM3_Hindcast_Daily_from_Hourly_Processing.html)
+[Processing Daily Hindcast Data from Hourly](https://github.com/adamkemberling/Lobster-ECOL/blob/main/R/FVCOM_prep/fvcom_acquisition_approaches/GOM3_Hindcast_Daily_from_Hourly_Processing.qmd)
 
-[Processing Daily NECOFS Forecast Data from Hourly](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/fvcom_acquisition_approaches/NECOFS_Daily_from_Hourly_Processing.html)
+[Processing Daily NECOFS Forecast Data from Hourly](https://github.com/adamkemberling/Lobster-ECOL/blob/main/R/FVCOM_prep/fvcom_acquisition_approaches/NECOFS_Daily_from_Hourly_Processing.qmd)
 
 
 More recently it was shared with me that the hindcast data was available on AWS, so in the future I
@@ -34,11 +34,11 @@ The following links were some of my earlier explorations of accessing the variou
 FVOCM data products, working with the FVCOM package, and trying to extract data. Most of these 
 did not lead directly to anything used in final analyses.
 
-[Area Subsetting in R with {FVCOM}](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/fvcom_general_methods/FVCOM_Area_Subsetting_Demo.html)
+[THREDDS FVCOM Access and Area Subsetting in R with {FVCOM}](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/fvcom_general_methods/FVCOM_Area_Subsetting_Demo.html)
 
-[Interpolation Methods for Point Coordinates](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/fvcom_general_methods/FVCOM_interpolation.html)
+[Interpolation Methods for Point Coordinates](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/fvcom_general_methods/FVCOM_interpolation_methods.html)
 
-[Exploring Pre-Downloaded Monthly Hindcast File Contents and Structures](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/gmri_inventory_exploration/FVCOM_GMRI-Monthly-Inventory-Check.html)
+[Exploring Pre-Downloaded Monthly Hindcast File Contents and Structures](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/gmri_inventory_exploration/FVCOM-GMRI-Monthly-Inventory-Check.html)
 
 
 ### LOB-ECOL Regional Timeseries Data Processing
@@ -52,7 +52,7 @@ the Maine coastal current, and pulling FVCOM temperatures that coincide with poi
 
 [Extracting Interpolated FVCOM Temperatures for NEFSC+VTS Survey Locations](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/Survey_Locations_FVCOMTemp_Interpolation.html)
 
-[Extracting GLORYS Temperatures for NEFSC + VTS Survey Locations](https://adamkemberling.github.io/Lobster-ECOL/R/GLORYS_prep/Survey_Locations_GLORYSTemp_extractions.html)
+[Extracting GLORYS Temperatures for NEFSC + VTS Survey Locations](https://adamkemberling.github.io/Lobster-ECOL/R/GLORYs_prep/Survey_Locations_GLORYSTemp_extractions.html)
 
 #### Maine Coastal Current Processing
 
@@ -114,7 +114,7 @@ off the coast of Penobscot Bay.
 This last link is a summary of all the different regime shift results for various spatial scales across the NE US 
 continental shelf, and uses data from FVCOM and ECODATA.
 
-[Summary of Regime Shift Results for FVCOM & Ecodata Timeseries](https://adamkemberling.github.io/Lobster-ECOL/R/regime_tests/RegimeShiftSummary.html)
+[Summary of Regime Shift Results for FVCOM & Ecodata Timeseries](https://adamkemberling.github.io/Lobster-ECOL/R/regime_tests/RegimeShiftsSummary.html)
 
 
 # DEMO Notebooks
