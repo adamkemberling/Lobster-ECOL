@@ -75,20 +75,5 @@ Figure 2
 
 # Lobster-ECOL Quarto Docs Directory
 
-[Area Subsetting in R with
-{FVCOM}](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/fvcom_general_methods/FVCOM_Area_Subsetting_Demo.html)
-
-[Exploring Monthly File Contents and
-Structures](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/gmri_inventory_exploration/FVCOM-GMRI-Monthly-Inventory-Check.html)
-
-[Interpolating Point
-Values](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/Survey_Locations_FVCOMTemp_Interpolation.html)
-
-[Timeseries for Areas of
-Interest](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/FVCOM_Regional_Temperature_Timeseries.html)
-
-[Maine Coastal Current
-Processing](https://adamkemberling.github.io/Lobster-ECOL/R/FVCOM_prep/MaineCoastalCurrent/FVCOM_MaineCoastalCurrent_PCA.html)
-
-[FVCOM Temperature Regime Shifts with
-STARS](https://adamkemberling.github.io/Lobster-ECOL/R/regime_tests/STARS_FVCOM.html)
+For a closer look at the different reports/analyses that I've worked on within this repo, 
+please go to the link directory here: https://adamkemberling.github.io/Lobster-ECOL/ 
