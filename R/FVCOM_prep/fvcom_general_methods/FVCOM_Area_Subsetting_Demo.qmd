@@ -27,7 +27,9 @@ This package can be used to get fvcom data from downloaded files or from links t
 
 FVCOM meshes can be saved as shapefile/geojson/csv files as a lightweight file that contains the lat/lon index numbers and their coordinates for verification. These index numbers can be used directly to index from FVCOM files in R/python.
 
-**NOTE: Mesh structure is not consistent across FVCOM versions. FVCOM-GOM3 uses a different mesh than FVCOM-GOM4 or FVCOM-GOM5 which have expanded regional coverage and increased densities.**
+**NOTE: Mesh structure is not consistent across FVCOM versions. FVCOM-GOM3 uses a different mesh than FVCOM-GOM4 or FVCOM-GOM5 which have expanded regional coverage and increased densities. Care should be taken for working from 2016 onward**
+
+
 
 Read more about their package here: https://github.com/BigelowLab/fvcom
 

@@ -91,7 +91,7 @@ local_fvcom_to_timeseries <- function(
     start_yr  = 1978, 
     end_yr    = 2016, 
     mesh      = vts_mesh, 
-    fvcom_folder    = cs_path("res", "FVCOM/FVCOM_gom3_mon_means"), 
+    fvcom_folder = cs_path("res", "FVCOM/FVCOM_gom3_mon_means"), 
     fvcom_vers = "GOM3",
     var_names = c("temp", "salinity")){
   
