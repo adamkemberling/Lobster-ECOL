@@ -27,6 +27,7 @@ library(rnaturalearth)  # shapefiles for country and states
 library(fvcom)          # Bigelow package for dealing with FVCOM
 library(ncdf4)          # Support for netcdf files
 
+
 # Set a plotting theme
 theme_set(theme_gmri_simple())
 
@@ -147,7 +148,7 @@ fvcom_yrx <- nc_open(fvcom_surfbot_files["gom3_1978"])
 
 
 # Get the mesh itself as a simple feature collection
-gom3_mesh <- get_mesh_geometry(fvcom_yrx, what = 'lonlat')
+gom3_mesh <- fvcom::get_mesh_geometry(fvcom_yrx, what = 'lonlat')
 
 
 # # Map everything
@@ -156,7 +157,7 @@ gom3_mesh <- get_mesh_geometry(fvcom_yrx, what = 'lonlat')
 #   geom_sf(data = new_england) +
 #   geom_sf(data = canada) +
 #   theme(legend.position = "right") +
-#   coord_sf(xlim = c(-78, -58), ylim = c(35.4, 45.5)) + 
+#   coord_sf(xlim = c(-78, -58), ylim = c(35.4, 45.5)) +
 #   labs(
 #     title = "FVCOM Mesh Study Area",
 #     fill = "Area")
@@ -375,7 +376,11 @@ This step can be looped on each date/year to minimize the amount of fvcom file o
 #' @export
 #'
 #' @examples
-interpolate_at_timestep <- function(dated_points_weighted, fvcom_nc, fvcom_varid, var_out){
+interpolate_at_timestep <- function(
+    dated_points_weighted, 
+    fvcom_nc, 
+    fvcom_varid, 
+    var_out){
         
     # Get the values of the variable of interest as vector
     node_vals <- ncvar_get(
@@ -449,9 +454,13 @@ Once this is done, we have a dataset containing the fvcom surface and bottom con
 ```{r}
 # # Rejoining looks like this
 # vts_augmented <- left_join(
-#   vts_both, vts_fvcom_temps,
+#   vts_both,          # original data from Maine and Mass 
+#   vts_fvcom_temps,   # The data we pulled from FVCOM
 #   by = join_by(TripId, Date, TrawlId, SiteId, Latitude, Longitude))
 
+
+
+# 
 vts_fvcom_temps %>% 
   mutate(month = month(Date, label = T)) %>% 
   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>% 
@@ -469,6 +478,7 @@ vts_fvcom_temps %>%
 
 ```
 
+For details on doing this for the different surveys see: `Survey_Locations_FVCOM_Temp_Interpolations.qmd`
 
 
 # Seasonal Averages Instead of Same-Day
@@ -490,13 +500,16 @@ This means we need to change the code a touch:
 season_key <- list(
   "Spring" = c("03-01", "05-31"),
   "Summer" = c("06-01", "08-31"),
-  "Fall" = c("09-01", "11-30")
-  )
+  "Fall" = c("09-01", "11-30"))
+
+
+
 
 # This next step will take whatever is in that list,
 # And filter out the date and indices for each fvcom file that are relevant
 season_index <- season_key %>% 
   map_dfr(function(x){
+    
     # Each year, filter within those dates
     date_range <- fvcom_dates %>% 
       mutate(fvyear = year(fvcom_date)) %>% 
@@ -520,14 +533,16 @@ season_index <- season_key %>%
 ```{r}
 # We could reduce that to just the min/max of each month for a start/stop
 
-
 # Join the seasonal indexing data by year to the vts stations
 vts_pts_weighted[1,]
 season_index[29,]
+
+# Join the season indexing to the triangulated stuff
 vts_season_matched <- vts_pts_weighted %>% 
   mutate(
     Date = as.Date(Date),
     year = year(Date)) %>% 
+  # This join adds a row for each season
   full_join(
     season_index,
     join_by(year == fvyear),
@@ -541,9 +556,12 @@ vts_season_matched <- vts_pts_weighted %>%
 
 # This is the idea:
 # use start and end indexes for time, get average, then weight the thre points for interpolation
-test_range <- vts_season_matched[1,]
 
-# This returns all days for one point, within the season we're indexing
+# Take the first row as a test for pulling seasonal data out
+test_range <- vts_season_matched[1, ] # row, column dataframe indexing
+
+
+# This returns days for one point, within the season we're indexing
 test_return <- ncvar_get(
   nc = fvcom_yrx,
   varid = "surface_t",
@@ -556,6 +574,8 @@ test_return <- ncvar_get(
 
 ```
 
+
+Claire, my friend. The function below takes data from all rows, and applys the interpolation step.
 
 ```{r}
 # Function to strip relevant FVCOM data for interpolating seasonal averages for point locations
@@ -597,6 +617,7 @@ interpolate_over_timerange <- function(
     period_interpolated <- mean(c(p1_mu, p2_mu, p3_mu))
     }
 
+  
     # Perform the rowwise operation and return values to original df
     # Using user-supplied column name
     pts_wts_ranges %>% 
@@ -628,10 +649,10 @@ vts_seasonal_temps <- vts_season_matched %>%
   filter(year == 2006) %>% 
   # Interpolate surface temperature
   interpolate_over_timerange(
-  .,
-  fvcom_nc = fvcom_yrx, 
-  fvcom_varid = "surface_t", 
-  var_out = "surf_temp_c") %>% 
+    .,
+    fvcom_nc = fvcom_yrx, 
+    fvcom_varid = "surface_t", 
+    var_out = "surf_temp_c") %>% 
   # Repeat if we want bottom temperature or another variable
   interpolate_over_timerange(
     pts_wts_ranges = .,
@@ -639,6 +660,12 @@ vts_seasonal_temps <- vts_season_matched %>%
     fvcom_varid = "bottom_t", 
     var_out = "bot_temp_c")
 
+
+# They are different right: yes
+# vts_seasonal_temps %>%
+#   ggplot(aes(surf_temp_c, bot_temp_c)) +
+#   geom_point() +
+#   geom_abline(slope = 1, intercept = 0)
 
 
 
@@ -651,9 +678,9 @@ vts_seasonal_temps %>%
   mutate(season = factor(season, levels = c("Spring", "Summer", "Fall"))) %>% 
   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>% 
   ggplot() +
-  geom_sf(aes(color = temp_c), size = .3) +
   geom_sf(data = new_england) +
   geom_sf(data = canada) +
+  geom_sf(aes(color = temp_c), size = .3) +
   facet_grid(temp_var~season) +
   scale_color_distiller(palette = "RdBu") +
   coord_sf(xlim = c(-72, -67), ylim = c(41.25, 45.5)) +
@@ -663,11 +690,6 @@ vts_seasonal_temps %>%
     color = "Temperature (C)")
 
 
-# # They are different right: yes
-# vts_seasonal_temps %>% 
-#   ggplot(aes(surf_temp_c, bot_temp_c)) +
-#   geom_point() +
-#   geom_abline(slope = 1, intercept = 0)
 ```
 
 
@@ -677,5 +699,358 @@ The last layer of this onion is looping over the yearly files such that we get t
 
 ```{r}
 
+# Map over each year to open the correct netcdf for the relevant points
+vts_seasonal_temp_interpolations <- vts_season_matched %>% 
+  # Why are there missing element overlaps?, need to clean up
+  drop_na(start_idx, elem, p1, p2, p3) %>% 
+  # Break into yearly datasets b/c fvcom is yearly
+  split(.$year) %>% 
+  imap_dfr(function(indexing_data, year_id){
+    
+    
+    # Run them for one year
+    year_fname <- str_c("gom3_", year_id)
+    fvcom_yrx <- nc_open(fvcom_surfbot_files[year_fname])
+    
+    # Get seasonal temperatures for one year
+    interpolated_seasonal_temps <- indexing_data %>% 
+      
+      # Interpolate surface temperature
+      interpolate_over_timerange(
+      .,
+      fvcom_nc = fvcom_yrx, 
+      fvcom_varid = "surface_t", 
+      var_out = "surf_temp_c") %>% 
+      # Repeat if we want bottom temperature or another variable
+      interpolate_over_timerange(
+        pts_wts_ranges = .,
+        fvcom_nc = fvcom_yrx, 
+        fvcom_varid = "bottom_t", 
+        var_out = "bot_temp_c")
+    
+    # Return that dataframe
+    nc_close(fvcom_yrx)
+    return(interpolated_seasonal_temps)
+    
+    
+  }, .id = "year")
+
+
+
 ```
 
+Lets, take a look. As a quick gut check things I wanted to see here are: points change across years (verifies that the split is working), that the seasonal temperatures are consistent i.e. summer should be hot (verifies that the time-period indexing is working), & there should be changes moving forward in time (verifies that the netcdf for each year is changing).
+
+All those things look good below.
+
+```{r}
+# Map the bottom temperature
+vts_seasonal_temp_interpolations %>% 
+  filter(year %in% c(2008:2012)) %>% 
+  mutate(season = factor(season, levels = c("Spring", "Summer", "Fall"))) %>% 
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>% 
+  ggplot() +
+  geom_sf(data = new_england) +
+  geom_sf(data = canada) +
+  geom_sf(aes(color = bot_temp_c), size = .3) +
+  facet_grid(season~ year) +
+  scale_color_distiller(palette = "RdBu", 
+                        labels = scales::label_number(suffix = "\u00b0C")) +
+  coord_sf(xlim = c(-72, -67), ylim = c(41.25, 45.5)) +
+  labs(
+    title = "Seasonal Temperature from FVCOM",
+    subtitle = "VTS Survey Locations - Interpolated Seasonal Averages",
+    color = "Temperature (C)")
+```
+
+
+# Last Minute Hail Mary
+
+Data for same-day temperatures for different survey datasets were interpolated in `Survey_Locations_FVCOM_Temp_Interpolations.qmd`
+
+The processing of *Seasonal Averages* was coded up here, and needs to be done for these datasets.
+
+Pull seasonal averages for the following datasets:
+
+ 1. NEFSC trawl
+ 2. State trawls: ME/NH, MA, RI, NEAMAP, NJ, and ASMFC from Jef kipp: 
+    Box\Mills Lab\Projects\Lobster ECOL\lobster_data\state_trawl   
+ 4. VTS: ME, MA, and I think a joint file with all the states:    
+    Claire\Box\Mills Lab\Projects\Lobster ECOL\lobster_data\vts   
+ 
+ 
+### Load NEFSC Trawl Data
+
+```{r}
+# Load the trawl data
+trawl_path <- cs_path("res", "nmfs_trawl/SURVDAT_current")
+trawl_raw <- read_rds(str_c(trawl_path, "survdat_lw.rds"))
+
+# tidy it a little
+trawl_dat <- gmRi::gmri_survdat_prep(
+  survdat = trawl_raw$survdat, 
+  survdat_source = "most recent", 
+  box_location = "cloudstorage")
+
+# Get distinct time/date/tow/locations
+trawl_locations <- trawl_dat %>% 
+  distinct(cruise6, station, stratum, tow, svvessel, est_towdate, season, decdeg_beglat, decdeg_beglon, bottemp_ctd = bottemp)
+
+```
+
+### Load State Trawl Data
+
+
+```{r}
+#| label: load state trawl surveys
+#| eval: true
+
+# # Path(s) to state trawl survey data
+asmfc_path <- cs_path("mills", "Projects/Lobster/Trawl_fromASMFC")
+# 
+
+# # load the different state survey datasets - ASMFC editions
+# load(str_c(asmfc_path, "MassDMF_Lobster_StationsNLengths_1979_2023_230718.Rdata"))
+# load(str_c(asmfc_path, "MENH Trawl.Rdata"))
+load(str_c(asmfc_path, "RI_LOBSTER_TRAWL_012324.Rdata"))
+ri_trawl <- RI_Stations %>% 
+  distinct(TrawlIdentity, Season, TowNumb, StratumCode, Year, Month, Day, LAT, LON)
+
+
+# Maine NH Trawl Survey
+menh_path <- cs_path("res", "Maine_NH_Trawl/data_2024")
+menh_trawl <- read_csv(str_c(menh_path, "MaineDMR_Trawl_Survey_Tow_Data_2024-05-17.csv")) 
+
+
+
+# Mass Trawl
+mass_path  <- cs_path("res", "MA_Trawl/Pull_20240716/Manipulated")
+mass_trawl <- read_csv(str_c(mass_path, "MADMF_SVSTA_SW_2024.csv"))
+
+
+# Set up dates for matching with later
+menh_trawl <- mutate(menh_trawl, date = as.Date(Start_Date))
+mass_trawl <- mass_trawl %>% 
+  mutate(date = as.Date(
+    str_c(
+      Year, 
+      str_pad(Month, side = "left", pad = "0", width = 2), 
+      str_pad(Day, side = "left", pad = "0", width = 2),
+      sep = "-")))
+
+# do it for RI survey too
+ri_trawl <- ri_trawl %>% 
+  mutate(date = as.Date(
+    str_c(Year, 
+          str_pad(Month, side = "left", pad = "0", width = 2), 
+          str_pad(Day, side = "left", pad = "0", width = 2),
+          sep = "-")))
+
+
+# Plot them all
+ggplot() + 
+  geom_sf(data = new_england) +
+  geom_point(data = ri_trawl, aes(LON, LAT, color = "RI Survey"), 
+             shape = 3, size = 0.5, alpha = 0.4) +
+  geom_point(data = menh_trawl, aes(Start_Longitude, Start_Latitude, color = "ME + NH Survey"), 
+             shape = 3, size = 0.5, alpha = 0.4) +
+  geom_point(data = mass_trawl, aes(`Start lon`, `Start lat`, color = "MASS Survey"), 
+             shape = 3, size = 0.5, alpha = 0.4) +
+  coord_sf(xlim = c(-72, -67), ylim = c(41, 44.75)) +
+  scale_color_gmri() +
+  labs(x = "Longitude", y = "Latitude")
+
+
+```
+
+
+
+
+
+
+### Interpolate State Survey Locations
+
+```{r}
+# 1. Join them by their date to match them to FVCOM file names and their time index
+
+# Maine + NH
+menh_dates_matched <- menh_trawl %>% 
+  left_join(
+    mutate(fvcom_dates, fvcom_date = as.Date(fvcom_date)),
+    join_by(date == fvcom_date)) %>% 
+  mutate(
+    lon = Start_Longitude,
+    lat = Start_Latitude) %>% 
+  st_as_sf(coords = c("lon", "lat"), crs = 4326, remove = F)
+
+# Mass
+mass_dates_matched <- mass_trawl %>% 
+  left_join(
+    mutate(fvcom_dates, fvcom_date = as.Date(fvcom_date)),
+    join_by(date == fvcom_date)) %>% 
+  mutate(
+    lon = `Start lon`,
+    lat = `Start lat`) %>% 
+  st_as_sf(coords = c("lon", "lat"), crs = 4326, remove = F)
+
+# Rhode Island
+ri_dates_matched <- ri_trawl %>% 
+  left_join(
+    mutate(fvcom_dates, fvcom_date = as.Date(fvcom_date)),
+    join_by(date == fvcom_date)) %>% 
+  mutate(
+    lon = LON,
+    lat = LAT) %>% 
+  drop_na(lon, lat) %>% 
+  st_as_sf(coords = c("lon", "lat"), crs = 4326, remove = F)
+```
+
+
+```{r}
+# 2. overlay the points to get the node ids
+# Also applies the weights for linear interpolation
+
+# Maine + NH
+menh_pts_weighted <- triangulate_and_weight(
+  pts_sf = menh_dates_matched, 
+  fvcom_mesh = gom3_mesh) %>% 
+  st_drop_geometry()
+
+# Mass
+mass_pts_weighted <- triangulate_and_weight(
+  pts_sf = mass_dates_matched, 
+  fvcom_mesh = gom3_mesh) %>% 
+  st_drop_geometry()
+
+# Rhode Island
+ri_pts_weighted <- triangulate_and_weight(
+  pts_sf = ri_dates_matched, 
+  fvcom_mesh = gom3_mesh) %>% 
+  st_drop_geometry()
+
+
+```
+
+
+```{r}
+# 3. Map over the yearly files, perform interpolation
+
+# Maine + NH
+menh_fvcom_temps <- menh_pts_weighted %>% 
+  drop_na(time_idx) %>% 
+  mutate(year = year(date)) %>% 
+  split(.$year) %>% 
+  map_dfr(
+    .f = function(samples_year_x){
+    
+    # Get the file to open
+    nc_name <- samples_year_x[["fv_file"]][[1]][[1]]
+    
+    
+    # Open the corresponding Netcdf
+    fvcom_yr_x <- nc_open(fvcom_surfbot_files[[nc_name]])
+    
+    
+    # Split by row to iterate on each point
+    locations_bydate <- samples_year_x %>% 
+      base::split(., seq_len(nrow(.))) 
+    
+    # Iterate on those - do bottom temp and surface temp
+    dates_interpolated <- locations_bydate %>%
+      map(.f = ~interpolate_at_timestep(
+        dated_points_weighted = .x,
+        fvcom_nc = fvcom_yr_x,
+        fvcom_varid = "surface_t", 
+        var_out = "surf_temp_c")) %>% 
+      map_dfr(.f = ~interpolate_at_timestep(
+        dated_points_weighted = .x,
+        fvcom_nc = fvcom_yr_x,
+        fvcom_varid = "bottom_t", 
+        var_out = "bot_temp_c"))
+    
+    return(dates_interpolated)
+    
+  })
+```
+
+
+```{r}
+# Mass 
+mass_fvcom_temps <- mass_pts_weighted %>% 
+  drop_na(time_idx) %>% 
+  mutate(year = year(date)) %>% 
+  split(.$year) %>% 
+  map_dfr(
+    .f = function(samples_year_x){
+    
+    # Get the file to open
+    nc_name <- samples_year_x[["fv_file"]][[1]][[1]]
+    
+    
+    # Open the corresponding Netcdf
+    fvcom_yr_x <- nc_open(fvcom_surfbot_files[[nc_name]])
+    
+    
+    # Split by row to iterate on each point
+    locations_bydate <- samples_year_x %>% 
+      base::split(., seq_len(nrow(.))) 
+    
+    # Iterate on those - do bottom temp and surface temp
+    dates_interpolated <- locations_bydate %>%
+      map(.f = ~interpolate_at_timestep(
+        dated_points_weighted = .x,
+        fvcom_nc = fvcom_yr_x,
+        fvcom_varid = "surface_t", 
+        var_out = "surf_temp_c")) %>% 
+      map_dfr(.f = ~interpolate_at_timestep(
+        dated_points_weighted = .x,
+        fvcom_nc = fvcom_yr_x,
+        fvcom_varid = "bottom_t", 
+        var_out = "bot_temp_c"))
+    
+    return(dates_interpolated)
+    
+  })
+```
+
+
+```{r}
+# Rhode Island
+ri_fvcom_temps <- ri_pts_weighted %>% 
+  drop_na(time_idx) %>% 
+  mutate(year = year(date)) %>% 
+  split(.$year) %>% 
+  map_dfr(
+    .f = function(samples_year_x){
+    
+    # Get the file to open
+    nc_name <- samples_year_x[["fv_file"]][[1]][[1]]
+    
+    
+    # Open the corresponding Netcdf
+    fvcom_yr_x <- nc_open(fvcom_surfbot_files[[nc_name]])
+    
+    
+    # Split by row to iterate on each point
+    locations_bydate <- samples_year_x %>% 
+      base::split(., seq_len(nrow(.))) 
+    
+    # Iterate on those - do bottom temp and surface temp
+    dates_interpolated <- locations_bydate %>%
+      map(.f = ~interpolate_at_timestep(
+        dated_points_weighted = .x,
+        fvcom_nc = fvcom_yr_x,
+        fvcom_varid = "surface_t", 
+        var_out = "surf_temp_c")) %>% 
+      map_dfr(.f = ~interpolate_at_timestep(
+        dated_points_weighted = .x,
+        fvcom_nc = fvcom_yr_x,
+        fvcom_varid = "bottom_t", 
+        var_out = "bot_temp_c"))
+    
+    return(dates_interpolated)
+    
+  })
+
+
+```

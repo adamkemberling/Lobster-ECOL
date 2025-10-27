@@ -70,7 +70,7 @@ res_shapefiles <- cs_path("res", "Shapefiles")
 lob_zones_path <- str_c(res_shapefiles, "LobsterZones/DMR/DMR_Lobster_Zones.shp")
 
 # Read it in
-lob_zones <- st_read(lob_zones_path)
+lob_zones <- sf::st_read(lob_zones_path)
 
 # We can subset these objects just like any other dataframe
 sf_use_s2(FALSE) # turn off spherical geometry so we can simplify the geometry
@@ -84,6 +84,7 @@ ggplot() +
   geom_sf(data = lob_zones_main, aes(fill = ZONEID)) +
   coord_sf(xlim = c(-72, -66), ylim = c(41, 45))
 ```
+
 
 ### Prepare Directory Links to FVCOM
 
@@ -136,7 +137,7 @@ From the latitude and longitude information in the FVCOM file, we can construct 
 #| label: plot the fvcom mesh
 
 # Get the mesh itself as a simple feature collection
-gom3_mesh <- get_mesh_geometry(fvcom_yrx, what = 'lonlat')
+gom3_mesh <- fvcom::get_mesh_geometry(fvcom_yrx, what = 'lonlat')
 
 
 # Map everything
@@ -169,21 +170,38 @@ As an extra step, I calculate the area of each mesh triangle within the area we 
 #| label: clipping the mesh
 
 # There are three zones in "lob_zones_main"
-# This code splits them into separate polygons by ZONEID
 # Then transforms their CRS to match that of the mesh
 # For one shapefile just use st_transform(my_shape, crs = st_crs(gom3_mesh))
-lobster_zones_trans <- lob_zones_main %>% 
-  split(.$ZONEID) %>% 
-  map(~st_transform(.x, crs = st_crs(gom3_mesh)))
+lobster_zones_trans <- st_transform(lob_zones_main, crs = st_crs(gom3_mesh)) 
 
 
+# This code splits them into separate polygons by ZONEID
+lobster_zones_trans <- lobster_zones_trans %>% 
+  split(.$ZONEID)
+```
+
+*For Claire*: This is where you would swap in a shapefile you care about. The code below operates on a single shapefile. If you wanted to do it for many shapefiles or a many polygon object you need to add a looping/map step around the code below.
+
+The crop should be by polygon you care about.
+
+If you want to see a demo of doing many at a time see: 
+`FVCOM_Regional_Temperature_Timeseries.qmd`
+
+
+```{r}
+# In this demo I'm using just one, instead of the list
 # Use a geomtric intersection to clip the mesh with zone B
 crop_b <- st_intersection(
   gom3_mesh, 
+  # This subsets just zone B from the list
   lobster_zones_trans$B) 
 
+# The st_intersection joins the fields from both files based
+# returns an object with the shapefile and fvcom fields
+
 # Get areas
-# Pull necessary information out
+# Pull necessary information out: some unique ID, the point and element indexing
+# i.e. remove columns that aren't relevant to workflow
 crop_b <- crop_b %>% 
   mutate(rel_area = st_area(crop_b)) %>% 
   select(area_id = ZONEID, elem, p1, p2, p3, rel_area)
@@ -224,8 +242,6 @@ crop_b %>%
   head() %>% 
   gt::gt()
 ```
-
-
 
 
 # Get Average Value for Element (triangle area) from values at nodes
@@ -378,6 +394,9 @@ fvcom_regional_averages <- function(mesh_poly_intersection, regional_means, nc){
 
 ```
 
+The output from the above function returns daily data averaged to the shapefile area.
+
+As a test, I've run the function on data from 1978 only.
 
 
 
@@ -400,7 +419,7 @@ ggplot(zone_b_surface_t_1978) +
 
 
 
-# All together:
+# All together, all years
 
 This is great, but we want data for all the years, not just one.
 
@@ -426,6 +445,7 @@ Sys.time() # Print the start time
 all_year_surface_temp <- map_dfr(
   # Looping through all the fvcom files
   .x = fvcom_surfbot_files, 
+  
   # For each one, applying these steps
   .f = function(nc_x){
   
@@ -472,8 +492,40 @@ all_year_surface_temp %>%
 
 ```
 
+### Aggregating to Seasonal Values
+
+From here, one could looks more closely at monthly or seasonal averages as desired.
 
 
 
+```{r}
+# Aggregate to seasonal averages
+seasonal_averages <- all_year_surface_temp %>% 
+  mutate(
+    season = case_when(
+      month(time) %in% c(3:5) ~ "Spring",
+      month(time) %in% c(6:8) ~ "Summer",
+      month(time) %in% c(9:11) ~ "Fall",
+      month(time) %in% c(12,1,2) ~ "Winter"),
+    season = factor(season, levels = c("Spring", "Summer", "Fall", "Winter"))
+  ) %>% 
+  group_by(year = year(time), season) %>% 
+  summarise(surface_temp = mean(regional_mu),
+            .gorups = "drop") 
+
+# Plot the seasons
+seasonal_averages %>% 
+  ggplot(aes(year, surface_temp)) +
+  geom_line() +
+  facet_wrap(~season, scales = "free")
+
+```
+
+
+
+
+# Bonus Step:
+
+Points to buffer workflow
 
 

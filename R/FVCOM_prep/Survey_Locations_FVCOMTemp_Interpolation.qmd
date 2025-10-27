@@ -163,7 +163,6 @@ ri_trawl <- ri_trawl %>%
           str_pad(Day, side = "left", pad = "0", width = 2),
           sep = "-")))
 
-
 # Plot them all
 ggplot() + 
   geom_sf(data = new_england) +
