@@ -408,7 +408,7 @@ ggplot() +
     aes(Time, trend_resid),
     linewidth = 0.4, alpha = 0.5) +
   scale_color_gmri() +
-  facet_grid(EPU * Var~., labeller = label_wrap_gen(width = 8)) +
+  facet_grid(EPU * Var~., labeller = label_wrap_gen(width = 8), scales = "free") +
   scale_x_date(
     breaks = seq.Date(
       from = as.Date("1950-01-01"),
@@ -567,9 +567,7 @@ Most of these indicators have data at the monthly time-scale. To aid in regime c
 ```{r}
 #| fig.height: 6
 
-
 # Detrend the epu stuff
-
 epu_indices_detrended <- epu_indices %>% 
   mutate(var_epu = str_c(Var, EPU, sep = "X")) %>% 
   split(.$var_epu) %>%
@@ -1133,7 +1131,7 @@ fvcom_trends %>%
   group_by(area_id) %>% 
   gt::gt() %>% 
   gt::tab_header(
-    title = "FVCOM Offshore Long Term Salinity Trends",
+    title = "FVCOM Offshore Long Term Temperature Trends",
     subtitle = "Monotonic Trends Evaluated by Mann-Kendall Test") %>%
   gt::fmt_missing(columns = everything(), missing_text = "")
 
@@ -1195,7 +1193,7 @@ ggplot() +
   labs(color = "",
        y = "Measurement",
        x = "Date",
-       title = "FVCOM Inshore Scale Sal Metrics",
+       title = "FVCOM Inshore Scale Temperature and Salinity",
        subtitle = "STARS Regime Shifts")
 ```
 
