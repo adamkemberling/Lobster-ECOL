@@ -146,21 +146,8 @@ fvcom_yrx <- nc_open(fvcom_surfbot_files["gom3_1978"])
 # # The variables we have in each file
 # names(fvcom_yrx$var)
 
-
 # Get the mesh itself as a simple feature collection
 gom3_mesh <- fvcom::get_mesh_geometry(fvcom_yrx, what = 'lonlat')
-
-
-# # Map everything
-# ggplot() +
-#   geom_sf(data = gom3_mesh, alpha = 0.4, linewidth = 0.05) +
-#   geom_sf(data = new_england) +
-#   geom_sf(data = canada) +
-#   theme(legend.position = "right") +
-#   coord_sf(xlim = c(-78, -58), ylim = c(35.4, 45.5)) +
-#   labs(
-#     title = "FVCOM Mesh Study Area",
-#     fill = "Area")
 
 ```
 
@@ -286,28 +273,33 @@ vts_pts_weighted %>%
 ```
 
 
-# Matching Dates
+
+# Handling the Time Dimension
+
+
+What I am working towards for this workflow is preparing a dataframe where each row of data contains all the indexing and weighting information needed to interpolate values from the surrounding nodes.
+
+At this point `vts_pts_weighted` contains the indexing information for the nodes `p1`, `p2`, `p3` & the weighting for each of those values: `p1_wt`, `p2_wt`, `p3_wt`. 
+
+From this point, we need to now set up the indexing for the `time` dimension. The two approaches that follow each build off of the steps above.
+
+
+# Approach 1: Same Day Date Matching
 
 Now that we have the blueprint for how to handle the point locations in lat/lon space, we need to decide how to efficiently handle the time dimension.
 
 The most straightforward approach is to match the date of the vts sample to the same date in the FVCOM data, and get values for the same point in time.
 
-A second workflow that we've used before with different species distribution models is to get an average across some period of time ex. seasonal averages.
-
-I will start with the easy one, and if there is time move on to seasonal.
-
-# FVCOM Date Direct Matching
-
-
-The following code approaches identifying the correct date indices to loop/map through this interpolation process.
-
-Each FVCOM file only has a dates for that year, and this preparation step sets things up such that we aren't pulling out data we don't actually need.
-
 
 ## Get the Proper Time Index for Each File
 
+Each FVCOM dataset we've been sent stores data for one year, waith daily records for the full year. The next chunk of code opens them each up sequentially and builda a table indicating which dates are stored in which file.
+
+We can join this information into our dataframe of vts points to add in details of which fvcom file to open and which date to index out.
+
+
 ```{r}
-#| label: date matching for fvcom files
+#| label: build date table from fvcom files
 
 # Get the dates within each file
 # This code opens each file in our list, pulls the time values, and closes them
@@ -327,9 +319,16 @@ fvcom_dates <- map_dfr(
            fvcom_date = as.Date(fvcom_date),
            time_idx = row_number()))
    }, .id = "fv_file")
+```
+
+The following code performs that join, identifying the correct date timestep indexing information for each poin location and adding that information to the dataframe.
+
+After this is done, we have all the information we need to loop/map through the different years and interpolate values for all the points.
+
+This all sets things up such that we aren't pulling out more data than is absolutely necessary to give us what we need.
 
 
-
+```{r}
 # If we join our vts survey points to this table,
 # we add in the fvcom_file that contains the data for each record
 
@@ -343,10 +342,11 @@ vts_dates_matched <- vts_pts_weighted %>%
 ```
 
 
-## Apply Interpolations at Proper Time Step
 
+## Same-Date Point Interpolation
 
-## Datewise Interpolation
+The last step in this approach is to take the information we've prepared to pull the data from each FVCOM file and return the result of the linear interpolation.
+
  
 This step can be looped on each date/year to minimize the amount of fvcom file opening/closing. Within each year we need to identify which timestep to extract data at, and then iterate on them.
 
@@ -404,7 +404,7 @@ interpolate_at_timestep <- function(
 
 ## Iterate on Years to Interpolate All Points
 
-Now that we have the indexing information to pull interpolate for each specific timestep, we can loop over the yearly files and obtain surface and bottom temperatures. 
+Now that we have the indexing information prepared, we can loop over the yearly files and obtain surface and bottom temperatures. 
 
 I'm using yearly timesteps to loop because we have yearly files, this way we only need to open each year once, then slice out values at the corresponding timesteps within them.
 
@@ -414,8 +414,8 @@ I'm using yearly timesteps to loop because we have yearly files, this way we onl
 vts_fvcom_temps <- vts_dates_matched %>% 
   drop_na(time_idx) %>%  # Skip any records with no matches
   mutate(year = year(Date)) %>% 
+  
   # Split into a list based on year to match the file structure
-  # Opens each file for a year only once
   split(.$year) %>% 
   map_dfr(
     .f = function(samples_year_x){
@@ -481,11 +481,9 @@ vts_fvcom_temps %>%
 For details on doing this for the different surveys see: `Survey_Locations_FVCOM_Temp_Interpolations.qmd`
 
 
-# Seasonal Averages Instead of Same-Day
+# Approach 2: Seasonal Averages (Instead of Same-Day)
 
-I mentioned above that sometimes it may be of interest to get conditions over some period of time rather than the exact date.
-
-As a demonstration below, I will return the average conditions from spring (March-May) and Summer (June-August).
+I mentioned above that sometimes it may be of interest to get conditions over some period of time rather than the exact date. As a demonstration below, I will return the average conditions from spring (March-May) and Summer (June-August).
 
 The main difference here than what we just did is that we are subsetting a vector of temperatures (a value for each day) for each surrounding node, rather than a single value.
 
@@ -529,6 +527,12 @@ season_index <- season_key %>%
     # Combine to one table
     }, .id = "season")
 ```
+
+### Join Season Indexing
+
+Similar to the same-day indexing approach above, we want to add the time-period indexing information to `vts_pts_weighted` so that each row in the dataframe can be fed to some function and return the correct interpolated value.
+
+
 
 ```{r}
 # We could reduce that to just the min/max of each month for a start/stop
@@ -777,9 +781,14 @@ Pull seasonal averages for the following datasets:
     Box\Mills Lab\Projects\Lobster ECOL\lobster_data\state_trawl   
  4. VTS: ME, MA, and I think a joint file with all the states:    
     Claire\Box\Mills Lab\Projects\Lobster ECOL\lobster_data\vts   
+    
+    
+This is basically the abbreviated version of Approach 2: done for these datasets, and then saved.
  
  
 ### Load NEFSC Trawl Data
+
+The next chunk of code will read the federal trawl data from box, and pull all distinct stations as well as the ctd bottom temperature reading for comparison.
 
 ```{r}
 # Load the trawl data
@@ -793,13 +802,16 @@ trawl_dat <- gmRi::gmri_survdat_prep(
   box_location = "cloudstorage")
 
 # Get distinct time/date/tow/locations
-trawl_locations <- trawl_dat %>% 
-  distinct(cruise6, station, stratum, tow, svvessel, est_towdate, season, decdeg_beglat, decdeg_beglon, bottemp_ctd = bottemp)
+nmfs_trawl <- trawl_dat %>% 
+  distinct(cruise6, station, stratum, tow, svvessel, est_towdate, est_year, season, lat = decdeg_beglat, lon = decdeg_beglon, bottemp_ctd = bottemp) %>% 
+  st_as_sf(coords = c("lon", "lat"), crs = 4326, remove = F) %>% 
+  st_transform(st_crs(gom3_mesh))
 
 ```
 
 ### Load State Trawl Data
 
+We also have stat trawl survey stations from Jeff Kipp. This includes maine/new hampshire trawl as well as rhode island. This next chunk of code will load them in, and prepare them for overlap/intersection with the fvcom mesh.
 
 ```{r}
 #| label: load state trawl surveys
@@ -807,124 +819,75 @@ trawl_locations <- trawl_dat %>%
 
 # # Path(s) to state trawl survey data
 asmfc_path <- cs_path("mills", "Projects/Lobster/Trawl_fromASMFC")
-# 
 
 # # load the different state survey datasets - ASMFC editions
 # load(str_c(asmfc_path, "MassDMF_Lobster_StationsNLengths_1979_2023_230718.Rdata"))
 # load(str_c(asmfc_path, "MENH Trawl.Rdata"))
 load(str_c(asmfc_path, "RI_LOBSTER_TRAWL_012324.Rdata"))
 ri_trawl <- RI_Stations %>% 
-  distinct(TrawlIdentity, Season, TowNumb, StratumCode, Year, Month, Day, LAT, LON)
+  distinct(TrawlIdentity, Season, TowNumb, StratumCode, Year, Month, Day, lat = LAT, lon = LON)
+
+# Convert to SF for overlaying on mesh
+ri_trawl <- ri_trawl %>% 
+  drop_na(lon, lat) %>% 
+  st_as_sf(coords = c("lon", "lat"), crs = 4326, remove = F) %>% 
+  st_transform(st_crs(gom3_mesh))
 
 
 # Maine NH Trawl Survey
 menh_path <- cs_path("res", "Maine_NH_Trawl/data_2024")
-menh_trawl <- read_csv(str_c(menh_path, "MaineDMR_Trawl_Survey_Tow_Data_2024-05-17.csv")) 
-
-
-
-# Mass Trawl
-mass_path  <- cs_path("res", "MA_Trawl/Pull_20240716/Manipulated")
-mass_trawl <- read_csv(str_c(mass_path, "MADMF_SVSTA_SW_2024.csv"))
-
-
-# Set up dates for matching with later
-menh_trawl <- mutate(menh_trawl, date = as.Date(Start_Date))
-mass_trawl <- mass_trawl %>% 
-  mutate(date = as.Date(
-    str_c(
-      Year, 
-      str_pad(Month, side = "left", pad = "0", width = 2), 
-      str_pad(Day, side = "left", pad = "0", width = 2),
-      sep = "-")))
-
-# do it for RI survey too
-ri_trawl <- ri_trawl %>% 
-  mutate(date = as.Date(
-    str_c(Year, 
-          str_pad(Month, side = "left", pad = "0", width = 2), 
-          str_pad(Day, side = "left", pad = "0", width = 2),
-          sep = "-")))
-
-
-# Plot them all
-ggplot() + 
-  geom_sf(data = new_england) +
-  geom_point(data = ri_trawl, aes(LON, LAT, color = "RI Survey"), 
-             shape = 3, size = 0.5, alpha = 0.4) +
-  geom_point(data = menh_trawl, aes(Start_Longitude, Start_Latitude, color = "ME + NH Survey"), 
-             shape = 3, size = 0.5, alpha = 0.4) +
-  geom_point(data = mass_trawl, aes(`Start lon`, `Start lat`, color = "MASS Survey"), 
-             shape = 3, size = 0.5, alpha = 0.4) +
-  coord_sf(xlim = c(-72, -67), ylim = c(41, 44.75)) +
-  scale_color_gmri() +
-  labs(x = "Longitude", y = "Latitude")
-
-
-```
-
-
-
-
-
-
-### Interpolate State Survey Locations
-
-```{r}
-# 1. Join them by their date to match them to FVCOM file names and their time index
-
-# Maine + NH
-menh_dates_matched <- menh_trawl %>% 
-  left_join(
-    mutate(fvcom_dates, fvcom_date = as.Date(fvcom_date)),
-    join_by(date == fvcom_date)) %>% 
+menh_trawl <- read_csv(str_c(menh_path, "MaineDMR_Trawl_Survey_Tow_Data_2024-05-17.csv"))  %>% 
   mutate(
     lon = Start_Longitude,
     lat = Start_Latitude) %>% 
-  st_as_sf(coords = c("lon", "lat"), crs = 4326, remove = F)
+  st_as_sf(coords = c("lon", "lat"), crs = 4326, remove = F) %>% 
+  st_transform(st_crs(gom3_mesh))
 
-# Mass
-mass_dates_matched <- mass_trawl %>% 
-  left_join(
-    mutate(fvcom_dates, fvcom_date = as.Date(fvcom_date)),
-    join_by(date == fvcom_date)) %>% 
+# Mass Trawl
+mass_path  <- cs_path("res", "MA_Trawl/Pull_20240716/Manipulated")
+mass_trawl <- read_csv(str_c(mass_path, "MADMF_SVSTA_SW_2024.csv")) %>% 
   mutate(
     lon = `Start lon`,
     lat = `Start lat`) %>% 
-  st_as_sf(coords = c("lon", "lat"), crs = 4326, remove = F)
+  st_as_sf(coords = c("lon", "lat"), crs = 4326, remove = F) %>% 
+  st_transform(st_crs(gom3_mesh))
 
-# Rhode Island
-ri_dates_matched <- ri_trawl %>% 
-  left_join(
-    mutate(fvcom_dates, fvcom_date = as.Date(fvcom_date)),
-    join_by(date == fvcom_date)) %>% 
-  mutate(
-    lon = LON,
-    lat = LAT) %>% 
-  drop_na(lon, lat) %>% 
-  st_as_sf(coords = c("lon", "lat"), crs = 4326, remove = F)
+
 ```
+
+
+### Triangulate State/Federl Survey Locations
+
+This next chunk of code takes each of these survey programs and locates the mesh element and surrounding nodes for each of the points
+
 
 
 ```{r}
 # 2. overlay the points to get the node ids
 # Also applies the weights for linear interpolation
 
+# Federal Survey
+nmfs_pts_weighted <- triangulate_and_weight(
+  pts_sf = nmfs_trawl, 
+  fvcom_mesh = gom3_mesh) %>% 
+  st_drop_geometry()
+
+
 # Maine + NH
 menh_pts_weighted <- triangulate_and_weight(
-  pts_sf = menh_dates_matched, 
+  pts_sf = menh_trawl, 
   fvcom_mesh = gom3_mesh) %>% 
   st_drop_geometry()
 
 # Mass
 mass_pts_weighted <- triangulate_and_weight(
-  pts_sf = mass_dates_matched, 
+  pts_sf = mass_trawl, 
   fvcom_mesh = gom3_mesh) %>% 
   st_drop_geometry()
 
 # Rhode Island
 ri_pts_weighted <- triangulate_and_weight(
-  pts_sf = ri_dates_matched, 
+  pts_sf = ri_trawl, 
   fvcom_mesh = gom3_mesh) %>% 
   st_drop_geometry()
 
@@ -932,125 +895,263 @@ ri_pts_weighted <- triangulate_and_weight(
 ```
 
 
+### Supplement Season Indexing
+
+As we did above, we need to add the indexing information to pull time periods associated with the different seasons.
+
 ```{r}
-# 3. Map over the yearly files, perform interpolation
+# 1. Join them by their date to match them to FVCOM file names and their time index
+
+# nmfs
+nmfs_season_matched <- nmfs_pts_weighted %>% 
+  full_join(
+    season_index,
+    join_by(est_year == fvyear),
+    relationship = "many-to-many")
 
 # Maine + NH
-menh_fvcom_temps <- menh_pts_weighted %>% 
-  drop_na(time_idx) %>% 
-  mutate(year = year(date)) %>% 
-  split(.$year) %>% 
-  map_dfr(
-    .f = function(samples_year_x){
-    
-    # Get the file to open
-    nc_name <- samples_year_x[["fv_file"]][[1]][[1]]
-    
-    
-    # Open the corresponding Netcdf
-    fvcom_yr_x <- nc_open(fvcom_surfbot_files[[nc_name]])
-    
-    
-    # Split by row to iterate on each point
-    locations_bydate <- samples_year_x %>% 
-      base::split(., seq_len(nrow(.))) 
-    
-    # Iterate on those - do bottom temp and surface temp
-    dates_interpolated <- locations_bydate %>%
-      map(.f = ~interpolate_at_timestep(
-        dated_points_weighted = .x,
-        fvcom_nc = fvcom_yr_x,
-        fvcom_varid = "surface_t", 
-        var_out = "surf_temp_c")) %>% 
-      map_dfr(.f = ~interpolate_at_timestep(
-        dated_points_weighted = .x,
-        fvcom_nc = fvcom_yr_x,
-        fvcom_varid = "bottom_t", 
-        var_out = "bot_temp_c"))
-    
-    return(dates_interpolated)
-    
-  })
-```
+menh_season_matched <- menh_pts_weighted %>% 
+  full_join(
+    season_index,
+    join_by(Year == fvyear),
+    relationship = "many-to-many")
 
+# Mass
+mass_season_matched <- mass_pts_weighted  %>% 
+  full_join(
+    season_index,
+    join_by(Year == fvyear),
+    relationship = "many-to-many")
 
-```{r}
-# Mass 
-mass_fvcom_temps <- mass_pts_weighted %>% 
-  drop_na(time_idx) %>% 
-  mutate(year = year(date)) %>% 
-  split(.$year) %>% 
-  map_dfr(
-    .f = function(samples_year_x){
-    
-    # Get the file to open
-    nc_name <- samples_year_x[["fv_file"]][[1]][[1]]
-    
-    
-    # Open the corresponding Netcdf
-    fvcom_yr_x <- nc_open(fvcom_surfbot_files[[nc_name]])
-    
-    
-    # Split by row to iterate on each point
-    locations_bydate <- samples_year_x %>% 
-      base::split(., seq_len(nrow(.))) 
-    
-    # Iterate on those - do bottom temp and surface temp
-    dates_interpolated <- locations_bydate %>%
-      map(.f = ~interpolate_at_timestep(
-        dated_points_weighted = .x,
-        fvcom_nc = fvcom_yr_x,
-        fvcom_varid = "surface_t", 
-        var_out = "surf_temp_c")) %>% 
-      map_dfr(.f = ~interpolate_at_timestep(
-        dated_points_weighted = .x,
-        fvcom_nc = fvcom_yr_x,
-        fvcom_varid = "bottom_t", 
-        var_out = "bot_temp_c"))
-    
-    return(dates_interpolated)
-    
-  })
-```
-
-
-```{r}
 # Rhode Island
-ri_fvcom_temps <- ri_pts_weighted %>% 
-  drop_na(time_idx) %>% 
-  mutate(year = year(date)) %>% 
-  split(.$year) %>% 
-  map_dfr(
-    .f = function(samples_year_x){
+ri_season_matched <- ri_pts_weighted %>% 
+  full_join(
+    season_index,
+    join_by(Year == fvyear),
+    relationship = "many-to-many")
+```
+
+
+
+### Interpolate Seasonal Means
+
+
+```{r}
+#| label: nmfs seasonal processing
+#| eval: false
+
+# Map over each year to open the correct netcdf for the relevant points
+nmfs_seasonal_interpolations <- nmfs_season_matched %>% 
+  # Why are there missing element overlaps?, need to clean up
+  drop_na(start_idx, elem, p1, p2, p3) %>% 
+  # Break into yearly datasets b/c fvcom is yearly
+  split(.$est_year) %>% 
+  imap_dfr(function(indexing_data, year_id){
     
-    # Get the file to open
-    nc_name <- samples_year_x[["fv_file"]][[1]][[1]]
     
+    # Run them for one year
+    year_fname <- str_c("gom3_", year_id)
+    fvcom_yrx <- nc_open(fvcom_surfbot_files[year_fname])
     
-    # Open the corresponding Netcdf
-    fvcom_yr_x <- nc_open(fvcom_surfbot_files[[nc_name]])
-    
-    
-    # Split by row to iterate on each point
-    locations_bydate <- samples_year_x %>% 
-      base::split(., seq_len(nrow(.))) 
-    
-    # Iterate on those - do bottom temp and surface temp
-    dates_interpolated <- locations_bydate %>%
-      map(.f = ~interpolate_at_timestep(
-        dated_points_weighted = .x,
-        fvcom_nc = fvcom_yr_x,
-        fvcom_varid = "surface_t", 
-        var_out = "surf_temp_c")) %>% 
-      map_dfr(.f = ~interpolate_at_timestep(
-        dated_points_weighted = .x,
-        fvcom_nc = fvcom_yr_x,
+    # Get seasonal temperatures for one year
+    interpolated_seasonal_temps <- indexing_data %>% 
+      
+      # Interpolate surface temperature
+      interpolate_over_timerange(
+      .,
+      fvcom_nc = fvcom_yrx, 
+      fvcom_varid = "surface_t", 
+      var_out = "surf_temp_c") %>% 
+      # Repeat if we want bottom temperature or another variable
+      interpolate_over_timerange(
+        pts_wts_ranges = .,
+        fvcom_nc = fvcom_yrx, 
         fvcom_varid = "bottom_t", 
-        var_out = "bot_temp_c"))
+        var_out = "bot_temp_c")
     
-    return(dates_interpolated)
+    # Return that dataframe
+    nc_close(fvcom_yrx)
+    return(interpolated_seasonal_temps)
     
-  })
+    
+  }, .id = "year")
 
 
+
+```
+
+
+
+```{r}
+#| label: menh seasonal processing
+#| eval: false
+
+# Map over each year to open the correct netcdf for the relevant points
+menh_seasonal_interpolations <- menh_season_matched %>% 
+  # Why are there missing element overlaps?, need to clean up
+  drop_na(start_idx, elem, p1, p2, p3) %>% 
+  # Break into yearly datasets b/c fvcom is yearly
+  split(.$Year) %>% 
+  imap_dfr(function(indexing_data, year_id){
+    
+    
+    # Run them for one year
+    year_fname <- str_c("gom3_", year_id)
+    fvcom_yrx <- nc_open(fvcom_surfbot_files[year_fname])
+    
+    # Get seasonal temperatures for one year
+    interpolated_seasonal_temps <- indexing_data %>% 
+      
+      # Interpolate surface temperature
+      interpolate_over_timerange(
+      .,
+      fvcom_nc = fvcom_yrx, 
+      fvcom_varid = "surface_t", 
+      var_out = "surf_temp_c") %>% 
+      # Repeat if we want bottom temperature or another variable
+      interpolate_over_timerange(
+        pts_wts_ranges = .,
+        fvcom_nc = fvcom_yrx, 
+        fvcom_varid = "bottom_t", 
+        var_out = "bot_temp_c")
+    
+    # Return that dataframe
+    nc_close(fvcom_yrx)
+    return(interpolated_seasonal_temps)
+    
+    
+  }, .id = "year")
+
+
+
+```
+
+
+
+```{r}
+#| label: mass seasonal processing
+#| eval: false
+
+# Map over each year to open the correct netcdf for the relevant points
+mass_seasonal_interpolations <- mass_season_matched %>% 
+  # Why are there missing element overlaps?, need to clean up
+  drop_na(start_idx, elem, p1, p2, p3) %>% 
+  # Break into yearly datasets b/c fvcom is yearly
+  split(.$Year) %>% 
+  imap_dfr(function(indexing_data, year_id){
+    
+    
+    # Run them for one year
+    year_fname <- str_c("gom3_", year_id)
+    fvcom_yrx <- nc_open(fvcom_surfbot_files[year_fname])
+    
+    # Get seasonal temperatures for one year
+    interpolated_seasonal_temps <- indexing_data %>% 
+      
+      # Interpolate surface temperature
+      interpolate_over_timerange(
+      .,
+      fvcom_nc = fvcom_yrx, 
+      fvcom_varid = "surface_t", 
+      var_out = "surf_temp_c") %>% 
+      # Repeat if we want bottom temperature or another variable
+      interpolate_over_timerange(
+        pts_wts_ranges = .,
+        fvcom_nc = fvcom_yrx, 
+        fvcom_varid = "bottom_t", 
+        var_out = "bot_temp_c")
+    
+    # Return that dataframe
+    nc_close(fvcom_yrx)
+    return(interpolated_seasonal_temps)
+    
+    
+  }, .id = "year")
+
+
+
+```
+
+
+```{r}
+#| label: ri seasonal processing
+#| eval: false
+
+# Map over each year to open the correct netcdf for the relevant points
+ri_seasonal_interpolations <- ri_season_matched %>% 
+  # Why are there missing element overlaps?, need to clean up
+  drop_na(start_idx, elem, p1, p2, p3) %>% 
+  # Break into yearly datasets b/c fvcom is yearly
+  split(.$Year) %>% 
+  imap_dfr(function(indexing_data, year_id){
+    
+    
+    # Run them for one year
+    year_fname <- str_c("gom3_", year_id)
+    fvcom_yrx <- nc_open(fvcom_surfbot_files[year_fname])
+    
+    # Get seasonal temperatures for one year
+    interpolated_seasonal_temps <- indexing_data %>% 
+      
+      # Interpolate surface temperature
+      interpolate_over_timerange(
+      .,
+      fvcom_nc = fvcom_yrx, 
+      fvcom_varid = "surface_t", 
+      var_out = "surf_temp_c") %>% 
+      # Repeat if we want bottom temperature or another variable
+      interpolate_over_timerange(
+        pts_wts_ranges = .,
+        fvcom_nc = fvcom_yrx, 
+        fvcom_varid = "bottom_t", 
+        var_out = "bot_temp_c")
+    
+    # Return that dataframe
+    nc_close(fvcom_yrx)
+    return(interpolated_seasonal_temps)
+    
+    
+  }, .id = "year")
+
+
+
+```
+
+### Exporting
+
+```{r}
+#| eval: false
+
+# # # Save VTS Bottom temperatures
+
+# # save to project path - Saved here too
+# fvcom_processed_path <- cs_path("mills", "Projects/Lobster ECOL/FVCOM_processed/point_location_temperatures")
+# save to project path
+fvcom_processed_path <- cs_path("mills", "Projects/Lobster ECOL/Regime shift analyses/Point_Location_FVCOM_BT")
+
+# Remove all the point 
+remove_fvcom_meta <- function(df){
+  df %>% 
+    select(-c(p1, p2, p3, p1_wt, p2_wt, p3_wt, start_idx, end_idx, idx_count, elem)) %>% 
+    rename(
+      fvcom_surf_temp_c = surf_temp_c, 
+      fvcom_bot_temp_c = bot_temp_c)
+}
+
+# Save all of them out to box
+write_csv(
+  x = remove_fvcom_meta(nmfs_seasonal_interpolations),
+  file = str_c(fvcom_processed_path, "NEFSCtrawl_seasonal_fvcom_temps.csv"))
+write_csv(
+  x = remove_fvcom_meta(vts_seasonal_temp_interpolations),
+  file = str_c(fvcom_processed_path, "VTS_seasonal_fvcom_temps.csv"))
+write_csv(
+  x = remove_fvcom_meta(menh_seasonal_interpolations),
+  file = str_c(fvcom_processed_path, "MENH_seasonal_fvcom_temps.csv"))
+write_csv(
+  x = remove_fvcom_meta(mass_seasonal_interpolations),
+  file = str_c(fvcom_processed_path, "MA_seasonal_fvcom_temps.csv"))
+write_csv(
+  x = remove_fvcom_meta(ri_seasonal_interpolations),
+  file = str_c(fvcom_processed_path, "RI_seasonal_fvcom_temps.csv"))
 ```

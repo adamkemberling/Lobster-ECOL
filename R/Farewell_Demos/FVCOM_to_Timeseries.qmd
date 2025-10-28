@@ -479,6 +479,9 @@ Sys.time()
 
 
 
+
+
+
 # Plot the data
 all_year_surface_temp %>%
   mutate(time = as.Date(time)) %>%
@@ -489,7 +492,8 @@ all_year_surface_temp %>%
   labs(title = "Zone B Surface Temperature, 1978-2019")
 
 
-
+# Save it locally so I can use it for the rstars demo
+write_csv(all_year_surface_temp, here::here("local_data/Lobster_Zone_B_FVCOm_STemp.csv"))
 ```
 
 ### Aggregating to Seasonal Values

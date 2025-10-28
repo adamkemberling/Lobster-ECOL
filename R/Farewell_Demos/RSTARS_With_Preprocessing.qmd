@@ -1,0 +1,343 @@
+---
+title: "RSTARS in 2025"
+description: | 
+  Approach for Interpolation of Surface + Bottom Temperature Values within FVCOM Mesh
+date: "Updated on: `r Sys.Date()`"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    df-print: kable
+    self-contained: true
+execute: 
+  echo: true
+  warning: false
+  message: false
+  fig.align: "center"
+  comment: ""
+---
+
+
+
+
+```{r}
+
+# Packages
+{
+  library(tidyverse)     # data wrangling and plotting
+  library(gmRi)          # color schemes and cloud storage paths
+  library(patchwork)     # plot arrangement
+  library(sysfonts)      # font support
+  library(mgcv)          # GAMs
+}
+
+theme_set(theme_gmri_simple())
+
+# Paths + package conflicts
+conflicted::conflict_prefer("select", "dplyr")
+conflicted::conflict_prefer("filter", "dplyr")
+proj_path <- cs_path("mills", "Projects/Lobster ECOL")
+
+
+```
+
+
+```{r}
+#| label: style-sheet
+#| results: asis
+
+# Use GMRI style sheet for markdown
+gmRi::use_gmri_style_rmd()
+
+```
+
+
+
+```{r}
+#| label: fonts-config
+#| echo: false
+
+# Path to the directory containing the font file (replace with your actual path)
+font_dir <- paste0(system.file("stylesheets", package = "gmRi"), "/GMRI_fonts/Avenir/")
+
+# Register the font
+font_add(
+  family = "Avenir",
+  file.path(font_dir, "LTe50342.ttf"),
+  bold = file.path(font_dir, "LTe50340.ttf"),
+  italic = file.path(font_dir, "LTe50343.ttf"),
+  bolditalic = file.path(font_dir, "LTe50347.ttf"))
+
+# Load the font
+showtext::showtext_auto()
+
+```
+
+# Regime Shift Evaluation with rSTARS in 2025
+
+The Sequential T-test Analysis of Regime Shifts (STARS) algorithm was initially developed by Sergei Rodionoc and detailed in his 2004 publication. There have since been a number of follow-up publications as part of a broader discourse around regime shift methods.
+
+This discourse led to a number of enhancements to the original algorithm, and a set of data pre-processing recommendations that together aim to isolate regime shift signals in the mean, variance, or correlation from other [common time series features](https://adamkemberling.github.io/Lobster-ECOL/R/regime_tests/Timeseries_Features_Materials.html) like monotonic trends, autocorrelation, and periodicity.
+
+The STARS algorithm has since re-branded itself as the Sequential Three-part Analysis of Regime Shifts, or simply the Sequential Test for Analysis of Regime Shifts to accommodate the addition of variance and correlation tests (which use a sequential F-test).
+
+Recent recommendations from Rodionov can be found at his website: https://sites.google.com/view/regime-shift-test/home?authuser=0 
+
+
+# Applying STARS methods advancements in R
+
+There area number of packages that purport to perform the stars algorithm for regime tests in R: ex. [rshifts](https://www.rdocumentation.org/packages/rshift/versions/2.1.1)
+
+However, these packages appear in most cases apply the original STARS algorithm, and lack the more recent methodological developments and pre-processing recommendations.
+
+Luckily, [a recent 2019 publication by Stirnimann, Conversi, & Marini](https://academic.oup.com/icesjms/article/76/7/2286/5542081?login=false) covered the application of the modern STARS methods, and importantly, confirmed their performance on synthetic and observed time series.
+
+[The R-code used for their publication is published on github](http://github.com/LStirnimann/rstars), and provides a peer-reviewed starting point for implementing these approaches in R.
+
+## Adapting `rstars` for Our Needs
+
+The rstars repository was last updated 6 years ago, but provides the essential pieces for applying the advancements in tghe STARS approach, and preventing the need to re-invent or independently develop (and validate) any methods.
+
+For this research project, I made a local copy ("cloning" in github lingo) of the Stirnimann rstars repository, which I load into R scripts/markdowns to load the functions into my local R session.
+
+
+````{r}
+# Load the function(s)
+source(here::here("rstars-master","rSTARS.R"))
+
+# Stirnimann used these function argument values in their paper:
+
+# "l" or l.cutoff = cutoff length 
+# Stirnimann paper used the following lengths of time (years), when working with monthly data
+# l = 5,10,15,17.5 
+
+# H = Hubers Weight
+# Huber = 1
+
+# Subsampling
+# Subsampling = (l + 1)/3
+
+````
+
+
+The main function used to perform the test is `rstars()`, and it includes a number of arguments for the user to specify with adjust the time period cutoff "l", toggle preprocessing methods tested in the paper: "MPK", "OLS", "IP4", and a sub-sampling rate (used to help reduce the impact of autocorrelation).
+
+In short, the approach is more "hands-on" than it used to be. Which is why I opted to build from Stirnimann's work and not build from scratch.
+
+I have made some minor adjustments to the function so that it returns a results dataframe instead of a plot. This lets me handle a bunch of tests in a pipeline more easily, and customize the plots a little.
+
+# rtars in Practice:
+
+In practice, the approach has a handful of steps:
+
+ 1. Load a timeseries
+ 2. Prepare the timeseries for regime testing
+ 3. Perform the test using the STARS algorithm
+ 
+ 
+## Load a Timeseries
+
+In one of the other demos `FVCOM_to_Timeseries.qmd`, I cover how to prepare a timeseries from FVCOM data for a shapefile of interest. I will load one of these in to use as an example.
+
+```{r}
+# Surface Temperatures for Lobster Zone B
+zoneb_temp <-  read_csv(here::here("local_data/Lobster_Zone_B_FVCOm_STemp.csv")) %>%
+  mutate(
+    time = as.Date(time),
+    yday = yday(time),
+    surface_temp_c = regional_mu)
+```
+
+The following plot shows what the average surface temperature was for lobster management zone B, from the FVCOM hindcast. This will be the test timeseries used below.
+
+```{r}
+
+# Plot the data
+zoneb_temp  %>%
+  ggplot() +
+  geom_line(
+    aes(time, surface_temp_c),
+        linewidth = 0.4, alpha = 0.6) +
+  labs(title = "Zone B Surface Temperature, 1978-2019")
+
+```
+
+
+
+## Preparing Timeseries for Regime Tests
+
+This example timeseries is daily, and has a number of things that (if left unaddressed) will obscure any regime change. 
+
+There is a clear seasonal cycle with higher temperatures in summer, and cooler temperatures in winter. It is hard to tell by eyeballing it, but there could also be a long-term warming trend which would be consistent with the Gulf of Maine temperature changes. There is also likely some autocorrelation in the data, with conditions in previous timesteps being correlated with subsequent temperatures. This last one is more subtle
+
+There are different ways to approach these things, but a very simple step is to change it to an annual average. This will remove noise from the annual cycle, and make any trends more obvious.
+
+When aggregated this way, we see there will likely be a break around 2008-2010.
+
+```{r}
+# Get the annual value
+zoneb_annual <- zoneb_temp %>% 
+  group_by(year = year(time)) %>% 
+  summarise(surface_temp_c = mean(surface_temp_c)) 
+
+
+zoneb_annual %>% 
+  ggplot(aes(year, surface_temp_c)) +
+  geom_line(linewidth = 0.4, alpha = 0.6) +
+  labs(title = "Zone B Surface Temperature, Annual")
+```
+
+
+
+A more involved approach would be to remove the seasonal cycle. This would allow us to keep things as daily data, and perhaps pinpoint more accurately when the regime change occured.
+
+The code below shows one way to do this:
+
+```{r}
+# Model the seasonal cycle with a cyclic smooth
+
+# This approach with gam() is the "cleanest" way I've seen adding a seasonal cycle 
+# the cyclic smooth: bs = "cc" makes the ends meet up when transitioning from Dec-Jan
+season_gam <- mgcv::gam(
+  surface_temp_c ~ s(yday, bs = "cc"), 
+  data = zoneb_temp,
+  method = "REML")
+
+# save the results back with the data
+zoneb_aug <- zoneb_temp %>% 
+  mutate(
+    seasonal_fit = predict(season_gam),
+    fit_scaled = seasonal_fit - mean(zoneb_temp$surface_temp_c), # plot cycle centered on zero
+    seasonal_resid = resid(season_gam)) 
+
+
+ggplot(zoneb_aug, aes(time, seasonal_resid)) +
+  geom_line(linewidth = 0.4, alpha = 0.6) +
+  labs(title = "Zone B Surface Temperature, Seasonality Removed")
+```
+
+The plot above could be interpreted as the daily temperature departure from the long-term seasonal cycle.
+
+
+## Testing a Timeseris with rstars
+
+For a basic test, lets see what the annual data looks like when tested. I didn't take out the trend, I just aggregated to yearly data. I'm using a 7-year window, and applying the prewhitening options recommended by Stirnimann.
+
+For timeseries with a low number of datapoints, sometimes the prewhitening or subsampling methods will not be applied, this is fine.
+
+```{r}
+# I set "l" outside the function first, because it impacts the l.cutoff and SubsampleSize
+l_param <- 7
+annual_rstars_results <- rstars(
+  data.timeseries = as.data.frame(zoneb_annual[,c("year", "surface_temp_c")]), 
+  l.cutoff = l_param,       # This argument doesn't know if the data is daily, monthly, annual. I set to 7 years
+  pValue = 0.05,      # P-value for t/f test, default 0.05
+  Huber = 1,          # Huber number, default is 1, I don't change
+  Endfunction = T,    # Behavior at the end of the timeseries
+  preWhitening = T,   # Apply prewhitening T/F
+  OLS = F,            # OLS prewhitening method T/F
+  MPK = T,            # Marriott-Pope + Kennedy prewhitening method T/F
+  IP4 = F,            # IP4 prewhitening method T/F
+  SubsampleSize = (l_param + 1) / 3, # subsampling rate for hubers + prewhitening
+  returnResults = T)  # Return the results as a dataframe
+```
+
+This function returns to us a dataframe with the original `year` & `surface_temp_c` values we fed in, and it adds new columns for:
+
+`RSI` = the regime shift index value, positive values indicate a positive direction shift point, and vice-versa for negative values
+`regime_mu` = The average value of the input data (`surface_temp_c` here), for the different regimes found.
+`surface_temp_c_pw` = The timeseries after pre-whitening has been applied
+`regime_mu_pw` = The average value of the input data on the pre-whitened scale
+
+From this data, we can build a plot to show the input data, and highlight any regimes detected. With the annual data, no regime changes were detected.
+
+```{r}
+annual_rstars_results %>% 
+  ggplot() +
+    geom_line(aes(year, surface_temp_c), linewidth = 0.4, alpha = 0.6) +
+    geom_line(aes(year, regime_mu, color = "STARS Results Regime Average"), linewidth = 1.2) +
+    labs(title = "Zone B Surface Temperature, Annual")
+  
+```
+
+
+### rstars on the daily data
+
+I can repeat the test using the daily data which we removed the long-term seasonal cycle from.
+
+```{r}
+#| eval: false
+
+
+# I set "l" outside the function first, because it impacts the l.cutoff and SubsampleSize
+l_param <- 7 * 365 # Change this because its 365 days a year
+daily_rstars_results <- rstars(
+  data.timeseries = as.data.frame(zoneb_aug[,c("time", "seasonal_resid")]), 
+  l.cutoff = l_param,       # This argument doesn't know if the data is daily, monthly, annual. I set to 7 years
+  pValue = 0.05,      # P-value for t/f test, default 0.05
+  Huber = 1,          # Huber number, default is 1, I don't change
+  Endfunction = T,    # Behavior at the end of the timeseries
+  preWhitening = T,   # Apply prewhitening T/F
+  OLS = F,            # OLS prewhitening method T/F
+  MPK = T,            # Marriott-Pope + Kennedy prewhitening method T/F
+  IP4 = F,            # IP4 prewhitening method T/F
+  SubsampleSize = (l_param + 1) / 3, # subsampling rate for hubers + prewhitening
+  returnResults = T)  # Return the results as a dataframe
+```
+
+When done on the daily data the prewhitening and subsampling routines have more data to work with, and the process takes a little longer to complete.
+
+The results are plotted below
+
+```{r}
+# Combine the results to the original data so we can plot on raw or processed scales
+
+daily_rstars_results %>% 
+  ggplot() +
+    geom_line(aes(time, seasonal_resid), linewidth = 0.4, alpha = 0.6) +
+    geom_line(aes(time, regime_mu, color = "STARS Results Regime Average"), linewidth = 1.2) +
+    labs(title = "Zone B Surface Temperature",
+         subtitle = "Daily Data with Seasonal Cycle Removed")
+```
+
+
+If you just want to see where the breaks area, use `dplyr::filter` to return rows in the results where `RSI` != 0
+
+```{r}
+
+# Table of shift points
+daily_rstars_results %>% 
+  filter(RSI != 0) %>% 
+  gt::gt()
+```
+
+In this example there does not seem to be any STARS regime changes. 
+
+
+# Performing Comprehensive Pre-Processing to Daily Data
+
+For the work I did in `STARS_FVCOM.qmd`, `MCC_rstars.qmd`, & `RegimeShiftSummary.qmd` I did the more exhaustive approach of preparing monthly data and removing both the long-term monthly averages (seasonality at a monthly scale), and any long-term monotonic trends.
+
+Please see those markdown docs or `regime_shift_methods.qmd` for code on how to do that.
+
+
+
+
+
+
+
+
+## Major References:
+
+Rodionov, S.N., 2004: A sequential algorithm for testing climate regime shifts. Geophys. Res. Lett., 31, L09204, doi:10.1029/2004GL019448.
+
+Rodionov, S.N., 2005a: A brief overview of the regime shift detection methods. In: Large-Scale Disturbances (Regime Shifts) and Recovery in Aquatic Ecosystems: Challenges for Management Toward Sustainability, V. Velikova and N. Chipev (Eds.), UNESCO-ROSTE/BAS Workshop on Regime Shifts, 14-16 June 2005, Varna, Bulgaria, 17-24.
+
+Rodionov, S., 2005b: A sequential method for detecting regime shifts in the mean and variance. In: Large-Scale Disturbances (Regime Shifts) and Recovery in Aquatic Ecosystems: Challenges for Management Toward Sustainability, V. Velikova and N. Chipev (Eds.), UNESCO- ROSTE/BAS Workshop on Regime Shifts, 14-16 June 2005, Varna, Bulgaria, 68-72.
+
+Rodionov, S.N., 2006: Use of prewhitening in climate regime shift detection, Geophys. Res. Lett., 33, L12707, doi:101029/2006GL025904.
+
+Rodionov, S., 2015: A sequential method of detecting abrupt changes in the correlation coefficient and its application to Bering Sea climate, Climate, 3, 474-491.
+
+Rodionov, S., 2016: A comparison of two methods for detecting abrupt changes in the variance of climatic time series, Adv. Stat. Clim. Meteorol. Oceanogr., 2, 63-78, doi:10.5194/ascmo-2-63-2016.
+

@@ -895,7 +895,7 @@ remove_fvcom_meta(trawl_fvcom_temps)
 # # # Save VTS Bottom temperatures
 
 # save to project path
-fvcom_processed_path <- cs_path("mills", "Projects/Lobster ECOL/FVCOM_processed/point_location_temperatures")
+fvcom_processed_path <- cs_path("mills", "Projects/Lobster ECOL/Regime shift analyses/Point_Location_FVCOM_BT")
 
 write_csv(
   x = remove_fvcom_meta(trawl_fvcom_temps),

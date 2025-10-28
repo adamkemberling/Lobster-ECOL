@@ -124,3 +124,5 @@ Here are some demos of how I would recommend working with the FVCOM data we acqu
 [Process a timeseries from a shapefile](https://adamkemberling.github.io/Lobster-ECOL/R/Farewell_Demos/FVCOM_to_Timeseries.html)
 
 [Extract values for point locations, that interpolate from nearby nodes](https://adamkemberling.github.io/Lobster-ECOL/R/Farewell_Demos/FVCOM_for_Pointlocations.html)
+
+[Running rstars on a timeseries](https://adamkemberling.github.io/Lobster-ECOL/R/Farewell_Demos/RSTARS_With_Preprocessing.html)
